@@ -1,0 +1,43 @@
+{
+  "palette": {
+    "bg_color": "#121212",
+    "fg_color": "#ecf0f1",
+    "accent_color": "#4ea0ff",
+    "ribbon_color": "#8F00FF",
+    "button_color": "#2ecc71",
+    "error_color": "#e74c3c",
+    "warning_color": "#f39c12",
+    "card_bg_color": "#2c2f33",
+    "checkbox_select_color": "#000000"
+  },
+  "fonts": {
+    "title": ["Segoe UI", 21, "bold"],
+    "header": ["Segoe UI", 18, "bold"],
+    "subheader": ["Segoe UI", 14, "bold"],
+    "subtext_bold": ["Segoe UI", 12, "bold"],
+    "small": ["Segoe UI", 11],
+    "small_bold": ["Segoe UI", 11, "bold"],
+    "body": ["Segoe UI", 12],
+    "mono": ["Consolas", 11],
+    "button": ["Segoe UI", 11, "bold"],
+    "tiny": ["Segoe UI", 10],
+    "tiny_bold": ["Segoe UI", 10, "bold"],
+    "muted": ["Segoe UI", 9],
+    "muted_bold": ["Segoe UI", 9, "bold"],
+    "micro": ["Segoe UI", 8],
+    "micro_bold": ["Segoe UI", 8, "bold"]
+  },
+  "roles": {
+    "confirm": ["#27ae60", "#229954"],
+    "save": ["#27ae60", "#229954"],
+    "continue": ["#27ae60", "#229954"],
+    "add": ["#27ae60", "#229954"],
+    "edit": ["#f1c40f", "#d4ac0d"],
+    "cancel": ["#e74c3c", "#c0392b"],
+    "delete": ["#e74c3c", "#c0392b"],
+    "archive": ["#4ea0ff", "#3a8bd6"],
+    "view": ["#4ea0ff", "#3a8bd6"],
+    "charcoal": ["#3c4043", "#4a4f54"],
+    "default": ["#4ea0ff", "#3a8bd6"]
+  }
+}
