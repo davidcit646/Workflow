@@ -1,64 +1,28 @@
 import tkinter as tk
 from tkinter import ttk
 from datetime import datetime
+import config
 
-# Shared typography tokens
-FONTS = {
-    "title": ("Verdana", 20, "bold"),
-    "header": ("Verdana", 18, "bold"),
-    "subheader": ("Verdana", 14, "bold"),
-    "subtext_bold": ("Verdana", 12, "bold"),
-    "small": ("Verdana", 10),
-    "small_bold": ("Verdana", 10, "bold"),
-    "body": ("Verdana", 11),
-    "mono": ("Consolas", 11),
-    "button": ("Verdana", 11, "bold"),
-    "tiny": ("Verdana", 10),
-    "tiny_bold": ("Verdana", 10, "bold"),
-    "muted": ("Verdana", 9),
-    "muted_bold": ("Verdana", 9, "bold"),
-    "micro": ("Verdana", 8),
-    "micro_bold": ("Verdana", 8, "bold"),
-}
+# Import typography and constants from config
+FONTS = config.FONTS
 
 # Track the currently applied palette (stylesheet-driven)
-CURRENT_PALETTE = {
-    "bg_color": "#e2e6e9",
-    "fg_color": "#2c3e50",
-    "accent_color": "#3498db",
-    "ribbon_color": "#3498db",
-    "button_color": "#27ae60",
-    "error_color": "#e74c3c",
-    "warning_color": "#f39c12",
-    "card_bg_color": "#ffffff",
-}
+CURRENT_PALETTE = config.LIGHT_PALETTE.copy()
 
 # Standard dialog layout constants
-DIALOG_MIN_WIDTH = 420
-DIALOG_MAX_WIDTH = 780
-DIALOG_WRAP_RATIO = 0.65  # fraction of parent width
-DIALOG_PADX = 24
-DIALOG_PADY = 20
+DIALOG_MIN_WIDTH = config.DIALOG_MIN_WIDTH
+DIALOG_MAX_WIDTH = config.DIALOG_MAX_WIDTH
+DIALOG_WRAP_RATIO = config.DIALOG_WRAP_RATIO
+DIALOG_PADX = config.DIALOG_PADX
+DIALOG_PADY = config.DIALOG_PADY
 
 # Button sizing defaults
-BUTTON_DEFAULT_WIDTH = 12
-BUTTON_INTERNAL_PADX = 6
-BUTTON_INTERNAL_PADY = 4
-BUTTON_PACK_IPADY = 2
+BUTTON_DEFAULT_WIDTH = config.BUTTON_DEFAULT_WIDTH
+BUTTON_INTERNAL_PADX = config.BUTTON_INTERNAL_PADX
+BUTTON_INTERNAL_PADY = config.BUTTON_INTERNAL_PADY
+BUTTON_PACK_IPADY = config.BUTTON_PACK_IPADY
 
-_ROLE_COLORS = {
-    "confirm": ("#27ae60", "#229954"),
-    "save": ("#27ae60", "#229954"),
-    "continue": ("#27ae60", "#229954"),
-    "add": ("#27ae60", "#229954"),
-    "edit": ("#f1c40f", "#d4ac0d"),
-    "cancel": ("#e74c3c", "#c0392b"),
-    "delete": ("#e74c3c", "#c0392b"),
-    "archive": ("#2980b9", "#1f618d"),
-    "view": ("#2980b9", "#1f618d"),
-    "charcoal": ("#c3c9ce", "#b5bcc2"),  # slightly darker than bg (#e2e6e9)
-    "default": ("#3498db", "#2e86c1")
-}
+_ROLE_COLORS = config.BUTTON_ROLE_COLORS
 
 # Keep defaults to allow resetting when leaving stylesheet-driven modes
 DEFAULT_FONTS = FONTS.copy()
@@ -66,11 +30,10 @@ DEFAULT_ROLE_COLORS = _ROLE_COLORS.copy()
 
 # Registry to track button roles without attaching custom attributes
 BUTTON_ROLE_REGISTRY = {}
-BUTTON_OUTLINE_COLOR = "#1b1f23"  # dark outline for buttons
+BUTTON_OUTLINE_COLOR = config.BUTTON_OUTLINE_COLOR
 
-# Roles that should always render black text for readability,
-# regardless of background luminance
-ALWAYS_BLACK_TEXT_ROLES = {"add", "view", "delete"}
+# Roles that should always render black text for readability
+ALWAYS_BLACK_TEXT_ROLES = config.ALWAYS_BLACK_TEXT_ROLES
 
 def register_button_role(button, role="default"):
     """Register a Tk button's role for consistent restyling.
@@ -79,7 +42,7 @@ def register_button_role(button, role="default"):
     """
     try:
         BUTTON_ROLE_REGISTRY[button] = role
-    except Exception:
+    except RuntimeError:
         pass
 
 
@@ -92,7 +55,7 @@ def make_action_button(parent, text, command, role="default", font=None, width=N
     else:
         try:
             is_dark = _is_dark_color(bg)
-        except Exception:
+        except RuntimeError:
             is_dark = True
         fg_color = "white" if is_dark else "black"
     active_fg = fg_color
@@ -117,7 +80,7 @@ def make_action_button(parent, text, command, role="default", font=None, width=N
     # Track role in registry for later re-styling
     try:
         BUTTON_ROLE_REGISTRY[btn] = role
-    except Exception:
+    except RuntimeError:
         pass
     # Compact padding for charcoal role; otherwise use defaults
     pad_x = BUTTON_INTERNAL_PADX
@@ -279,7 +242,7 @@ def make_card_styles(card_bg_color: str, accent_color: str):
         lum = (0.299*r + 0.587*g + 0.114*b) / 255.0
         return lum < 0.5
     dark_bg = _is_dark(card_bg_color)
-    lbl_fg = "#cfd8dc" if dark_bg else "#1a3a5a"
+    lbl_fg = "#cfd8dc" if dark_bg else config.TEXT_COLORS['label_dark_blue']
     val_fg = "#ecf0f1" if dark_bg else "black"
     acc_fg = accent_color
     return {
@@ -290,6 +253,7 @@ def make_card_styles(card_bg_color: str, accent_color: str):
     }
 
 
+
 def _get_bg(widget, default="#e2e6e9"):
     try:
         return widget.cget("bg")
@@ -297,14 +261,16 @@ def _get_bg(widget, default="#e2e6e9"):
         return default
 
 
-def build_search_bar(parent, search_var, on_search, width=22):
+def build_search_bar(parent, search_var, on_search, width=None):
     """Create a styled search bar (Entry + Button) and pack it to the right.
 
     Returns (entry, frame) for further customization.
     """
+    if width is None:
+        width = config.WIDGET_WIDTHS['search_entry']
     bg = _get_bg(parent)
     frame = tk.Frame(parent, bg=bg)
-    frame.pack(side=tk.RIGHT, padx=10)
+    frame.pack(side=tk.RIGHT, padx=config.PADDING_H['medium'])
     entry = tk.Entry(frame, textvariable=search_var, font=FONTS["small"], width=width)
     entry.pack(side=tk.LEFT, padx=(0, 6), pady=18)
     entry.bind("<Return>", lambda e: on_search())
@@ -323,8 +289,12 @@ def create_kv_row(parent, label_text, value_text, lbl_style, val_style, bg=None)
     return row
 
 
-def add_separator(parent, color="#bdc3c7", pady=(4, 4)):
+def add_separator(parent, color=None, pady=None):
     """Add a thin horizontal separator line with consistent styling."""
+    if color is None:
+        color = config.SEPARATOR_COLOR
+    if pady is None:
+        pady = config.PADDING['default']
     sep = tk.Frame(parent, height=1, bg=color)
     sep.pack(fill=tk.X, pady=pady)
     return sep
@@ -338,8 +308,8 @@ def build_uniform_row(parent, person, bg="#e2e6e9"):
     u_txt = f"S:{person.get('Shirt Size','-')} P:{person.get('Pants Size','-')} B:{person.get('Boots Size','-')}"
     tk.Label(row, text=u_txt, font=FONTS["tiny"], bg=bg).pack(side=tk.LEFT, padx=5)
     issued = bool(person.get("Uniform Issued"))
-    status = "ISSUED" if issued else "NOT ISSUED"
-    u_fg = "#27ae60" if issued else "#e74c3c"
+    status = config.UNIFORM_STATUS_ISSUED if issued else config.UNIFORM_STATUS_NOT_ISSUED
+    u_fg = config.UNIFORM_STATUS_ISSUED_COLOR if issued else config.UNIFORM_STATUS_NOT_ISSUED_COLOR
     tk.Label(row, text=status, font=FONTS["tiny_bold"], bg=bg, fg=u_fg).pack(side=tk.RIGHT)
     return row
 
@@ -347,7 +317,7 @@ def build_uniform_row(parent, person, bg="#e2e6e9"):
 def build_info_bar(parent, person, fields, lbl_style, val_style):
     """Render a horizontal info bar of inline label/value pairs."""
     info_bar = tk.Frame(parent, bg=lbl_style.get("bg"))
-    info_bar.pack(fill=tk.X, padx=15, pady=(2, 0))
+    info_bar.pack(fill=tk.X, padx=4, pady=config.PADDING['info_bar'])
     for label, key in fields:
         tk.Label(info_bar, text=f"{label}", **lbl_style).pack(side=tk.LEFT)
         tk.Label(info_bar, text=person.get(key, "N/A"), **val_style).pack(side=tk.LEFT, padx=(3, 12))
@@ -361,23 +331,21 @@ def build_section_header(parent, text, style):
 
 def build_neo_badge(parent, neo_date):
     """Create a NEO status badge label based on the scheduled date."""
-    neo_bg = "#f1c40f"  # Default Yellow
-    neo_fg = "black"
     neo_disp = "Not Scheduled"
+    neo_bg, neo_fg = config.NEO_BADGE_COLORS['default']
+    
     date_str = (neo_date or '').strip()
     if date_str:
         neo_disp = f"NEO: {date_str}"
         today_str = datetime.now().strftime("%m/%d/%Y")
         try:
             if date_str == today_str:
-                neo_bg = "#39FF14"  # Neon Green
+                neo_bg, neo_fg = config.NEO_BADGE_COLORS['today']
             else:
-                neo_bg = "#27ae60"  # Light Green
-                # Keep text black for better readability per request
-                neo_fg = "black"
+                neo_bg, neo_fg = config.NEO_BADGE_COLORS['future']
         except Exception:
             pass
-    return tk.Label(parent, text=neo_disp, bg=neo_bg, fg=neo_fg, font=FONTS["tiny_bold"], padx=10, pady=2)
+    return tk.Label(parent, text=neo_disp, bg=neo_bg, fg=neo_fg, font=FONTS["tiny_bold"], padx=config.PADDING_H['medium'], pady=config.PADDING['badge'][0])
 
 # --- Theme helpers (centralized) ---
 def pick_initial_theme():

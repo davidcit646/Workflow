@@ -7,13 +7,13 @@ Track your work accomplishments from Friday to Thursday
 import tkinter as tk
 from tkinter import scrolledtext
 from ui_helpers import (
-    FONTS,
     make_action_button,
     show_error,
     show_info,
     show_warning,
     ask_yes_no,
 )
+import config
 import os
 import json
 from datetime import datetime, timedelta
@@ -25,14 +25,16 @@ class WeeklyTrackerGUI:
         self.root.geometry("1400x1000")
         self.root.resizable(True, True)
         
-        # Set color scheme (Match workflow.py Light Theme)
-        self.bg_color = "#e2e6e9"
-        self.fg_color = "#2c3e50"
-        self.accent_color = "#3498db"
-        self.button_color = "#27ae60"
-        self.error_color = "#e74c3c"
-        self.warning_color = "#f39c12"
-        self.card_bg_color = "#ffffff"
+        # Set color scheme from config
+        palette = config.LIGHT_PALETTE
+        self.bg_color = palette["bg_color"]
+        self.fg_color = palette["fg_color"]
+        self.accent_color = palette["accent_color"]
+        self.button_color = palette["button_color"]
+        self.error_color = palette["error_color"]
+        self.warning_color = palette["warning_color"]
+        self.card_bg_color = palette["card_bg_color"]
+        self.fonts = config.FONTS
         
         self.root.configure(bg=self.bg_color)
 
@@ -52,17 +54,19 @@ class WeeklyTrackerGUI:
         
         # Day text widgets storage
         self.day_widgets = {}
-        # Weekday list constant for reuse
-        self.days = ["Friday", "Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"]
+        self.days = config.WEEKDAY_NAMES
         
         self.create_widgets()
         self.load_week_data()
-        # Keyboard shortcuts
+        self._setup_keyboard_shortcuts()
+    
+    def _setup_keyboard_shortcuts(self) -> None:
+        """Setup keyboard shortcuts for common operations."""
         try:
             self.root.bind_all("<Control-s>", lambda e: self.save_week())
             self.root.bind_all("<Control-e>", lambda e: self.export_summary())
             self.root.bind_all("<Control-k>", lambda e: self.clear_week())
-        except Exception:
+        except RuntimeError:
             pass
     
     def get_current_work_week(self):

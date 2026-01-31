@@ -23,6 +23,7 @@ import zipfile
 import ctypes
 import struct
 import ui_helpers
+import config
 
 # Alias commonly used helpers to preserve existing references
 FONTS = ui_helpers.FONTS
@@ -351,10 +352,10 @@ class LoginDialog(tk.Toplevel):
         btn_frame.pack(pady=10)
 
         # Create standardized action buttons
-        btn_confirm = make_action_button(btn_frame, "Confirm", self.on_confirm, role="confirm", font=FONTS["button"], width=14)
+        btn_confirm = make_action_button(btn_frame, "Confirm", self.on_confirm, role="confirm", font=FONTS["button"], width=config.BUTTON_WIDTHS['dialog_button'])
         btn_confirm.pack(side=tk.LEFT, padx=12)
         btn_confirm.configure(default="active")
-        btn_exit = make_action_button(btn_frame, "Exit", self.on_cancel, role="cancel", font=FONTS["button"], width=14)
+        btn_exit = make_action_button(btn_frame, "Exit", self.on_cancel, role="cancel", font=FONTS["button"], width=config.BUTTON_WIDTHS['dialog_button'])
         btn_exit.pack(side=tk.LEFT, padx=12)
 
         # Make Enter/Return and keypad Enter invoke the Confirm button, and Escape invoke Exit
@@ -405,9 +406,9 @@ class ArchivePasswordDialog(tk.Toplevel):
                 pass
         btn_frame = tk.Frame(main_frame, bg=dlg_bg)
         btn_frame.pack(pady=10)
-        btn_confirm = make_action_button(btn_frame, "Confirm", self.on_confirm, role="confirm", font=FONTS["button"], width=14)
+        btn_confirm = make_action_button(btn_frame, "Confirm", self.on_confirm, role="confirm", font=FONTS["button"], width=config.BUTTON_WIDTHS['dialog_button'])
         btn_confirm.pack(side=tk.LEFT, padx=8)
-        btn_cancel = make_action_button(btn_frame, "Cancel", self.on_cancel, role="cancel", font=FONTS["button"], width=14)
+        btn_cancel = make_action_button(btn_frame, "Cancel", self.on_cancel, role="cancel", font=FONTS["button"], width=config.BUTTON_WIDTHS['dialog_button'])
         btn_cancel.pack(side=tk.LEFT, padx=8)
 
         self.bind("<Return>", lambda e: btn_confirm.invoke())
@@ -491,9 +492,9 @@ class ChangePasswordDialog(tk.Toplevel):
 
         btn_frame = tk.Frame(main_frame, bg=dlg_bg)
         btn_frame.pack(pady=10)
-        btn_confirm = make_action_button(btn_frame, "Change", self.on_confirm, role="confirm", font=FONTS["button"], width=14)
+        btn_confirm = make_action_button(btn_frame, "Change", self.on_confirm, role="confirm", font=FONTS["button"], width=config.BUTTON_WIDTHS['dialog_button'])
         btn_confirm.pack(side=tk.LEFT, padx=8)
-        btn_cancel = make_action_button(btn_frame, "Cancel", self.on_cancel, role="cancel", font=FONTS["button"], width=14)
+        btn_cancel = make_action_button(btn_frame, "Cancel", self.on_cancel, role="cancel", font=FONTS["button"], width=config.BUTTON_WIDTHS['dialog_button'])
         btn_cancel.pack(side=tk.LEFT, padx=8)
 
         self.bind("<Return>", lambda e: btn_confirm.invoke())
@@ -520,6 +521,7 @@ class ChangePasswordDialog(tk.Toplevel):
         self.destroy()
 
 class ArchiveViewer(tk.Toplevel):
+    """Simplified archive viewer using basic ZIP password protection."""
     def __init__(self, parent, archive_dir, password=None):
         super().__init__(parent)
         self.title("Archive Browser")
@@ -540,7 +542,7 @@ class ArchiveViewer(tk.Toplevel):
         left_frame = tk.Frame(self.paned, bg=self.bg_color)
         self.paned.add(left_frame, width=300)
         
-        tk.Label(left_frame, text="Select Candidate", font=FONTS["subtext_bold"], bg=self.bg_color, fg=self.fg_color).pack(fill=tk.X)
+        tk.Label(left_frame, text="Archives", font=FONTS["subtext_bold"], bg=self.bg_color, fg=self.fg_color).pack(fill=tk.X)
         
         self.tree = ttk.Treeview(left_frame, show="tree")
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -555,7 +557,7 @@ class ArchiveViewer(tk.Toplevel):
         right_frame = tk.Frame(self.paned, bg=self.bg_color)
         self.paned.add(right_frame)
         
-        self.title_lbl = tk.Label(right_frame, text="Candidate Details", font=FONTS["subtext_bold"], bg=self.bg_color, fg=self.fg_color, anchor="w", padx=10)
+        self.title_lbl = tk.Label(right_frame, text="Archive Details", font=FONTS["subtext_bold"], bg=self.bg_color, fg=self.fg_color, anchor="w", padx=10)
         self.title_lbl.pack(fill=tk.X)
         
         self.text_view = tk.Text(right_frame, font=FONTS["mono"], state=tk.DISABLED, undo=False, bg=self.card_bg_color, fg=self.fg_color, insertbackground=self.fg_color)
@@ -568,241 +570,143 @@ class ArchiveViewer(tk.Toplevel):
         self.load_archive_list()
 
     def load_archive_list(self):
-        """Finds .zip (plain or encrypted) files and populates the tree with their contents."""
+        """Load list of monthly archives."""
         if not os.path.exists(self.archive_dir):
             return
 
-        # Only show .zip files (no .7z)
         archives = [f for f in os.listdir(self.archive_dir) if f.endswith(".zip")]
         archives.sort(reverse=True)
 
         for arch in archives:
-            # Insert top-level archive nodes only; contents load on selection
             arch_node = self.tree.insert("", "end", text=arch, values=(arch, ""))
 
+    def on_select(self, event):
+        selected = self.tree.selection()
+        if not selected:
+            return
+        item = self.tree.item(selected[0])
+        values = item.get("values") or ()
+        
+        if not values:
+            return
+        
+        # If selecting archive node, load its contents (no password prompt yet)
+        if len(values) == 1 or not values[1]:
+            archive_name = values[0]
+            # Load archive contents
+            self.tree.delete(*self.tree.get_children(selected[0]))
+            self.load_archive_contents(archive_name, selected[0])
+        else:
+            # Otherwise it's a file node, view its contents
+            archive_name, internal_path = values[0], values[1]
+            if internal_path:
+                self.view_archive_file(archive_name, internal_path)
+
     def load_archive_contents(self, archive_name, parent_node):
-        """Lists internal folders and files for .zip (plain or encrypted) archives."""
+        """List files in the ZIP archive (with or without password protection)."""
         try:
             arch_path = os.path.join(self.archive_dir, archive_name)
-            month_nodes = {}
+            
+            # Try to read without password first
             names = []
-            # Try to open as encrypted zip first
-            encrypted = False
             try:
-                # Prefer in-process libcrypto format first
-                sec = SecurityManager(self.password)
-                dec_data = None
-                try:
-                    with open(arch_path, 'rb') as f:
-                        enc_bytes = f.read()
-                    if sec._lib:
-                        dec_data = sec._decrypt_bytes_with_lib(enc_bytes)
-                except Exception:
-                    dec_data = None
-
-                if dec_data:
-                    zbuf = io.BytesIO(dec_data)
-                    with zipfile.ZipFile(zbuf, 'r') as z:
-                        names = z.namelist()
-                    encrypted = True
-                else:
-                    # Fallback: OpenSSL CLI compatible
-                    if not self.password:
-                        show_warning(self, "Archive Password Required", "Please select the archive and enter its password to view contents.")
+                with zipfile.ZipFile(arch_path, 'r') as zf:
+                    names = zf.namelist()
+            except RuntimeError as e:
+                # Password-protected, prompt for it
+                if "Bad password" in str(e) or "password" in str(e).lower():
+                    dialog = ArchivePasswordDialog(self, prompt=f"Enter password for {archive_name}:", default="")
+                    self.wait_window(dialog)
+                    if not dialog.result:
                         return
-                    proc = subprocess.run([
-                        "openssl", "aes-256-cbc", "-d", "-pbkdf2", "-iter", "100000",
-                        "-k", str(self.password), "-in", arch_path
-                    ], capture_output=True)
-                    if proc.returncode != 0 or not proc.stdout:
-                        # If decrypt fails, try plain zip (legacy). Otherwise, report error.
-                        try:
-                            with zipfile.ZipFile(arch_path, 'r') as z:
-                                names = z.namelist()
-                            encrypted = False
-                        except Exception:
-                            show_error(self, "Archive Error", "Incorrect archive password or the archive is corrupted.")
-                            return
-                    else:
-                        data = proc.stdout
-                        zbuf = io.BytesIO(data)
-                        with zipfile.ZipFile(zbuf, 'r') as z:
-                            names = z.namelist()
-                        encrypted = True
-            except Exception:
-                # Not encrypted, try as plain zip
-                try:
-                    with zipfile.ZipFile(arch_path, 'r') as z:
-                        names = z.namelist()
-                except Exception:
-                    show_error(self, "Archive Error", "Unable to open archive. It may be encrypted or corrupted.")
+                    self.password = dialog.result
+                    
+                    # Try again with password
+                    with zipfile.ZipFile(arch_path, 'r') as zf:
+                        zf.setpassword(self.password.encode('utf-8') if isinstance(self.password, str) else self.password)
+                        names = zf.namelist()
+                else:
+                    show_error(self, "Archive Error", f"Error reading archive: {e}")
                     return
-
-            # If not encrypted, simply list contents; actual encryption
-            # will be performed when the user selects the archive node.
-
+            except Exception as e:
+                show_error(self, "Archive Error", f"Error reading archive: {e}")
+                return
+            
+            # Build tree of files organized by month
+            month_nodes = {}
             for internal_path in names:
                 if not internal_path.endswith('.txt'):
                     continue
+                
                 internal_path = internal_path.replace('\\', '/')
                 if '/' in internal_path:
                     m_folder, c_file = internal_path.split('/', 1)
                     if m_folder not in month_nodes:
                         month_nodes[m_folder] = self.tree.insert(parent_node, "end", text=m_folder)
-
+                    
                     display_name = c_file.replace(".txt", "").replace("_", " ")
                     self.tree.insert(month_nodes[m_folder], "end", text=display_name, values=(archive_name, internal_path))
         except Exception as e:
-            show_error(self, "Archive Error", f"An unexpected error occurred while listing the archive: {e}")
-
-    def on_select(self, event):
-        selected = self.tree.selection()
-        if not selected: return
-        item = self.tree.item(selected[0])
-        values = item.get("values") or ()
-        # If selecting a top-level archive node, prompt for password if needed,
-        # then ensure it's encrypted and load contents.
-        if len(values) >= 1 and (len(values) < 2 or not values[1]):
-            archive_name = values[0]
-            if not self.password:
-                dialog = ArchivePasswordDialog(self, prompt=f"Enter password for {archive_name}:", default="")
-                self.wait_window(dialog)
-                if not dialog.result:
-                    return
-                self.password = dialog.result
-            self.ensure_archive_encrypted(archive_name)
-            # Reload its contents after potential encryption
-            self.tree.delete(*self.tree.get_children(selected[0]))
-            self.load_archive_contents(archive_name, selected[0])
-            return
-        # Otherwise, it's a file node inside an archive
-        if len(values) < 2:
-            return
-        archive_name, internal_path = values[0], values[1]
-        if not internal_path:
-            return
-        self.view_archive_file(archive_name, internal_path)
-
-    def ensure_archive_encrypted(self, archive_name):
-        """Encrypts a plain .zip archive in place using the viewer password.
-        Shows a topmost confirmation dialog when encryption occurs.
-        """
-        arch_path = os.path.join(self.archive_dir, archive_name)
-        # First, detect if already encrypted by attempting decrypt
-        already_encrypted = False
-        try:
-            sec = SecurityManager(self.password)
-            with open(arch_path, 'rb') as f:
-                enc_bytes = f.read()
-            if sec._lib:
-                dec = sec._decrypt_bytes_with_lib(enc_bytes)
-                if dec:
-                    already_encrypted = True
-        except Exception:
-            pass
-
-        if already_encrypted:
-            return False
-
-        # Try open as plain zip to confirm it's not encrypted
-        try:
-            with zipfile.ZipFile(arch_path, 'r') as z:
-                _ = z.namelist()
-        except Exception:
-            # Not a plain zip either; do nothing
-            return False
-
-        # Perform encryption in place
-        try:
-            with open(arch_path, 'rb') as f:
-                zip_bytes = f.read()
-            sec = SecurityManager(self.password)
-            enc_data = None
-            try:
-                enc_data = sec._encrypt_bytes_with_lib(zip_bytes) if sec._lib else None
-            except Exception:
-                enc_data = None
-            if enc_data is None:
-                if not self.password:
-                    show_error(self, "Encryption Error", "Archive password is not set.")
-                    return False
-                proc = subprocess.Popen([
-                    "openssl", "aes-256-cbc", "-e", "-pbkdf2", "-iter", "100000",
-                    "-k", str(self.password), "-out", arch_path
-                ], stdin=subprocess.PIPE)
-                proc.communicate(input=zip_bytes)
-                if proc.returncode != 0:
-                    show_error(self, "Encryption Error", "Failed to encrypt archive.")
-                    return False
-            else:
-                with open(arch_path, 'wb') as f:
-                    f.write(enc_data)
-
-            # Confirmation dialog using shared helpers (already topmost)
-            show_info(self, "Archive Secured", "The selected archive was not password protected. It has now been secured with your archive password.")
-            return True
-        except Exception as e:
-            print(f"Error securing archive {archive_name}: {e}")
-            show_error(self, "Encryption Error", "Failed to encrypt archive.")
-            return False
-
-    # Removed: redundant topmost wrapper; show_info/show_error enforce topmost via ui_helpers.
+            show_error(self, "Archive Error", f"Error loading archive contents: {e}")
 
     def view_archive_file(self, archive_name, internal_path):
-        """Extracts file to stdout and displays in text view."""
+        """Extract and display file from ZIP (with or without password protection)."""
         try:
             arch_path = os.path.join(self.archive_dir, archive_name)
-            internal_path = internal_path.replace('\\', '/')
-            content = ''
-            # Always treat as encrypted zip; prompt for password if not set
-            if not self.password:
-                dialog = ArchivePasswordDialog(self, prompt=f"Enter password for {archive_name}:", default="")
-                self.wait_window(dialog)
-                if not dialog.result:
-                    return
-                self.password = dialog.result
+            
+            # Try to read without password first
+            content = None
             try:
-                # Try libcrypto-based format first
-                sec = SecurityManager(self.password)
-                dec_data = None
-                try:
-                    with open(arch_path, 'rb') as f:
-                        enc_bytes = f.read()
-                    if sec._lib:
-                        dec_data = sec._decrypt_bytes_with_lib(enc_bytes)
-                except Exception:
-                    dec_data = None
-
-                if dec_data:
-                    zbuf = io.BytesIO(dec_data)
-                    with zipfile.ZipFile(zbuf, 'r') as z:
-                        raw = z.read(internal_path)
+                with zipfile.ZipFile(arch_path, 'r') as zf:
+                    raw = zf.read(internal_path)
+                    if isinstance(raw, bytes):
+                        try:
+                            content = raw.decode('utf-8')
+                        except Exception:
+                            content = raw.decode('utf-8', errors='replace')
+                    else:
+                        content = str(raw)
+            except RuntimeError as e:
+                # Password-protected, prompt for it
+                if "Bad password" in str(e) or "password" in str(e).lower():
+                    dialog = ArchivePasswordDialog(self, prompt=f"Enter password for {archive_name}:", default="")
+                    self.wait_window(dialog)
+                    if not dialog.result:
+                        return
+                    self.password = dialog.result
+                    
+                    # Try again with password
+                    with zipfile.ZipFile(arch_path, 'r') as zf:
+                        zf.setpassword(self.password.encode('utf-8') if isinstance(self.password, str) else self.password)
+                        raw = zf.read(internal_path)
+                        if isinstance(raw, bytes):
+                            try:
+                                content = raw.decode('utf-8')
+                            except Exception:
+                                content = raw.decode('utf-8', errors='replace')
+                        else:
+                            content = str(raw)
                 else:
-                    # Fallback: OpenSSL CLI compatible
-                    if not self.password:
-                        raise RuntimeError("Archive password is not set")
-                    proc = subprocess.run([
-                        "openssl", "aes-256-cbc", "-d", "-pbkdf2", "-iter", "100000",
-                        "-k", str(self.password), "-in", arch_path
-                    ], capture_output=True, check=True)
-                    data = proc.stdout
-                    zbuf = io.BytesIO(data)
-                    with zipfile.ZipFile(zbuf, 'r') as z:
-                        raw = z.read(internal_path)
-
-                if isinstance(raw, bytes):
-                    try:
-                        content = raw.decode('utf-8')
-                    except Exception:
-                        content = raw.decode('utf-8', errors='replace')
-                else:
-                    content = str(raw)
-            except subprocess.CalledProcessError:
-                show_error(self, "Extraction Error", "Incorrect archive password or corrupt archive.")
-                return
+                    show_error(self, "Error", f"Could not read file: {e}")
+                    return
             except KeyError:
-                show_error(self, "Extraction Error", "File not found in archive.")
+                show_error(self, "Error", f"File not found in archive")
                 return
+            except Exception as e:
+                show_error(self, "Error", f"Could not read archived file: {e}")
+                return
+            
+            # Display in text view
+            if content:
+                self.title_lbl.config(text=internal_path.split('/')[-1])
+                self.text_view.config(state=tk.NORMAL)
+                self.text_view.delete("1.0", tk.END)
+                self.text_view.insert(tk.END, content)
+                self.text_view.config(state=tk.DISABLED)
+        except Exception as e:
+            show_error(self, "Error", f"Could not read archived file: {e}")
+
+
 
             # Update UI
             self.title_lbl.config(text=f"Viewing: {os.path.basename(internal_path)}")
@@ -857,14 +761,14 @@ class WorkflowGUI:
         except Exception:
             pass
         
-        # Set color scheme (Light Theme upgrade)
-        self.bg_color = "#e2e6e9" # Slightly darker gray for better contrast
-        self.fg_color = "#2c3e50"
-        self.accent_color = "#3498db"
-        self.button_color = "#27ae60"
-        self.error_color = "#e74c3c"
-        self.warning_color = "#f39c12"
-        self.card_bg_color = "#ffffff" # Pure White
+        # Set color scheme (using config.CURRENT_PALETTE - themes update this at runtime)
+        self.bg_color = CURRENT_PALETTE.get('bg_color', config.LIGHT_PALETTE['bg_color'])
+        self.fg_color = CURRENT_PALETTE.get('fg_color', config.LIGHT_PALETTE['fg_color'])
+        self.accent_color = CURRENT_PALETTE.get('accent_color', config.LIGHT_PALETTE['accent_color'])
+        self.button_color = CURRENT_PALETTE.get('button_color', config.LIGHT_PALETTE['button_color'])
+        self.error_color = CURRENT_PALETTE.get('error_color', config.LIGHT_PALETTE['error_color'])
+        self.warning_color = CURRENT_PALETTE.get('warning_color', config.LIGHT_PALETTE['warning_color'])
+        self.card_bg_color = CURRENT_PALETTE.get('card_bg_color', config.LIGHT_PALETTE['card_bg_color'])
 
         # Shared form fonts and styles (centralized tokens)
         self.form_label_font = FONTS["small"]
@@ -901,11 +805,11 @@ class WorkflowGUI:
         self._autosave_interval_ms = 60_000
         self._autosave_after_id = None
         
-        # Archiving Configuration
+        self.root.configure(bg=self.bg_color)
+        
+        # Archive Configuration
         base_dir = os.path.dirname(os.path.abspath(__file__))
         self.archive_dir = os.path.join(base_dir, "data", "Archive")
-        
-        self.root.configure(bg=self.bg_color)
         
         # Data Setup
         base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -978,6 +882,43 @@ class WorkflowGUI:
         entry = tk.Entry(parent, font=self.form_entry_font, bg=field_bg, fg=self.fg_color, insertbackground=self.fg_color, **(entry_kwargs or {}))
         entry.grid(row=row, column=entry_col, columnspan=colspan, sticky="ew", padx=(10, 0), pady=5)
         return entry
+
+    def _build_entry_fields(self, parent, fields, entries, person=None, label_col=0, entry_col=1, colspan=1):
+        """Build a set of labeled entries from (label, key) field tuples."""
+        for i, (label, key) in enumerate(fields):
+            entry = self._label_and_entry(parent, label, i, label_col=label_col, entry_col=entry_col, colspan=colspan)
+            if person and key in person:
+                entry.insert(0, person[key])
+            entries[key] = entry
+
+    def _create_checkbox(self, parent, text, variable, font="small", side=tk.LEFT, padx=(4, 8), **kwargs):
+        """Create a styled checkbox widget and pack it."""
+        checkbox_kwargs = {
+            "bg": self.bg_color,
+            "fg": self.fg_color,
+            "activeforeground": self.fg_color,
+            "selectcolor": CURRENT_PALETTE.get('checkbox_select_color', '#000000'),
+            "font": FONTS[font],
+        }
+        checkbox_kwargs.update(kwargs)
+        cb = tk.Checkbutton(parent, text=text, variable=variable, **checkbox_kwargs)
+        cb.pack(side=side, padx=padx)
+        return cb
+
+    def _create_radiobutton(self, parent, text, variable, value, font="small", side=tk.LEFT, padx=(0, 10), **kwargs):
+        """Create a styled radiobutton widget and pack it."""
+        rb_kwargs = {
+            "bg": self.bg_color,
+            "fg": self.fg_color,
+            "selectcolor": CURRENT_PALETTE.get('checkbox_select_color', '#000000'),
+            "activebackground": self.bg_color,
+            "activeforeground": self.fg_color,
+            "font": FONTS[font],
+        }
+        rb_kwargs.update(kwargs)
+        rb = tk.Radiobutton(parent, text=text, variable=variable, value=value, **rb_kwargs)
+        rb.pack(side=side, padx=padx)
+        return rb
 
     def run_security_check(self):
         """Program first-time setup and data encryption handling.
@@ -1201,7 +1142,7 @@ class WorkflowGUI:
         toggle_txt.trace_add("write", _sync_btn_text)
         
         # Add Button in Title Bar
-        pack_action_button(self.title_frame, "+ Add Person", self.open_add_dialog, role="add", font=FONTS["button"], width=14, side=tk.RIGHT, padx=10)
+        pack_action_button(self.title_frame, "+ Add Person", self.open_add_dialog, role="add", font=FONTS["button"], width=config.BUTTON_WIDTHS['dialog_button'], side=tk.RIGHT, padx=10)
         
         # Compact stacked Export/Archives group to the right
         # Right-side stacked action column; match ribbon color
@@ -1211,13 +1152,13 @@ class WorkflowGUI:
         pack_action_button(self._title_stack, "Export CSV", self.export_current_view_csv, role="view", font=FONTS["micro_bold"], width=18, compact=True, side=tk.TOP)
         pack_action_button(self._title_stack, "View Archives", self.open_archive_viewer, role="view", font=FONTS["micro_bold"], width=18, compact=True, side=tk.TOP, pady=2)
         # Change Program Password (wider, edit color)
-        pack_action_button(self.title_frame, "Change Password", self.change_program_password, role="edit", font=FONTS["button"], width=20, side=tk.RIGHT, padx=10)
+        pack_action_button(self.title_frame, "Change Password", self.change_program_password, role="edit", font=FONTS["button"], width=config.BUTTON_WIDTHS['tools_button'], side=tk.RIGHT, padx=10)
         # Theme toggle button (updates label on switch)
         try:
             current = getattr(self, '_current_theme', 'light')
             btn_txt = f"Theme: {current.capitalize()}"
             # Make the theme toggle wider and reduce side padding
-            self._theme_btn = pack_action_button(self.title_frame, btn_txt, self.toggle_theme, role="charcoal", font=FONTS["button"], width=20, side=tk.RIGHT, padx=4)
+            self._theme_btn = pack_action_button(self.title_frame, btn_txt, self.toggle_theme, role="charcoal", font=FONTS["button"], width=config.BUTTON_WIDTHS['tools_button'], side=tk.RIGHT, padx=4)
         except Exception:
             self._theme_btn = None
 
@@ -1229,26 +1170,26 @@ class WorkflowGUI:
         self.filters_container.pack_propagate(False)
         self.filters_frame = tk.Frame(self.filters_container, bg=self.bg_color)
         self.filters_frame.pack(fill=tk.X)
-        tk.Label(self.filters_frame, text="Branch:", bg=self.bg_color, fg=self.fg_color, font=FONTS["small"]).pack(side=tk.LEFT)
+        tk.Label(self.filters_frame, text=config.DIALOG_FIELD_LABELS['branch'], bg=self.bg_color, fg=self.fg_color, font=FONTS["small"]).pack(side=tk.LEFT)
         self._branch_var = tk.StringVar(value=self.filter_branch)
-        branch_vals = ["All", "Salem", "Portland"]
-        ttk.Combobox(self.filters_frame, textvariable=self._branch_var, values=branch_vals, state="readonly", width=10).pack(side=tk.LEFT, padx=(6, 12))
+        branch_vals = config.BRANCH_OPTIONS
+        ttk.Combobox(self.filters_frame, textvariable=self._branch_var, values=branch_vals, state="readonly", width=config.WIDGET_WIDTHS['branch_combo']).pack(side=tk.LEFT, padx=(6, 12))
         tk.Label(self.filters_frame, text="Mgr:", bg=self.bg_color, fg=self.fg_color, font=FONTS["small"]).pack(side=tk.LEFT)
         self._manager_var = tk.StringVar(value=self.filter_manager)
         mgr_vals = ["All"] + sorted(list({(p.get("Manager Name") or '').strip() for p in self.people_data if p.get("Manager Name")}))
-        ttk.Combobox(self.filters_frame, textvariable=self._manager_var, values=mgr_vals, state="readonly", width=18).pack(side=tk.LEFT, padx=(6, 12))
+        ttk.Combobox(self.filters_frame, textvariable=self._manager_var, values=mgr_vals, state="readonly", width=config.WIDGET_WIDTHS['manager_combo']).pack(side=tk.LEFT, padx=(6, 12))
         self._bg_var = tk.BooleanVar(value=self.filter_has_bg)
         self._cori_var = tk.BooleanVar(value=self.filter_has_cori)
         self._nh_var = tk.BooleanVar(value=self.filter_has_nh)
         self._me_var = tk.BooleanVar(value=self.filter_has_me)
-        tk.Checkbutton(self.filters_frame, text="BG", variable=self._bg_var, bg=self.bg_color, fg=self.fg_color, activeforeground=self.fg_color, font=FONTS["small"]).pack(side=tk.LEFT, padx=(4, 8))
-        tk.Checkbutton(self.filters_frame, text="CORI", variable=self._cori_var, bg=self.bg_color, fg=self.fg_color, activeforeground=self.fg_color, font=FONTS["small"]).pack(side=tk.LEFT, padx=(4, 8))
-        tk.Checkbutton(self.filters_frame, text="NH GC", variable=self._nh_var, bg=self.bg_color, fg=self.fg_color, activeforeground=self.fg_color, font=FONTS["small"]).pack(side=tk.LEFT, padx=(4, 8))
-        tk.Checkbutton(self.filters_frame, text="ME GC", variable=self._me_var, bg=self.bg_color, fg=self.fg_color, activeforeground=self.fg_color, font=FONTS["small"]).pack(side=tk.LEFT, padx=(4, 8))
+        self._create_checkbox(self.filters_frame, "BG", self._bg_var)
+        self._create_checkbox(self.filters_frame, "CORI", self._cori_var)
+        self._create_checkbox(self.filters_frame, "NH GC", self._nh_var)
+        self._create_checkbox(self.filters_frame, "ME GC", self._me_var)
         self._unsched_var = tk.BooleanVar(value=self.show_unscheduled)
         self._sched_var = tk.BooleanVar(value=self.show_scheduled)
-        tk.Checkbutton(self.filters_frame, text="Show Unscheduled", variable=self._unsched_var, bg=self.bg_color, fg=self.fg_color, activeforeground=self.fg_color, font=FONTS["small"]).pack(side=tk.LEFT, padx=(12, 8))
-        tk.Checkbutton(self.filters_frame, text="Show Scheduled", variable=self._sched_var, bg=self.bg_color, fg=self.fg_color, activeforeground=self.fg_color, font=FONTS["small"]).pack(side=tk.LEFT, padx=(4, 8))
+        self._create_checkbox(self.filters_frame, "Show Unscheduled", self._unsched_var, padx=(12, 8))
+        self._create_checkbox(self.filters_frame, "Show Scheduled", self._sched_var)
         # Apply Filters as charcoal to match search and arrows
         pack_action_button(self.filters_frame, "Apply Filters", self._apply_filters_and_refresh, role="charcoal", font=FONTS["button"], side=tk.RIGHT, padx=10)
 
@@ -1263,7 +1204,7 @@ class WorkflowGUI:
 
         # Scrollable Canvas Area
         self.container = tk.Frame(self.root, bg=self.bg_color)
-        self.container.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        self.container.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
         
         self.canvas = tk.Canvas(self.container, bg=self.bg_color, highlightthickness=0)
         scrollbar = ttk.Scrollbar(self.container, orient="vertical", command=self.canvas.yview)
@@ -1281,11 +1222,11 @@ class WorkflowGUI:
         # Dual-Column Structure inside scrollable_frame
         self.dashboard_frame = tk.Frame(self.scrollable_frame, bg=self.bg_color)
         self.dashboard_frame.pack(fill=tk.BOTH, expand=True)
-        self.dashboard_frame.columnconfigure(0, weight=2) # Left - Unscheduled (Compact) - Expanded
-        self.dashboard_frame.columnconfigure(1, weight=3) # Right - Scheduled (Detailed)
+        self.dashboard_frame.columnconfigure(0, weight=1) # Left - Unscheduled (Compact)
+        self.dashboard_frame.columnconfigure(1, weight=4) # Right - Scheduled (Detailed)
         
         self.left_col = tk.Frame(self.dashboard_frame, bg=self.bg_color)
-        self.left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        self.left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
         
         self.right_col = tk.Frame(self.dashboard_frame, bg=self.bg_color)
         self.right_col.grid(row=0, column=1, sticky="nsew")
@@ -1544,11 +1485,12 @@ class WorkflowGUI:
 
     def bind_mousewheel(self, widget, callback):
         """Recursively bind mousewheel to a widget and all its children"""
-        widget.bind("<MouseWheel>", callback)
-        widget.bind("<Button-4>", callback)
-        widget.bind("<Button-5>", callback)
-        for child in widget.winfo_children():
-            self.bind_mousewheel(child, callback)
+        if getattr(self, "_mousewheel_bound", False):
+            return
+        self._mousewheel_bound = True
+        widget.bind_all("<MouseWheel>", callback)
+        widget.bind_all("<Button-4>", callback)
+        widget.bind_all("<Button-5>", callback)
 
     def _on_frame_configure(self, event):
         """Reset the scroll region to encompass the inner frame and adjust width"""
@@ -1583,15 +1525,9 @@ class WorkflowGUI:
             lbl.pack(pady=50)
             return
 
-        # Split into Scheduled and Unscheduled
-        scheduled = []
-        unscheduled = []
-        
-        for person in self.people_data:
-            if person.get("NEO Scheduled Date", "").strip():
-                scheduled.append(person)
-            else:
-                unscheduled.append(person)
+        # Split into Scheduled and Unscheduled using list comprehensions
+        scheduled = [p for p in self.people_data if p.get("NEO Scheduled Date", "").strip()]
+        unscheduled = [p for p in self.people_data if not p.get("NEO Scheduled Date", "").strip()]
 
         # Sort Scheduled: Date then Name
         def get_scheduled_key(person):
@@ -1611,9 +1547,10 @@ class WorkflowGUI:
         scheduled = [p for p in scheduled if self._passes_filters(p, scheduled=True)] if self.show_scheduled else []
         unscheduled = [p for p in unscheduled if self._passes_filters(p, scheduled=False)] if self.show_unscheduled else []
 
-        # Headers for columns
-        tk.Label(self.left_col, text="UNSCHEDULED", font=FONTS["subtext_bold"], bg=self.bg_color, fg="#e74c3c").pack(pady=(10, 5), anchor="w")
-        tk.Label(self.right_col, text="SCHEDULED NEO", font=FONTS["subtext_bold"], bg=self.bg_color, fg="#27ae60").pack(pady=(10, 5), anchor="w")
+        # Headers for columns - only show unscheduled header if there are unscheduled people
+        if unscheduled:
+            tk.Label(self.left_col, text=config.LABEL_TEXT['unscheduled_section'], font=FONTS["subtext_bold"], bg=self.bg_color, fg=config.TEXT_COLORS['section_unscheduled']).pack(pady=(10, 5), anchor="w")
+        tk.Label(self.right_col, text=config.LABEL_TEXT['scheduled_section'], font=FONTS["subtext_bold"], bg=self.bg_color, fg=config.TEXT_COLORS['section_scheduled']).pack(pady=(10, 5), anchor="w")
 
         # Create blocks in Left Column (Compact)
         for person in unscheduled:
@@ -1664,13 +1601,17 @@ class WorkflowGUI:
         
         # --- HEADER ---
         header_frame = tk.Frame(card, bg=self.card_bg_color)
-        header_frame.pack(fill=tk.X, padx=10 if compact else 15, pady=(2, 2) if compact else (5, 5))
+        header_frame.pack(fill=tk.X, padx=2 if compact else 4, pady=(2, 2) if compact else (5, 5))
         
         name_label = person.get('Name', 'Unknown').upper()
         if not compact:
             name_label = f"{name_label}    EID {person.get('Employee ID', 'N/A')}"
-            
-        tk.Label(header_frame, text=name_label, **header_val_style).pack(side=tk.LEFT)
+        
+        # In compact mode, limit name width to allow buttons to be visible
+        name_lbl_widget = tk.Label(header_frame, text=name_label, anchor="w", justify=tk.LEFT, **header_val_style)
+        if compact:
+            name_lbl_widget.config(wraplength=250)  # Allow name to wrap so buttons aren't cut off
+        name_lbl_widget.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 0))
 
         # Buttons (Edit only for compact, Full set for detailed)
         btn_frame = tk.Frame(header_frame, bg=self.card_bg_color)
@@ -1678,13 +1619,13 @@ class WorkflowGUI:
         
         if compact:
             # compact view: Edit, Delete
-            pack_action_button(btn_frame, "Edit", lambda i=index: self.open_edit_dialog(i), role="edit", font=FONTS["button"], width=10)
-            pack_action_button(btn_frame, "Delete", lambda i=index: self.delete_person(i), role="delete", font=FONTS["button"], width=10)
+            pack_action_button(btn_frame, "Edit", lambda i=index: self.open_edit_dialog(i), role="edit", font=FONTS["button"], width=config.BUTTON_WIDTHS['action_button'], padx=1)
+            pack_action_button(btn_frame, "Delete", lambda i=index: self.delete_person(i), role="delete", font=FONTS["button"], width=config.BUTTON_WIDTHS['action_button'], padx=1)
         else:
             # detailed view: Archive, Edit, Delete
-            pack_action_button(btn_frame, "Archive", lambda i=index: self.archive_person(i), role="archive", font=FONTS["button"], width=10)
-            pack_action_button(btn_frame, "Edit", lambda i=index: self.open_edit_dialog(i), role="edit", font=FONTS["button"], width=10)
-            pack_action_button(btn_frame, "Delete", lambda i=index: self.delete_person(i), role="delete", font=FONTS["button"], width=10)
+            pack_action_button(btn_frame, "Archive", lambda i=index: self.archive_person(i), role="archive", font=FONTS["button"], width=config.BUTTON_WIDTHS['action_button'], padx=1)
+            pack_action_button(btn_frame, "Edit", lambda i=index: self.open_edit_dialog(i), role="edit", font=FONTS["button"], width=config.BUTTON_WIDTHS['action_button'], padx=1)
+            pack_action_button(btn_frame, "Delete", lambda i=index: self.delete_person(i), role="delete", font=FONTS["button"], width=config.BUTTON_WIDTHS['action_button'], padx=1)
 
         # NEO Status Label (Only for Detailed Mode)
         if not compact:
@@ -1707,24 +1648,16 @@ class WorkflowGUI:
 
         # --- CONTENT AREA ---
         content_box = tk.Frame(card, bg=self.card_bg_color, bd=1, relief=tk.SOLID)
-        content_box.pack(fill=tk.X, padx=10 if compact else 15, pady=5)
+        content_box.pack(fill=tk.X, padx=4 if compact else 6, pady=5)
 
         # Requirements Section (Compact or Detailed)
         req_frame = tk.Frame(content_box, bg=self.bg_color)
         req_frame.pack(fill=tk.X, padx=5, pady=5)
         
-        tk.Label(req_frame, text="Required Items:", font=FONTS["tiny_bold"] if compact else FONTS["small"], bg=self.bg_color, fg="#1a3a5a").pack(side=tk.LEFT, padx=5)
+        tk.Label(req_frame, text=config.LABEL_TEXT['required_items'], font=FONTS["tiny_bold"] if compact else FONTS["small"], bg=self.bg_color, fg=config.TEXT_COLORS['label_dark_blue']).pack(side=tk.LEFT, padx=5)
         
-        # Hardcoded requirements (others like CORI are handled dynamically)
-        requirements = [
-            ("Drug Test", "Drug Test"), ("Onboarding", "Onboarding Packets"), 
-            ("I-9 Section", "I-9 Section 1")
-        ]
-        
-        active_reqs = []
-        for data_key, label in requirements:
-            if person.get(data_key):
-                active_reqs.append(label)
+        # Use list comprehension for cleaner code
+        active_reqs = [label for data_key, label in config.REQUIRED_ITEMS if person.get(data_key)]
 
         # --- DYNAMIC CLEARANCES LOGIC ---
         clearances = []
@@ -1784,7 +1717,7 @@ class WorkflowGUI:
 
         if compact:
             # Add a bottom border and END HERE for compact
-            tk.Frame(card, height=1, bg="#bdc3c7").pack(fill=tk.X, pady=(5, 0))
+            tk.Frame(card, height=1, bg=config.SEPARATOR_COLOR).pack(fill=tk.X, pady=(5, 0))
             return
 
         # --- THREE-COLUMN DETAILED INFO ---
@@ -1809,7 +1742,7 @@ class WorkflowGUI:
         create_kv_row(col1, "Exp", person.get("Exp.", "N/A"), lbl_style, val_style, self.card_bg_color)
         create_kv_row(col1, "DOB", person.get("DOB", "N/A"), lbl_style, val_style, self.card_bg_color)
         # Visual separator between ID details and SSN for readability
-        add_separator(col1, color="#bdc3c7", pady=(2, 4))
+        add_separator(col1, color=config.SEPARATOR_COLOR, pady=config.PADDING['tight'])
         create_kv_row(col1, "SSN", person.get("Social", "N/A"), lbl_style, val_style, self.card_bg_color)
 
         # COLUMN 2: CLEARANCES
@@ -1870,7 +1803,7 @@ class WorkflowGUI:
 
         # Separator between BG/MVR and the rest
         if (bg_date or mvr_shown) and core_rows:
-            add_separator(col2, color="#bdc3c7", pady=(4, 4))
+            add_separator(col2, color=config.SEPARATOR_COLOR, pady=config.PADDING['default'])
 
         for label_text, value_text in core_rows:
             create_kv_row(col2, label_text, value_text, lbl_style, val_style, self.card_bg_color)
@@ -1894,7 +1827,7 @@ class WorkflowGUI:
         if dd_present:
             # Separator between core clearances and Direct Deposit section
             if rendered_any:
-                add_separator(col2, color="#bdc3c7", pady=(6, 4))
+                add_separator(col2, color=config.SEPARATOR_COLOR, pady=config.PADDING['loose'])
 
             build_section_header(col2, "Direct Deposit Info", accent_lbl_style).pack(anchor="w", pady=(0, 5))
             if dd_bank:
@@ -1916,7 +1849,7 @@ class WorkflowGUI:
         create_kv_row(col3, "Email", person.get('Candidate Email', 'N/A'), lbl_style, val_style, self.card_bg_color)
 
         # Separator before Emergency Contact
-        add_separator(col3, color="#bdc3c7", pady=(6, 4))
+        add_separator(col3, color=config.SEPARATOR_COLOR, pady=config.PADDING['loose'])
 
         # Emergency Contact section with consistent styling
         build_section_header(col3, "Emergency Contact", accent_lbl_style).pack(anchor="w")
@@ -1926,22 +1859,23 @@ class WorkflowGUI:
             create_kv_row(col3, "Rel", person.get('EC Relationship',''), lbl_style, val_style, self.card_bg_color)
             create_kv_row(col3, "Phone", person.get('EC Phone Number',''), lbl_style, val_style, self.card_bg_color)
         else:
-            muted = lbl_style.copy(); muted["fg"] = "#7f8c8d"
+            muted = lbl_style.copy(); muted["fg"] = config.TEXT_COLORS['label_muted']
             tk.Label(col3, text="Not Provided", **muted).pack(anchor="w")
 
         # Uniform Sub-row
         build_uniform_row(col3, person, bg=self.bg_color)
 
-        # Notes Section (Row 4, spans all columns)
+        # Notes Section (moved to bottom, only shows if present)
         notes = person.get("Notes", "").strip()
         if notes:
-            notes_frame = tk.Frame(details_container, bg=self.card_bg_color, bd=1, relief=tk.GROOVE, padx=10, pady=5)
-            notes_frame.pack(fill=tk.X, expand=True, padx=3, pady=(5,0))
+            add_separator(card, color=config.SEPARATOR_COLOR, pady=config.PADDING['section_top'])
+            notes_frame = tk.Frame(card, bg=self.card_bg_color, padx=10 if compact else 15, pady=5)
+            notes_frame.pack(fill=tk.X, padx=10 if compact else 15, pady=5)
             tk.Label(notes_frame, text="Additional Notes:", font=FONTS["tiny_bold"], bg=self.card_bg_color, fg="#7f8c8d").pack(anchor="w")
             tk.Label(notes_frame, text=notes, font=FONTS["tiny"], bg=self.card_bg_color, wraplength=800, justify=tk.LEFT).pack(anchor="w")
 
         # Bottom Border
-        add_separator(card, color="#bdc3c7", pady=(10, 0))
+        add_separator(card, color=config.SEPARATOR_COLOR, pady=config.PADDING['section_top'])
 
     # --- Search & Scroll Helpers ---
     def search_person(self):
@@ -2115,14 +2049,9 @@ class WorkflowGUI:
 
         rows = []
         if choice == 'filtered':
-            # Build rows using current filters (mirrors refresh_blocks logic)
-            scheduled = []
-            unscheduled = []
-            for person in self.people_data:
-                if (person.get('NEO Scheduled Date', '') or '').strip():
-                    scheduled.append(person)
-                else:
-                    unscheduled.append(person)
+            # Build rows using current filters with list comprehensions (mirrors refresh_blocks logic)
+            scheduled = [p for p in self.people_data if (p.get('NEO Scheduled Date', '') or '').strip()]
+            unscheduled = [p for p in self.people_data if not (p.get('NEO Scheduled Date', '') or '').strip()]
 
             def get_scheduled_key(p):
                 date_str = (p.get('NEO Scheduled Date', '') or '').strip()
@@ -2144,10 +2073,8 @@ class WorkflowGUI:
             else:
                 unscheduled = []
 
-            for p in unscheduled:
-                rows.append(person_to_row(p))
-            for p in scheduled:
-                rows.append(person_to_row(p))
+            # Use list comprehension to build rows from both lists
+            rows = [person_to_row(p) for p in unscheduled] + [person_to_row(p) for p in scheduled]
         else:
             # Export all people, ignore filters
             rows = [person_to_row(p) for p in (self.people_data or [])]
@@ -2341,7 +2268,7 @@ class WorkflowGUI:
             )
         except Exception:
             pass
-        pack_action_button(btn_bar, 'Close', win.destroy, role='cancel', font=FONTS['button'], width=10, side=tk.RIGHT)
+        pack_action_button(btn_bar, 'Close', win.destroy, role='cancel', font=FONTS['button'], width=config.BUTTON_WIDTHS['action_button'], side=tk.RIGHT)
 
     def _scroll_to_widget(self, widget):
         """Scroll so the widget's top sits just below the header area.
@@ -2417,10 +2344,18 @@ class WorkflowGUI:
         for w in list(self._flash_states.keys()):
             self._cancel_flash_for(w, restore=True)
 
-    def _flash_widget(self, root_widget, highlight="#fff3bf", hold_ms=100, fade_ms=1000, fade_steps=20):
+    def _flash_widget(self, root_widget, highlight=None, hold_ms=None, fade_ms=None, fade_steps=None):
         """Gentle highlight: one-time highlight, hold for ~1s, then fade out ~1s.
         Robust against rapid re-triggers and restores original colors.
         """
+        if highlight is None:
+            highlight = config.FLASH_COLORS['highlight']
+        if hold_ms is None:
+            hold_ms = config.FLASH_COLORS['hold_ms']
+        if fade_ms is None:
+            fade_ms = config.FLASH_COLORS['fade_ms']
+        if fade_steps is None:
+            fade_steps = config.FLASH_COLORS['fade_steps']
         # Clear any pending start marker
         self._pending_flash_id = None
 
@@ -2580,189 +2515,149 @@ class WorkflowGUI:
             self.save_data()
             self.refresh_blocks()
 
+    def _calculate_neo_hours(self, start_time: str, end_time: str) -> str:
+        """Calculate NEO hours from time strings in HHMM format."""
+        try:
+            if not start_time or not end_time:
+                return "N/A"
+            start_str = (start_time or '').strip().replace(':', '')
+            end_str = (end_time or '').strip().replace(':', '')
+            if not start_str or not end_str:
+                return "N/A"
+            if len(start_str) < 4 or len(end_str) < 4:
+                return "N/A"
+            start_mins = int(start_str[:2]) * 60 + int(start_str[2:4])
+            end_mins = int(end_str[:2]) * 60 + int(end_str[2:4])
+            if end_mins < start_mins:
+                end_mins += 24 * 60
+            total_mins = end_mins - start_mins
+            hours = total_mins // 60
+            mins = total_mins % 60
+            return f"{hours}h {mins}m" if mins else f"{hours}h"
+        except (ValueError, IndexError):
+            return "N/A"
+
+    def _parse_archive_date(self, neo_date_str: str) -> tuple:
+        """Parse NEO date and return (month_folder, year)."""
+        try:
+            if not neo_date_str:
+                now = datetime.now()
+                return now.strftime("%m_%B"), now.strftime("%Y")
+            parts = neo_date_str.strip().split('/')
+            if len(parts) < 3:
+                now = datetime.now()
+                return now.strftime("%m_%B"), now.strftime("%Y")
+            mm = parts[0].zfill(2)
+            yyyy = parts[2]
+            month_name = config.MONTHS.get(mm, "Unknown")
+            return f"{mm}_{month_name}", yyyy
+        except Exception:
+            now = datetime.now()
+            return now.strftime("%m_%B"), now.strftime("%Y")
+
+    def _build_archive_text(self, person: dict, start_time: str, end_time: str, total_hours: str) -> str:
+        """Build formatted archive text content."""
+        req_name = person.get("Name", "Unknown")
+        req_eid = person.get("Employee ID", "N/A")
+        req_neo = person.get("NEO Scheduled Date", "N/A")
+        now = datetime.now()
+
+        # Build archive text using a single list definition
+        parts = [
+            f"FILE ARCHIVED: {now.strftime('%m-%d-%Y %H%M')}",
+            "",
+            f"== {config.ARCHIVE_SECTIONS['candidate_info']} ==",
+            f"Name: {req_name}",
+            f"Employee ID: {req_eid}",
+            f"Hire Date (NEO): {req_neo}",
+            f"Job Name: {person.get('Job Name', 'N/A')}",
+            f"Job Location: {person.get('Job Location', 'N/A')}",
+            f"Branch: {person.get('Branch', 'N/A')}",
+            "",
+            f"== {config.ARCHIVE_SECTIONS['neo_hours']} ==",
+            f"Start: {start_time if start_time else 'N/A'}",
+            f"End:   {end_time if end_time else 'N/A'}",
+            f"Total Hours: {total_hours}",
+            "",
+            f"== {config.ARCHIVE_SECTIONS['uniform_sizes']} ==",
+            f"Shirt: {person.get('Shirt Size', 'N/A')}",
+            f"Pants: {person.get('Pants Size', 'N/A')}",
+            f"Boots: {person.get('Boots Size', 'N/A')}",
+            "",
+        ]
+
+        notes_text = (person.get('Notes') or '').strip()
+        if notes_text:
+            parts.extend([
+                f"== {config.ARCHIVE_SECTIONS['notes']} ==",
+                *[line.rstrip() for line in notes_text.splitlines()],
+                "",
+            ])
+
+        parts.append("-" * 40)
+        return "\n".join(parts)
+
     def archive_person(self, index):
+        """Create a password-protected ZIP archive for a person."""
         person = self.people_data[index]
         
-        # 1. Validation for Required Fields
+        # Validation for Required Fields
         req_name = person.get("Name", "").strip()
         req_eid = person.get("Employee ID", "").strip()
         req_neo = person.get("NEO Scheduled Date", "").strip()
 
         if not all([req_name, req_eid, req_neo]):
-            show_error(self.root, "Error", "Cannot archive! Go back and make sure the required fields are filled out.")
+            show_error(self.root, "Error", "Cannot archive! Make sure Name, Employee ID, and NEO Scheduled Date are filled.")
             return
 
-        if not ask_yes_no(self.root, "Confirm Archive", f"Archive {req_name} and remove from active list?\n(PII like SSN and ID numbers will be stripped)"):
+        if not ask_yes_no(self.root, "Confirm Archive", f"Archive {req_name} and remove from active list?"):
             return
 
         try:
-            # 2. Extract Data (Stripping PII)
-            # We exclude: Social, DOB, ID No., Exp., Other ID
-            exclude_fields = ["Social", "DOB", "ID No.", "Exp.", "Other ID", "State ID", "Driver's License", "Pass Port"]
-            
-            # 3. Prompt for NEO Hours
-            start_time = simpledialog.askstring("NEO Hours", f"Enter Start Time for {req_name} (e.g., 0800):")
-            end_time = simpledialog.askstring("NEO Hours", f"Enter End Time for {req_name} (e.g., 1700):")
-            
-            total_hours = "N/A"
-            if start_time and end_time:
-                try:
-                    # Clean inputs
-                    s = start_time.replace(":", "").strip()
-                    e = end_time.replace(":", "").strip()
-                    
-                    if len(s) == 4 and len(e) == 4:
-                        s_mins = int(s[:2]) * 60 + int(s[2:])
-                        e_mins = int(e[:2]) * 60 + int(e[2:])
-                        total_hours = round((e_mins - s_mins) / 60.0, 2)
-                except:
-                    pass
-
-            # 4. Format Archive Content (TRIMMED)
-            # Only include: Name, EID, Hire Date, NEO Hours, Job Name, Job Location, Branch, Sizes
-            now = datetime.now()
-            # Build a human-friendly, sectioned archive body
-            parts = []
-            parts.append(f"FILE ARCHIVED: {now.strftime('%m-%d-%Y %H%M')}")
-            parts.append("")
-            parts.append("== Candidate Info ==")
-            parts.append(f"Name: {req_name}")
-            parts.append(f"Employee ID: {req_eid}")
-            parts.append(f"Hire Date (NEO): {req_neo}")
-            parts.append(f"Job Name: {person.get('Job Name', 'N/A')}")
-            parts.append(f"Job Location: {person.get('Job Location', 'N/A')}")
-            parts.append(f"Branch: {person.get('Branch', 'N/A')}")
-            parts.append("")
-            parts.append("== NEO Hours ==")
-            parts.append(f"Start: {start_time if start_time else 'N/A'}")
-            parts.append(f"End:   {end_time if end_time else 'N/A'}")
-            parts.append(f"Total Hours: {total_hours}")
-            parts.append("")
-            parts.append("== Uniform Sizes ==")
-            parts.append(f"Shirt: {person.get('Shirt Size', 'N/A')}")
-            parts.append(f"Pants: {person.get('Pants Size', 'N/A')}")
-            parts.append(f"Boots: {person.get('Boots Size', 'N/A')}")
-            parts.append("")
-            # Optional notes (kept short)
-            notes_text = (person.get('Notes') or '').strip()
-            if notes_text:
-                parts.append("== Notes ==")
-                parts.extend([line.rstrip() for line in notes_text.splitlines()])
-                parts.append("")
-
-            parts.append("-" * 40)
-            file_body = "\n".join(parts)
-
-            # 4. Zip Encryption Logic
-            # Create data/Archive if not exists
-            os.makedirs(self.archive_dir, exist_ok=True)
-            
-            # Parse year and month for folder structure
-            try:
-                # Assuming MM/DD/YYYY format
-                parts = req_neo.split('/')
-                h_month = parts[0]
-                h_year = parts[2]
-                
-                m_name = MONTHS.get(h_month, "Unknown_Month")
-                month_folder = f"{h_month}_{m_name}"
-            except:
-                # Fallback to current date if parsing fails
-                h_year = now.strftime("%Y")
-                month_folder = now.strftime("%m_%B")
-
-            # Temporary file paths
-            clean_name = re.sub(r'[^a-zA-Z0-9]', '_', req_name)
-            temp_month_path = os.path.join(self.archive_dir, month_folder)
-            os.makedirs(temp_month_path, exist_ok=True)
-            
-            temp_file_name = f"{clean_name}.txt"
-            temp_file_path = os.path.join(temp_month_path, temp_file_name)
-            
-            with open(temp_file_path, 'w', encoding='utf-8', newline='\n') as f:
-                f.write(file_body)
-
-            # Archive filename (encrypted .zip container)
-            archive_file = f"{h_year}.zip"
-            # Prompt for archive password (per-archive, one-time)
-            arch_dialog = ArchivePasswordDialog(self.root, prompt=f"Set password for archive {archive_file}:", default=(self.master_password or ""))
+            # Prompt for archive password
+            arch_dialog = ArchivePasswordDialog(self.root, prompt=f"Set password for {req_name}'s archive:", default="")
             self.root.wait_window(arch_dialog)
             if not arch_dialog.result:
-                show_info(self.root, "Cancelled", "Archive cancelled: no password provided.")
-                shutil.rmtree(temp_month_path)
                 return
             archive_password = arch_dialog.result
 
+            # Prompt for NEO hours
+            start_time = simpledialog.askstring("NEO Hours", f"Enter Start Time for {req_name} (e.g., 0800):")
+            end_time = simpledialog.askstring("NEO Hours", f"Enter End Time for {req_name} (e.g., 1700):")
+            total_hours = self._calculate_neo_hours(start_time, end_time)
 
-            # Create a zip archive in memory, then encrypt with OpenSSL-compatible AES-256-CBC
-            import io, zipfile
-            archive_full = os.path.join(self.archive_dir, archive_file)
-            try:
-                # Read existing archive if present, else create new
-                zip_buffer = io.BytesIO()
-                if os.path.exists(archive_full):
-                    # Decrypt existing archive
-                    sec = SecurityManager(archive_password)
-                    with open(archive_full, 'rb') as f:
-                        enc_data = f.read()
-                    # Try fast in-process decrypt; fall back to OpenSSL CLI on error
-                    try:
-                        dec_data = sec._decrypt_bytes_with_lib(enc_data) if sec._lib else None
-                    except Exception:
-                        dec_data = None
-                    if dec_data is None:
-                        # fallback to CLI
-                        import subprocess
-                        proc = subprocess.run([
-                            "openssl", "aes-256-cbc", "-d", "-pbkdf2", "-iter", "100000",
-                            "-k", archive_password, "-in", archive_full
-                        ], capture_output=True, check=True)
-                        dec_data = proc.stdout
-                    zip_buffer.write(dec_data)
-                    zip_buffer.seek(0)
-                    mode = 'a'
-                else:
-                    mode = 'w'
-                # Write new file into zip
-                with zipfile.ZipFile(zip_buffer, mode=mode, compression=zipfile.ZIP_DEFLATED) as z:
-                    arcname = f"{month_folder}/{temp_file_name}".replace('\\', '/')
-                    z.write(temp_file_path, arcname)
-                # Encrypt the zip buffer
-                sec = SecurityManager(archive_password)
-                zip_buffer.seek(0)
-                # Try fast in-process encrypt; fall back to OpenSSL CLI on error
-                try:
-                    enc_data = sec._encrypt_bytes_with_lib(zip_buffer.read()) if sec._lib else None
-                except Exception:
-                    enc_data = None
-                if enc_data is None:
-                    # fallback to CLI
-                    import subprocess
-                    proc = subprocess.Popen([
-                        "openssl", "aes-256-cbc", "-e", "-pbkdf2", "-iter", "100000",
-                        "-k", archive_password, "-out", archive_full
-                    ], stdin=subprocess.PIPE)
-                    proc.communicate(input=zip_buffer.getvalue())
-                    if proc.returncode != 0:
-                        raise Exception("OpenSSL encryption failed")
-                else:
-                    with open(archive_full, 'wb') as f:
-                        f.write(enc_data)
-            except Exception as e:
-                raise Exception(f"Archive creation failed: {e}")
+            # Build archive content
+            file_body = self._build_archive_text(person, start_time, end_time, total_hours)
 
-            # 5. Cleanup
-            shutil.rmtree(temp_month_path)
+            # Create monthly archive filename (YYYY-MM format)
+            now = datetime.now()
+            month_str = now.strftime("%Y-%m")
+            clean_name = re.sub(r'[^a-zA-Z0-9]', '_', req_name)
+            month_folder = month_str
             
-            # 6. Finalize: Remove from data and refresh
+            # Create password-protected ZIP file
+            os.makedirs(self.archive_dir, exist_ok=True)
+            temp_month_path = os.path.join(self.archive_dir, month_folder)
+            os.makedirs(temp_month_path, exist_ok=True)
+            
+            archive_file = f"{month_str}.zip"
+            archive_full = os.path.join(self.archive_dir, archive_file)
+            
+            # Create or append to password-protected ZIP
+            with zipfile.ZipFile(archive_full, 'a', zipfile.ZIP_DEFLATED) as zf:
+                zf.setpassword(archive_password.encode('utf-8'))
+                arcname = f"{month_folder}/{clean_name}.txt"
+                zf.writestr(arcname, file_body)
+            
+            # Remove from active list
             self.people_data.pop(index)
             self.save_data()
             self.refresh_blocks()
             
-            show_info(self.root, "Success", f"Successfully archived {req_name} to {archive_file}")
+            show_info(self.root, "Success", f"Archived {req_name}")
 
         except Exception as e:
-            show_error(self.root, "Archive Failure", f"An error occurred during archiving:\n{str(e)}")
+            show_error(self.root, "Archive Failure", f"Error archiving: {str(e)}")
 
     def show_person_dialog(self, person=None, index=None):
         dialog = tk.Toplevel(self.root)
@@ -2770,11 +2665,11 @@ class WorkflowGUI:
         dialog.configure(bg=self.bg_color)
         dialog.resizable(False, False) # Non-resizable as requested
         dialog.transient(self.root)
-        dialog.grab_set()
+        dialog.withdraw()  # Hide until layout is complete
         
         entries = {}
         checkbox_vars = {}
-        branch_var = tk.StringVar(value=person.get("Branch", "Salem") if person else "Salem")
+        branch_var = tk.StringVar(value=person.get("Branch", config.BRANCH_OPTIONS[1]) if person else config.BRANCH_OPTIONS[1])
         
         # Robust combobox setter to match saved values (case/space-insensitive)
         def _set_combo_value(combo, var, value):
@@ -2806,18 +2701,18 @@ class WorkflowGUI:
             def norm(s):
                 return ''.join(ch for ch in s.lower() if ch.isalnum())
             n = norm(t)
-            if field in ("CORI Status", "NH GC Status", "ME GC Status"):
+            if field in config.STATUS_FIELDS:
                 # Common status tokens
                 if 'req' in n:
-                    return 'Required'
+                    return config.STATUS_REQUIRED
                 if 'sub' in n:
-                    return 'Submitted' if field == 'CORI Status' else ('Required' if 'sub' in n else 'None')
+                    return config.STATUS_SUBMITTED if field == 'CORI Status' else (config.STATUS_REQUIRED if 'sub' in n else config.STATUS_NONE)
                 if 'clear' in n or 'clr' in n:
-                    return 'Cleared'
+                    return config.STATUS_CLEARED
                 if field == 'ME GC Status' and ('sent' in n and 'denise' in n or 'senttodenise' in n):
-                    return 'Sent to Denise'
+                    return config.STATUS_SENT_TO_DENISE
                 if 'none' in n or t == '':
-                    return 'None'
+                    return config.STATUS_NONE
                 # Fallback: return original (might already be valid)
                 return t
             if field == 'Deposit Account Type':
@@ -2827,7 +2722,7 @@ class WorkflowGUI:
                     return 'Checking'
                 return '' if t == '' else t
             if field == 'Shirt Size':
-                sizes = ["6XL", "5XL", "4XL", "3XL", "2XL", "XL", "LG", "MD", "SM", "XS"]
+                sizes = [disp for disp, _ in config.CODE_MAPS.get('Shirt Size', [])]
                 for s in sizes:
                     if norm(s) == n:
                         return s
@@ -2835,13 +2730,7 @@ class WorkflowGUI:
             return t
 
         # --- Invisible index codes for robust persistence ---
-        code_maps = {
-            'CORI Status': [("None","NONE"),("Required","REQ"),("Submitted","SUB"),("Cleared","CLR")],
-            'NH GC Status': [("None","NONE"),("Required","REQ"),("Cleared","CLR")],
-            'ME GC Status': [("None","NONE"),("Required","REQ"),("Sent to Denise","SEND")],
-            'Deposit Account Type': [("",""),("Checking","CHK"),("Savings","SAV")],
-            'Shirt Size': [("6XL","6XL"),("5XL","5XL"),("4XL","4XL"),("3XL","3XL"),("2XL","2XL"),("XL","XL"),("LG","LG"),("MD","MD"),("SM","SM"),("XS","XS")],
-        }
+        code_maps = config.CODE_MAPS
         # Helper to get display from code map
         def _display_from_code(field, code):
             pairs = code_maps.get(field, [])
@@ -2858,15 +2747,41 @@ class WorkflowGUI:
         # Store combobox widgets and maps for saving codes
         combo_code_widgets = {}
         
-        # Main Container (Directly in dialog now, no scroll)
-        content_frame = tk.Frame(dialog, bg=self.bg_color, padx=25, pady=20)
-        content_frame.pack(fill=tk.BOTH, expand=True)
-
+        # Create canvas with scrollbar for the main content
+        canvas = tk.Canvas(dialog, bg=self.bg_color, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(dialog, orient=tk.VERTICAL, command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=self.bg_color)
+        
+        # Bind to update scrollregion when frame changes
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Enable mousewheel scrolling
+        def on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        
+        canvas.bind_all("<MouseWheel>", on_mousewheel)
+        
+        # Pack canvas and scrollbar (expands to fill space above buttons)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Content inside scrollable frame
+        content_frame = tk.Frame(scrollable_frame, bg=self.bg_color)
+        content_frame.pack(fill=tk.BOTH, expand=True, padx=25, pady=20)
+        
         # (Header row removed per layout change)
 
         # Main Layout Container
         main_form = tk.Frame(content_frame, bg=self.bg_color)
         main_form.pack(fill=tk.BOTH, expand=True)
+        
+        # Button frame will be added at the end of content_frame (inside scrollable area)
+        footer_frame = None
         
         # --- LEFT COLUMN ---
         left_col = tk.Frame(main_form, bg=self.bg_color)
@@ -2876,7 +2791,7 @@ class WorkflowGUI:
         # Basic Information Section
         basic_lframe = tk.LabelFrame(
             left_col, 
-            text=" Basic Information ", 
+            text=config.DIALOG_SECTIONS['basic_info'], 
             font=FONTS["subheader"], 
             bg=self.bg_color, 
             fg="#1a3a5a", 
@@ -2886,31 +2801,22 @@ class WorkflowGUI:
         basic_lframe.grid(row=0, column=0, sticky="nsew", pady=(0, 10))
         basic_lframe.columnconfigure(1, weight=1)
 
-        fields = [
-            ("Name", "Name"), ("ICIMS ID", "ICIMS ID"), ("Employee ID", "Employee ID"),
-            ("Job Name", "Job Name"), ("Job Location", "Job Location"), 
-            ("Manager Name", "Manager Name"), ("NEO Scheduled Date", "NEO Scheduled Date")
-        ]
-        for i, (label, key) in enumerate(fields):
-            entry = self._label_and_entry(basic_lframe, label, i, label_col=0, entry_col=1)
-            if person and key in person:
-                entry.insert(0, person[key])
-            entries[key] = entry
+        self._build_entry_fields(basic_lframe, config.BASIC_INFO_FIELDS, entries, person, label_col=0, entry_col=1)
 
         # Branch radio buttons (Inside Basic Info)
-        tk.Label(basic_lframe, text="Branch:", bg=self.bg_color, fg=self.fg_color, font=FONTS["small"]).grid(row=7, column=0, sticky="w", pady=5)
+        tk.Label(basic_lframe, text=config.DIALOG_FIELD_LABELS['branch'], bg=self.bg_color, fg=self.fg_color, font=FONTS["small"]).grid(row=7, column=0, sticky="w", pady=5)
         branch_frame = tk.Frame(basic_lframe, bg=self.bg_color)
         branch_frame.grid(row=7, column=1, sticky="w", padx=(10, 0), pady=5)
         
-        branch_var = tk.StringVar(value=person.get("Branch", "Salem") if person else "Salem")
+        branch_var = tk.StringVar(value=person.get("Branch", config.BRANCH_OPTIONS[1]) if person else config.BRANCH_OPTIONS[1])
         entries["Branch_var"] = branch_var
-        for branch in ["Salem", "Portland"]:
-            tk.Radiobutton(branch_frame, text=branch, variable=branch_var, value=branch, bg=self.bg_color, fg=self.fg_color, selectcolor=CURRENT_PALETTE.get('checkbox_select_color', '#000000'), activebackground=self.bg_color, activeforeground=self.fg_color, font=FONTS["small"]).pack(side=tk.LEFT, padx=(0, 10))
+        for branch in config.BRANCH_OPTIONS[1:]:
+            self._create_radiobutton(branch_frame, branch, branch_var, branch)
 
         # Contact Info Section
         contact_lframe = tk.LabelFrame(
             left_col, 
-            text=" Contact info ", 
+            text=config.DIALOG_SECTIONS['contact_info'], 
             font=FONTS["subheader"], 
             bg=self.bg_color, 
             fg="#1a3a5a", 
@@ -2922,7 +2828,7 @@ class WorkflowGUI:
         contact_lframe.columnconfigure(3, weight=3) # Allow email to take more space
 
         phone_entry = self._label_and_entry(contact_lframe, "Phone", 0, label_col=0, entry_col=1)
-        phone_entry.config(width=15)
+        phone_entry.config(width=config.WIDGET_WIDTHS['form_entry_large'])
         if person and "Candidate Phone Number" in person:
             phone_entry.insert(0, person["Candidate Phone Number"])
         entries["Candidate Phone Number"] = phone_entry
@@ -2935,7 +2841,7 @@ class WorkflowGUI:
         # --- PERSONAL INFO SECTION ---
         personal_lframe = tk.LabelFrame(
             left_col, 
-            text=" Personal info ", 
+            text=config.DIALOG_SECTIONS['personal_info'], 
             font=FONTS["subheader"], 
             bg=self.bg_color, 
             fg="#1a3a5a", 
@@ -2957,15 +2863,14 @@ class WorkflowGUI:
             cb.pack(side=tk.LEFT, padx=(0, 5))
         
         tk.Label(id_checks_frame, text="Other:", bg=self.bg_color, fg=self.fg_color, font=FONTS["small"]).pack(side=tk.LEFT, padx=(5, 5))
-        other_entry = tk.Entry(id_checks_frame, font=FONTS["small"], bg=self.card_bg_color, fg=self.fg_color, insertbackground=self.fg_color, width=15)
+        other_entry = tk.Entry(id_checks_frame, font=FONTS["small"], bg=self.card_bg_color, fg=self.fg_color, insertbackground=self.fg_color, width=config.WIDGET_WIDTHS['form_entry_large'])
         other_entry.pack(side=tk.LEFT)
         if person and "Other ID" in person:
             other_entry.insert(0, person["Other ID"])
         entries["Other ID"] = other_entry
 
         # Row 2: Basic Identity Fields
-        personal_fields = ["State", "ID No.", "Exp.", "DOB", "Social"]
-        for i, field in enumerate(personal_fields):
+        for i, field in enumerate(config.PERSONAL_ID_FIELDS):
             tk.Label(personal_lframe, text=field + ":", bg=self.bg_color, fg=self.fg_color, font=FONTS["small"]).grid(row=i+1, column=0, sticky="w", pady=5)
             entry = tk.Entry(personal_lframe, font=FONTS["small"], bg=self.card_bg_color, fg=self.fg_color, insertbackground=self.fg_color)
             entry.grid(row=i+1, column=1, columnspan=4, sticky="ew", padx=(5, 0), pady=5)
@@ -3023,7 +2928,7 @@ class WorkflowGUI:
         # Licensing Section (Moved to row 1)
         license_lframe = tk.LabelFrame(
             right_col, 
-            text=" Licensing & Clearance ", 
+            text=config.DIALOG_SECTIONS['license_clearance'], 
             font=FONTS["subheader"], 
             bg=self.bg_color, 
             fg="#1a3a5a", 
@@ -3034,22 +2939,12 @@ class WorkflowGUI:
         license_lframe.columnconfigure(1, weight=1)
         
         # Remove "CORI Submitted or Cleared Date" from lic_fields
-        lic_fields = [
-            ("NH GC ID Number", "NH GC ID Number"),
-            ("NH GC Expiration Date", "NH GC Expiration Date"),
-            ("Background Completion Date", "Background Completion Date")
-        ]
-        
-        for i, (label, key) in enumerate(lic_fields):
-            entry = self._label_and_entry(license_lframe, label, i, label_col=0, entry_col=1)
-            if person and key in person:
-                entry.insert(0, person[key])
-            entries[key] = entry
+        self._build_entry_fields(license_lframe, config.LICENSE_FIELDS, entries, person, label_col=0, entry_col=1)
 
         # --- EMERGENCY CONTACT SECTION ---
         emergency_lframe = tk.LabelFrame(
             right_col, 
-            text=" Emergency Contact ", 
+            text=config.DIALOG_SECTIONS['emergency_contact'], 
             font=FONTS["subheader"], 
             bg=self.bg_color, 
             fg="#1a3a5a", 
@@ -3059,23 +2954,12 @@ class WorkflowGUI:
         emergency_lframe.grid(row=0, column=0, sticky="nsew", pady=(0, 10))
         emergency_lframe.columnconfigure(1, weight=1)
 
-        emergency_fields = [
-            ("First Name", "EC First Name"),
-            ("Last Name", "EC Last Name"),
-            ("Relationship", "EC Relationship"),
-            ("Phone Number", "EC Phone Number")
-        ]
-
-        for i, (label, data_key) in enumerate(emergency_fields):
-            entry = self._label_and_entry(emergency_lframe, label, i, label_col=0, entry_col=1)
-            if person and data_key in person:
-                entry.insert(0, person[data_key])
-            entries[data_key] = entry
+        self._build_entry_fields(emergency_lframe, config.EMERGENCY_CONTACT_FIELDS, entries, person, label_col=0, entry_col=1)
 
         # --- CLEARANCES SECTION (In Right Column) ---
         status_lframe = tk.LabelFrame(
             right_col, 
-            text=" Licensing & Clearances ", 
+            text=config.DIALOG_SECTIONS['clearances'], 
             font=FONTS["subheader"], 
             bg=self.bg_color, 
             fg="#1a3a5a", 
@@ -3086,7 +2970,7 @@ class WorkflowGUI:
         status_lframe.columnconfigure(1, weight=1)
         
         # BG Date + inline MVR and DOD checkboxes
-        tk.Label(status_lframe, text="BG CLEAR Date:", bg=self.bg_color, font=FONTS["tiny_bold"]).grid(row=0, column=0, sticky="w", pady=5)
+        tk.Label(status_lframe, text=config.DIALOG_FIELD_LABELS['bg_date'], bg=self.bg_color, font=FONTS["tiny_bold"]).grid(row=0, column=0, sticky="w", pady=5)
         bg_row = tk.Frame(status_lframe, bg=self.bg_color)
         bg_row.grid(row=0, column=1, sticky="w", padx=5)
         bg_entry = tk.Entry(bg_row, font=FONTS["small"], width=10, bg=self.card_bg_color, fg=self.fg_color, insertbackground=self.fg_color)
@@ -3096,28 +2980,28 @@ class WorkflowGUI:
         # MVR and DOD inline next to BG date
         mvr_var = tk.BooleanVar(value=person.get("MVR", False) if person else False)
         checkbox_vars["MVR"] = mvr_var
-        tk.Checkbutton(bg_row, text="MVR", variable=mvr_var, bg=self.bg_color, fg=self.fg_color, activeforeground=self.fg_color, selectcolor=CURRENT_PALETTE.get('checkbox_select_color', '#000000'), font=FONTS["tiny"]).pack(side=tk.LEFT, padx=(8,0))
+        self._create_checkbox(bg_row, config.CLEARANCE_LABELS['mvr'], mvr_var, font="tiny", padx=(8, 0))
         dod_var = tk.BooleanVar(value=person.get("DOD Clearance", False) if person else False)
         checkbox_vars["DOD Clearance"] = dod_var
-        tk.Checkbutton(bg_row, text="DOD Clearance", variable=dod_var, bg=self.bg_color, fg=self.fg_color, activeforeground=self.fg_color, selectcolor=CURRENT_PALETTE.get('checkbox_select_color', '#000000'), font=FONTS["tiny"]).pack(side=tk.LEFT, padx=(8,0))
+        self._create_checkbox(bg_row, config.CLEARANCE_LABELS['dod'], dod_var, font="tiny", padx=(8, 0))
 
         tk.Frame(status_lframe, height=1, bg="#bdc3c7").grid(row=1, column=0, columnspan=2, sticky="ew", pady=5)
 
         # CORI Section (checkboxes)
-        tk.Label(status_lframe, text="CORI:", bg=self.bg_color, font=FONTS["small"]).grid(row=2, column=0, sticky="w")
+        tk.Label(status_lframe, text=config.DIALOG_FIELD_LABELS['cori'], bg=self.bg_color, font=FONTS["small"]).grid(row=2, column=0, sticky="w")
         cori_opts = tk.Frame(status_lframe, bg=self.bg_color)
         cori_opts.grid(row=2, column=1, sticky="w")
-        cori_req_var = tk.BooleanVar(value=(person.get("CORI Required", False) if person else False) or ((person.get("CORI Status", "None") if person else "None") == "Required"))
-        cori_sub_var = tk.BooleanVar(value=(person.get("CORI Submitted", False) if person else False) or ((person.get("CORI Status", "None") if person else "None") == "Submitted"))
-        cori_clr_var = tk.BooleanVar(value=(person.get("CORI Cleared", False) if person else False) or ((person.get("CORI Status", "None") if person else "None") == "Cleared"))
+        cori_req_var = tk.BooleanVar(value=(person.get("CORI Required", False) if person else False) or ((person.get("CORI Status", config.STATUS_NONE) if person else config.STATUS_NONE) == config.STATUS_REQUIRED))
+        cori_sub_var = tk.BooleanVar(value=(person.get("CORI Submitted", False) if person else False) or ((person.get("CORI Status", config.STATUS_NONE) if person else config.STATUS_NONE) == config.STATUS_SUBMITTED))
+        cori_clr_var = tk.BooleanVar(value=(person.get("CORI Cleared", False) if person else False) or ((person.get("CORI Status", config.STATUS_NONE) if person else config.STATUS_NONE) == config.STATUS_CLEARED))
         checkbox_vars["CORI Required"] = cori_req_var
         checkbox_vars["CORI Submitted"] = cori_sub_var
         checkbox_vars["CORI Cleared"] = cori_clr_var
-        tk.Checkbutton(cori_opts, text="Required", variable=cori_req_var, bg=self.bg_color, fg=self.fg_color, activeforeground=self.fg_color, selectcolor=CURRENT_PALETTE.get('checkbox_select_color', '#000000'), font=FONTS["tiny"]).pack(side=tk.LEFT)
-        tk.Checkbutton(cori_opts, text="Submitted", variable=cori_sub_var, bg=self.bg_color, fg=self.fg_color, activeforeground=self.fg_color, selectcolor=CURRENT_PALETTE.get('checkbox_select_color', '#000000'), font=FONTS["tiny"]).pack(side=tk.LEFT, padx=(8,0))
-        tk.Checkbutton(cori_opts, text="Cleared", variable=cori_clr_var, bg=self.bg_color, fg=self.fg_color, activeforeground=self.fg_color, selectcolor=CURRENT_PALETTE.get('checkbox_select_color', '#000000'), font=FONTS["tiny"]).pack(side=tk.LEFT, padx=(8,0))
+        self._create_checkbox(cori_opts, config.CLEARANCE_LABELS['required'], cori_req_var, font="tiny", padx=(0, 0))
+        self._create_checkbox(cori_opts, config.CLEARANCE_LABELS['submitted'], cori_sub_var, font="tiny", padx=(8, 0))
+        self._create_checkbox(cori_opts, config.CLEARANCE_LABELS['cleared'], cori_clr_var, font="tiny", padx=(8, 0))
         
-        tk.Label(status_lframe, text="CORI Date (Sub/Clr):", bg=self.bg_color, font=FONTS["tiny"]).grid(row=3, column=0, sticky="w")
+        tk.Label(status_lframe, text=config.DIALOG_FIELD_LABELS['cori_date'], bg=self.bg_color, font=FONTS["tiny"]).grid(row=3, column=0, sticky="w")
         dates_sub_clr = tk.Frame(status_lframe, bg=self.bg_color)
         dates_sub_clr.grid(row=3, column=1, sticky="w")
         
@@ -3136,7 +3020,7 @@ class WorkflowGUI:
         ent_clr.insert(0, cur_clr)
         entries["CORI Cleared Date"] = ent_clr
 
-        tk.Frame(status_lframe, height=1, bg="#bdc3c7").grid(row=4, column=0, columnspan=2, sticky="ew", pady=5)
+        tk.Frame(status_lframe, height=1, bg=config.SEPARATOR_COLOR).grid(row=4, column=0, columnspan=2, sticky="ew", pady=5)
 
         # --- NH/ME GC Two-Column Layout ---
         gc_frame = tk.Frame(status_lframe, bg=self.bg_color)
@@ -3144,20 +3028,20 @@ class WorkflowGUI:
         # NH GC Column
         nh_col = tk.Frame(gc_frame, bg=self.bg_color)
         nh_col.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
-        tk.Label(nh_col, text="NH GC:", bg=self.bg_color, font=FONTS["small"]).pack(anchor="w")
+        tk.Label(nh_col, text=config.DIALOG_FIELD_LABELS['nh_gc'], bg=self.bg_color, font=FONTS["small"]).pack(anchor="w")
         nh_opts = tk.Frame(nh_col, bg=self.bg_color)
         nh_opts.pack(anchor="w")
-        nh_req_var = tk.BooleanVar(value=(person.get("NH GC Required", False) if person else False) or ((person.get("NH GC Status", "None") if person else "None") == "Required"))
-        nh_clr_var = tk.BooleanVar(value=(person.get("NH GC Cleared", False) if person else False) or ((person.get("NH GC Status", "None") if person else "None") == "Cleared"))
+        nh_req_var = tk.BooleanVar(value=(person.get("NH GC Required", False) if person else False) or ((person.get("NH GC Status", config.STATUS_NONE) if person else config.STATUS_NONE) == config.STATUS_REQUIRED))
+        nh_clr_var = tk.BooleanVar(value=(person.get("NH GC Cleared", False) if person else False) or ((person.get("NH GC Status", config.STATUS_NONE) if person else config.STATUS_NONE) == config.STATUS_CLEARED))
         checkbox_vars["NH GC Required"] = nh_req_var
         checkbox_vars["NH GC Cleared"] = nh_clr_var
-        tk.Checkbutton(nh_opts, text="Required", variable=nh_req_var, bg=self.bg_color, fg=self.fg_color, activeforeground=self.fg_color, selectcolor=CURRENT_PALETTE.get('checkbox_select_color', '#000000'), font=FONTS["tiny"]).pack(side=tk.LEFT)
-        tk.Checkbutton(nh_opts, text="Cleared", variable=nh_clr_var, bg=self.bg_color, fg=self.fg_color, activeforeground=self.fg_color, selectcolor=CURRENT_PALETTE.get('checkbox_select_color', '#000000'), font=FONTS["tiny"]).pack(side=tk.LEFT, padx=(8,0))
+        self._create_checkbox(nh_opts, config.CLEARANCE_LABELS['required'], nh_req_var, font="tiny", padx=(0, 0))
+        self._create_checkbox(nh_opts, config.CLEARANCE_LABELS['cleared'], nh_clr_var, font="tiny", padx=(8, 0))
         # NH ID / Exp under NH GC
-        tk.Label(nh_col, text="NH ID / Exp:", bg=self.bg_color, font=FONTS["tiny"]).pack(anchor="w")
+        tk.Label(nh_col, text=config.DIALOG_FIELD_LABELS['nh_id_exp'], bg=self.bg_color, font=FONTS["tiny"]).pack(anchor="w")
         nh_details = tk.Frame(nh_col, bg=self.bg_color)
         nh_details.pack(anchor="w")
-        ent_nh_id = tk.Entry(nh_details, font=FONTS["tiny"], width=15, bg=self.card_bg_color, fg=self.fg_color, insertbackground=self.fg_color)
+        ent_nh_id = tk.Entry(nh_details, font=FONTS["tiny"], width=config.WIDGET_WIDTHS['form_entry_large'], bg=self.card_bg_color, fg=self.fg_color, insertbackground=self.fg_color)
         ent_nh_id.pack(side=tk.LEFT)
         if person: ent_nh_id.insert(0, person.get("NH GC ID Number", ""))
         entries["NH GC ID Number"] = ent_nh_id
@@ -3170,17 +3054,17 @@ class WorkflowGUI:
         # ME GC Column
         me_col = tk.Frame(gc_frame, bg=self.bg_color)
         me_col.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        tk.Label(me_col, text="ME GC:", bg=self.bg_color, font=FONTS["small"]).pack(anchor="w")
+        tk.Label(me_col, text=config.DIALOG_FIELD_LABELS['me_gc'], bg=self.bg_color, font=FONTS["small"]).pack(anchor="w")
         me_opts = tk.Frame(me_col, bg=self.bg_color)
         me_opts.pack(anchor="w")
-        me_req_var = tk.BooleanVar(value=(person.get("ME GC Required", False) if person else False) or ((person.get("ME GC Status", "None") if person else "None") == "Required"))
-        me_send_var = tk.BooleanVar(value=(person.get("ME GC Sent", False) if person else False) or ((person.get("ME GC Status", "None") if person else "None") == "Sent to Denise"))
+        me_req_var = tk.BooleanVar(value=(person.get("ME GC Required", False) if person else False) or ((person.get("ME GC Status", config.STATUS_NONE) if person else config.STATUS_NONE) == config.STATUS_REQUIRED))
+        me_send_var = tk.BooleanVar(value=(person.get("ME GC Sent", False) if person else False) or ((person.get("ME GC Status", config.STATUS_NONE) if person else config.STATUS_NONE) == config.STATUS_SENT_TO_DENISE))
         checkbox_vars["ME GC Required"] = me_req_var
         checkbox_vars["ME GC Sent"] = me_send_var
-        tk.Checkbutton(me_opts, text="Required", variable=me_req_var, bg=self.bg_color, fg=self.fg_color, activeforeground=self.fg_color, selectcolor=CURRENT_PALETTE.get('checkbox_select_color', '#000000'), font=FONTS["tiny"]).pack(side=tk.LEFT)
-        tk.Checkbutton(me_opts, text="Sent to Denise", variable=me_send_var, bg=self.bg_color, fg=self.fg_color, activeforeground=self.fg_color, selectcolor=CURRENT_PALETTE.get('checkbox_select_color', '#000000'), font=FONTS["tiny"]).pack(side=tk.LEFT, padx=(8,0))
-        tk.Label(me_col, text="ME Sent Date:", bg=self.bg_color, font=FONTS["tiny"]).pack(anchor="w")
-        ent_me_date = tk.Entry(me_col, font=FONTS["tiny"], width=12, bg=self.card_bg_color, fg=self.fg_color, insertbackground=self.fg_color)
+        self._create_checkbox(me_opts, config.CLEARANCE_LABELS['required'], me_req_var, font="tiny", padx=(0, 0))
+        self._create_checkbox(me_opts, config.CLEARANCE_LABELS['sent_to_denise'], me_send_var, font="tiny", padx=(8, 0))
+        tk.Label(me_col, text=config.DIALOG_FIELD_LABELS['me_sent_date'], bg=self.bg_color, font=FONTS["tiny"]).pack(anchor="w")
+        ent_me_date = tk.Entry(me_col, font=FONTS["tiny"], width=config.WIDGET_WIDTHS['form_entry_medium'], bg=self.card_bg_color, fg=self.fg_color, insertbackground=self.fg_color)
         ent_me_date.pack(anchor="w")
         if person: ent_me_date.insert(0, person.get("ME GC Sent Date", ""))
         entries["ME GC Sent Date"] = ent_me_date
@@ -3190,7 +3074,7 @@ class WorkflowGUI:
         # --- DIRECT DEPOSIT SECTION ---
         dd_lframe = tk.LabelFrame(
             right_col,
-            text=" Direct Deposit Info ",
+            text=config.DIALOG_SECTIONS['direct_deposit'],
             font=FONTS["subheader"],
             bg=self.bg_color,
             fg="#1a3a5a",
@@ -3201,7 +3085,7 @@ class WorkflowGUI:
         dd_lframe.columnconfigure(1, weight=1)
 
         # Account Type (checkboxes with exclusivity)
-        tk.Label(dd_lframe, text="Account Type:", bg=self.bg_color, fg=self.fg_color, font=FONTS["small"]).grid(row=0, column=0, sticky="w", pady=5)
+        tk.Label(dd_lframe, text=config.DIALOG_FIELD_LABELS['account_type'], bg=self.bg_color, fg=self.fg_color, font=FONTS["small"]).grid(row=0, column=0, sticky="w", pady=5)
         acct_opts = tk.Frame(dd_lframe, bg=self.bg_color)
         acct_opts.grid(row=0, column=1, sticky="w")
         checking_var = tk.BooleanVar(value=(person.get("Deposit Checking", False) if person else False) or ((person.get("Deposit Account Type", "") if person else "") == "Checking"))
@@ -3224,19 +3108,19 @@ class WorkflowGUI:
         tk.Checkbutton(acct_opts, text="Savings", variable=savings_var, command=_on_savings, bg=self.bg_color, fg=self.fg_color, activeforeground=self.fg_color, selectcolor=CURRENT_PALETTE.get('checkbox_select_color', '#000000'), font=FONTS["tiny"]).pack(side=tk.LEFT, padx=(8,0))
 
         # Bank Name
-        bank_entry = self._label_and_entry(dd_lframe, "Bank Name", 1, label_col=0, entry_col=1)
+        bank_entry = self._label_and_entry(dd_lframe, config.DIALOG_FIELD_LABELS['bank_name'], 1, label_col=0, entry_col=1)
         if person and "Bank Name" in person:
             bank_entry.insert(0, person["Bank Name"])
         entries["Bank Name"] = bank_entry
 
         # Routing Number
-        rtng_entry = self._label_and_entry(dd_lframe, "Rtng", 2, label_col=0, entry_col=1)
+        rtng_entry = self._label_and_entry(dd_lframe, config.DIALOG_FIELD_LABELS['routing'], 2, label_col=0, entry_col=1)
         if person and "Routing Number" in person:
             rtng_entry.insert(0, person["Routing Number"])
         entries["Routing Number"] = rtng_entry
 
         # Account Number
-        acct_entry = self._label_and_entry(dd_lframe, "Acct", 3, label_col=0, entry_col=1)
+        acct_entry = self._label_and_entry(dd_lframe, config.DIALOG_FIELD_LABELS['account'], 3, label_col=0, entry_col=1)
         if person and "Account Number" in person:
             acct_entry.insert(0, person["Account Number"])
         entries["Account Number"] = acct_entry
@@ -3269,10 +3153,10 @@ class WorkflowGUI:
         # --- UNIFORMS & CLOTHING SECTION (moved to left column) ---
         uniform_lframe = tk.LabelFrame(
             left_col, 
-            text=" Uniforms & Clothing: ", 
+            text=config.LABEL_TEXT['section_uniforms'], 
             font=FONTS["subheader"], 
             bg=self.bg_color, 
-            fg="#1a3a5a", 
+            fg=config.TEXT_COLORS['label_dark_blue'], 
             padx=10, 
             pady=10
         )
@@ -3291,14 +3175,14 @@ class WorkflowGUI:
         entries["Shirt Size"] = shirt_entry
 
         tk.Label(sizing_container, text="Pants", bg=self.bg_color, fg=self.fg_color, font=FONTS["small"]).pack(side=tk.LEFT, padx=(10, 0))
-        pants_entry = tk.Entry(sizing_container, font=FONTS["small"], bg=self.card_bg_color, fg=self.fg_color, insertbackground=self.fg_color, width=8)
+        pants_entry = tk.Entry(sizing_container, font=FONTS["small"], bg=self.card_bg_color, fg=self.fg_color, insertbackground=self.fg_color, width=config.WIDGET_WIDTHS['form_entry_small'])
         pants_entry.pack(side=tk.LEFT, padx=5)
         if person and "Pants Size" in person:
             pants_entry.insert(0, person["Pants Size"])
         entries["Pants Size"] = pants_entry
 
         tk.Label(sizing_container, text="BOOTS", bg=self.bg_color, fg=self.fg_color, font=FONTS["small"]).pack(side=tk.LEFT, padx=(10, 0))
-        boots_entry = tk.Entry(sizing_container, font=FONTS["small"], bg=self.card_bg_color, fg=self.fg_color, insertbackground=self.fg_color, width=8)
+        boots_entry = tk.Entry(sizing_container, font=FONTS["small"], bg=self.card_bg_color, fg=self.fg_color, insertbackground=self.fg_color, width=config.WIDGET_WIDTHS['form_entry_small'])
         boots_entry.pack(side=tk.LEFT, padx=5)
         if person and "Boots Size" in person:
             boots_entry.insert(0, person["Boots Size"])
@@ -3307,7 +3191,7 @@ class WorkflowGUI:
         # Apply lighter sky-blue header color for later-created label frames
         try:
             is_dark = _is_dark_color(getattr(self, 'bg_color', '#000000'))
-            header_fg = '#4ea0ff' if is_dark else '#87CEEB'
+            header_fg = config.TEXT_COLORS['label_header_blue'] if is_dark else config.TEXT_COLORS['label_light_blue']
             for lf in (
                 license_lframe,
                 emergency_lframe,
@@ -3358,7 +3242,8 @@ class WorkflowGUI:
         # Issuance Row
         issued_var = tk.BooleanVar(value=person.get("Uniform Issued", False) if person else False)
         checkbox_vars["Uniform Issued"] = issued_var
-        tk.Checkbutton(uniform_lframe, text="Uniform issued during NEO", variable=issued_var, bg=self.bg_color, fg=self.fg_color, selectcolor=CURRENT_PALETTE.get('checkbox_select_color', '#000000'), activebackground=self.bg_color, activeforeground=self.fg_color, font=FONTS["small"]).grid(row=1, column=0, columnspan=2, sticky="w", pady=5)
+        cb = tk.Checkbutton(uniform_lframe, text=config.LABEL_TEXT['uniform_issued'], variable=issued_var, bg=self.bg_color, fg=self.fg_color, font=FONTS["small"], selectcolor=self.bg_color, activebackground=self.bg_color, activeforeground=self.fg_color)
+        cb.grid(row=1, column=0, columnspan=2, sticky="w", pady=5)
 
         # Articles Given
         tk.Label(uniform_lframe, text="articles given:", bg=self.bg_color, fg=self.fg_color, font=FONTS["small"]).grid(row=2, column=0, sticky="w", pady=5)
@@ -3367,22 +3252,7 @@ class WorkflowGUI:
         if person and "Articles Given" in person:
             articles_entry.insert(0, person["Articles Given"])
         entries["Articles Given"] = articles_entry
-        # Footer buttons: Cancel and +SAVE on bottom-right
-        footer_frame = tk.Frame(content_frame, bg=self.bg_color)
-        footer_frame.pack(fill=tk.X, pady=(12, 0))
-        # Cancel to the right of the footer, then Save (rightmost)
-        pack_action_button(footer_frame, "CANCEL", lambda: dialog.destroy(), role="cancel", font=FONTS["button"], width=12, side=tk.RIGHT, padx=10)
-        pack_action_button(footer_frame, "+SAVE", lambda: save(), role="save", font=FONTS["button"], width=12, side=tk.RIGHT, padx=10)
-        # Ensure button role colors are applied within the dialog
-        try:
-            apply_button_roles(content_frame)
-        except Exception:
-            pass
-        # Enforce visible checkbox indicators across the dialog
-        try:
-            fix_checkbox_contrast(content_frame, use_bg=self.bg_color)
-        except Exception:
-            pass
+        
         def save():
             # Robust date normalization helper (prefers python-dateutil if available)
             def _norm_date(s):
@@ -3518,6 +3388,56 @@ class WorkflowGUI:
             self.save_data()
             self.refresh_blocks()
             dialog.destroy()
+        
+        # Create button frame inside content_frame (scrollable with content)
+        footer_frame = tk.Frame(content_frame, bg=self.bg_color)
+        footer_frame.pack(fill=tk.X, pady=(20, 0), padx=(0, 0))
+        
+        # Spacer frame to push buttons to the left
+        spacer = tk.Frame(footer_frame, bg=self.bg_color)
+        spacer.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        # Cancel to the right of the footer, then Save (rightmost)
+        pack_action_button(footer_frame, "CANCEL", lambda: dialog.destroy(), role="cancel", font=FONTS["button"], width=config.BUTTON_WIDTHS['dialog_action'], side=tk.RIGHT, padx=10)
+        pack_action_button(footer_frame, "+SAVE", lambda: save(), role="save", font=FONTS["button"], width=config.BUTTON_WIDTHS['dialog_action'], side=tk.RIGHT, padx=10)
+        
+        # Force the dialog to calculate geometry and display
+        dialog.update_idletasks()
+        dialog.update()
+        
+        # Get the required width based on the scrollable frame content
+        scrollable_frame.update_idletasks()
+        req_width = scrollable_frame.winfo_reqwidth()
+        
+        # Get the height needed for all content
+        canvas.update_idletasks()
+        scroll_height = canvas.bbox("all")
+        if scroll_height:
+            content_height = scroll_height[3] - scroll_height[1]
+        else:
+            content_height = 600
+        
+        # Use exact dimensions to fit contents
+        height = content_height
+        width = req_width
+        
+        dialog.geometry(f"{width}x{int(height)}")
+        
+        dialog.update_idletasks()
+        
+        dialog.deiconify()
+        dialog.grab_set()
+        
+        # Ensure button role colors are applied within the dialog
+        try:
+            apply_button_roles(content_frame)
+        except Exception:
+            pass
+        # Enforce visible checkbox indicators across the dialog
+        try:
+            fix_checkbox_contrast(content_frame, use_bg=self.bg_color)
+        except Exception:
+            pass
 
 
 def main():
