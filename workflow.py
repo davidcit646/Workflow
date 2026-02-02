@@ -100,7 +100,7 @@ BUTTON_ROLE_COLORS = {
 }
 
 ALWAYS_BLACK_TEXT_ROLES = {"add", "view", "delete"}
-BUTTON_OUTLINE_COLOR = "#1b1f23"
+BUTTON_OUTLINE_COLOR = "#7f8c8d"
 BUTTON_DEFAULT_WIDTH = 12
 BUTTON_INTERNAL_PADX = 3
 BUTTON_INTERNAL_PADY = 2
@@ -817,7 +817,7 @@ def make_action_button(parent, text, command, role="default", font=None, width=N
     btn = tk.Button(
         parent, text=text, command=command, bg=bg, fg=fg_color,
         activebackground=active, activeforeground=fg_color, font=font,
-        relief=tk.SOLID, bd=1, highlightthickness=1,
+        relief=tk.FLAT, bd=0, highlightthickness=1,
         highlightbackground=BUTTON_OUTLINE_COLOR,
         highlightcolor=BUTTON_OUTLINE_COLOR, cursor="hand2"
     )
