@@ -1,0 +1,21 @@
+FILE ARCHIVED: 02-01-2026 1928
+
+== Candidate Info ==
+Name: asd
+Employee ID: adasdasdas
+Hire Date (NEO): 01/22/2026
+Job Name: 
+Job Location: 
+Branch: Salem
+
+== NEO Hours ==
+Start: 0800
+End:   1700
+Total Hours: 9h
+
+== Uniform Sizes ==
+Shirt: None
+Pants: 
+Boots: 
+
+----------------------------------------
