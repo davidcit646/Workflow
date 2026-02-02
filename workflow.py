@@ -15,10 +15,13 @@ import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 import hashlib
+import uuid
 import binascii
 import secrets
 import ctypes
+import logging
 import struct
+import tempfile
 from typing import Optional, List, Dict, Any, Tuple
 
 # Module-level constants
@@ -36,6 +39,42 @@ def get_app_data_dir() -> str:
 
 
 APP_DATA_DIR = get_app_data_dir()
+APP_VERSION = "1.0.0"
+
+# Logging setup (file-based debug log)
+try:
+    os.makedirs(APP_DATA_DIR, exist_ok=True)
+except Exception:
+    pass
+try:
+    _log_path = os.path.join(APP_DATA_DIR, "workflow_debug.log")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        filename=_log_path,
+        filemode="a",
+    )
+except Exception:
+    pass
+logger = logging.getLogger("workflow")
+
+# Persistent error reporting for repeated temp/cache failures
+_error_counts: Dict[str, int] = {}
+
+
+def _log_persistent_error(category: str, err: Exception) -> None:
+    try:
+        _error_counts[category] = _error_counts.get(category, 0) + 1
+        logger.exception("%s error: %s", category, err)
+        if _error_counts[category] >= 3:
+            try:
+                report_path = os.path.join(APP_DATA_DIR, "workflow_error_report.txt")
+                with open(report_path, "a", encoding="utf-8") as f:
+                    f.write(f"[{datetime.now().isoformat()}] {category} error: {err}\n")
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 # Add local vendor directory to import path for bundled libraries
 try:
@@ -864,24 +903,75 @@ def pack_action_button(parent, text, command, role="default", font=None, width=N
     return btn
 
 
+def _safe_parent(parent):
+    try:
+        if parent is None:
+            return None
+        if hasattr(parent, "winfo_exists") and not parent.winfo_exists():
+            return None
+        return parent
+    except Exception:
+        return None
+
+
+def safe_ui_call(widget, func, *args, **kwargs):
+    """Safely schedule a UI callback if the widget still exists."""
+    try:
+        if widget is None:
+            return
+        if hasattr(widget, "winfo_exists") and not widget.winfo_exists():
+            return
+        widget.after(1, lambda: func(*args, **kwargs))
+    except Exception as e:
+        logger.exception("safe_ui_call failed: %s", e)
+
+
 def show_error(parent, title, message):
     """Show error message dialog."""
-    messagebox.showerror(title, message, parent=parent)
+    try:
+        parent = _safe_parent(parent)
+        if parent is not None:
+            messagebox.showerror(title, message, parent=parent)
+        else:
+            messagebox.showerror(title, message)
+    except Exception as e:
+        logger.exception("show_error failed: %s", e)
 
 
 def show_info(parent, title, message):
     """Show info message dialog."""
-    messagebox.showinfo(title, message, parent=parent)
+    try:
+        parent = _safe_parent(parent)
+        if parent is not None:
+            messagebox.showinfo(title, message, parent=parent)
+        else:
+            messagebox.showinfo(title, message)
+    except Exception as e:
+        logger.exception("show_info failed: %s", e)
 
 
 def show_warning(parent, title, message):
     """Show warning message dialog."""
-    messagebox.showwarning(title, message, parent=parent)
+    try:
+        parent = _safe_parent(parent)
+        if parent is not None:
+            messagebox.showwarning(title, message, parent=parent)
+        else:
+            messagebox.showwarning(title, message)
+    except Exception as e:
+        logger.exception("show_warning failed: %s", e)
 
 
 def ask_yes_no(parent, title, message):
     """Ask yes/no question dialog."""
-    return messagebox.askyesno(title, message, parent=parent)
+    try:
+        parent = _safe_parent(parent)
+        if parent is not None:
+            return messagebox.askyesno(title, message, parent=parent)
+        return messagebox.askyesno(title, message)
+    except Exception as e:
+        logger.exception("ask_yes_no failed: %s", e)
+        return False
 
 
 def show_message_dialog(parent, title, message, buttons=None, default_role="continue"):
@@ -1917,12 +2007,15 @@ class WeeklyTrackerGUI(tk.Toplevel):
 
 class ArchiveViewer(tk.Toplevel):
     """Simplified archive viewer using basic ZIP password protection."""
-    def __init__(self, parent, archive_dir):
+    def __init__(self, parent, archive_dir, owner_gui=None):
         import zipfile  # Lazy import
         super().__init__(parent)
         self.title("Archive Browser")
         self.geometry("900x650")
         self.archive_dir = archive_dir
+        # Reference to the owning WorkflowGUI (optional) so we can reuse its spinner helpers
+        self.owner_gui = owner_gui
+        self._archive_cache = self._load_archive_cache()
         # Use active theme palette
         self.bg_color = CURRENT_PALETTE.get('bg_color', '#e2e6e9')
         self.fg_color = CURRENT_PALETTE.get('fg_color', '#2c3e50')
@@ -1976,8 +2069,8 @@ class ArchiveViewer(tk.Toplevel):
                 side=tk.LEFT,
                 padx=6,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.exception("ArchiveViewer: failed to add Open File Location button: %s", e)
         try:
             pack_action_button(
                 btn_bar,
@@ -1989,8 +2082,8 @@ class ArchiveViewer(tk.Toplevel):
                 side=tk.LEFT,
                 padx=6,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.exception("ArchiveViewer: failed to add Encrypt button: %s", e)
         try:
             pack_action_button(
                 btn_bar,
@@ -2002,8 +2095,8 @@ class ArchiveViewer(tk.Toplevel):
                 side=tk.LEFT,
                 padx=6,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.exception("ArchiveViewer: failed to add Change Password button: %s", e)
         spacer = tk.Frame(btn_bar, bg=self.bg_color)
         spacer.pack(side=tk.LEFT, expand=True, fill=tk.X)
         pack_action_button(btn_bar, "Close", self.destroy, role="cancel", font=FONTS["button"], width=12, side=tk.RIGHT, padx=6)
@@ -2011,15 +2104,15 @@ class ArchiveViewer(tk.Toplevel):
         self.load_archive_list()
         try:
             center_window(self, self.master)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.exception("ArchiveViewer: failed to center window: %s", e)
 
     def _open_archive_location(self):
         """Open the archives folder in the system file manager."""
         try:
             os.makedirs(self.archive_dir, exist_ok=True)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.exception("ArchiveViewer: failed to ensure archive dir: %s", e)
         try:
             path = os.path.abspath(self.archive_dir)
             if sys.platform.startswith('linux'):
@@ -2032,6 +2125,205 @@ class ArchiveViewer(tk.Toplevel):
                 raise Exception('Unsupported platform for auto-open')
         except Exception:
             show_info(self, 'Open Location', f'Open this folder manually:\n{self.archive_dir}')
+
+    # Fallback spinner helpers for ArchiveViewer (prefer owner_gui if provided)
+    def _show_spinner(self, parent, message: str = 'Loading...'):
+        try:
+            if getattr(self, 'owner_gui', None) and hasattr(self.owner_gui, '_show_spinner'):
+                return self.owner_gui._show_spinner(parent, message)
+        except Exception as e:
+            logger.exception("ArchiveViewer: owner spinner failed: %s", e)
+        try:
+            win = tk.Toplevel(parent)
+            win.transient(parent)
+            win.overrideredirect(True)
+            win.attributes('-topmost', True)
+            try:
+                parent.update_idletasks()
+                px = parent.winfo_rootx()
+                py = parent.winfo_rooty()
+                pw = parent.winfo_width()
+                ph = parent.winfo_height()
+                ww = 260
+                wh = 80
+                x = px + max(0, (pw - ww) // 2)
+                y = py + max(0, (ph - wh) // 2)
+                win.geometry(f"{ww}x{wh}+{x}+{y}")
+            except Exception as e:
+                logger.exception("ArchiveViewer: spinner positioning failed: %s", e)
+            frm = tk.Frame(win, bg='#ffffff', bd=1, relief=tk.RIDGE)
+            frm.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+            lbl = tk.Label(frm, text=message, font=FONTS['small_bold'], bg='#ffffff')
+            lbl.pack(side=tk.TOP, pady=(8, 4))
+            try:
+                pb = ttk.Progressbar(frm, mode='indeterminate', length=200)
+                pb.pack(side=tk.TOP, pady=(0, 8))
+                pb.start(10)
+            except Exception:
+                pb = None
+            return win
+        except Exception as e:
+            logger.exception("ArchiveViewer: failed to show spinner: %s", e)
+            return None
+
+    def _hide_spinner(self, spinner) -> None:
+        try:
+            if getattr(self, 'owner_gui', None) and hasattr(self.owner_gui, '_hide_spinner'):
+                return self.owner_gui._hide_spinner(spinner)
+        except Exception as e:
+            logger.exception("ArchiveViewer: owner hide spinner failed: %s", e)
+        try:
+            if spinner:
+                spinner.destroy()
+        except Exception as e:
+            logger.exception("ArchiveViewer: failed to destroy spinner: %s", e)
+
+    def _run_in_background(self, func, on_done=None, on_error=None):
+        """Run func() in a background thread and call on_done(result) or on_error(exc) in the main thread.
+        Prefers owner's background runner when available."""
+        try:
+            if getattr(self, 'owner_gui', None) and hasattr(self.owner_gui, '_run_in_background'):
+                return self.owner_gui._run_in_background(func, on_done=on_done, on_error=on_error)
+        except Exception as e:
+            logger.exception("ArchiveViewer: owner background runner failed: %s", e)
+
+        def runner():
+            try:
+                res = func()
+                if on_done:
+                    try:
+                        safe_ui_call(self, on_done, res)
+                    except Exception as e:
+                        logger.exception("ArchiveViewer: on_done callback failed: %s", e)
+            except Exception as e:
+                if on_error:
+                    try:
+                        safe_ui_call(self, on_error, e)
+                    except Exception as e2:
+                        logger.exception("ArchiveViewer: on_error callback failed: %s", e2)
+        t = threading.Thread(target=runner, daemon=True)
+        t.start()
+
+    def _cache_path(self) -> str:
+        return os.path.join(tempfile.gettempdir(), "workflow_archive_cache.json")
+
+    def _get_cache_password(self) -> Optional[str]:
+        try:
+            os.makedirs(APP_DATA_DIR, exist_ok=True)
+        except Exception as e:
+            logger.exception("ArchiveViewer: failed to ensure APP_DATA_DIR: %s", e)
+
+        key_path = os.path.join(APP_DATA_DIR, ".cache_key")
+        try:
+            if os.path.exists(key_path):
+                with open(key_path, "r", encoding="utf-8") as f:
+                    key = f.read().strip()
+                    return key or None
+        except Exception as e:
+            logger.exception("ArchiveViewer: failed to read cache key: %s", e)
+            return None
+
+        try:
+            key = secrets.token_urlsafe(32)
+            with open(key_path, "w", encoding="utf-8") as f:
+                f.write(key)
+            try:
+                os.chmod(key_path, 0o600)
+            except Exception as e:
+                logger.exception("ArchiveViewer: failed to chmod cache key: %s", e)
+            return key
+        except Exception as e:
+            logger.exception("ArchiveViewer: failed to write cache key: %s", e)
+            return None
+
+    def _get_cache_security(self) -> Optional[SecurityManager]:
+        password = self._get_cache_password()
+        if not password:
+            return None
+        return SecurityManager(password)
+
+    def _load_archive_cache(self) -> Dict[str, Any]:
+        try:
+            cache_path = self._cache_path()
+            if os.path.exists(cache_path):
+                security = self._get_cache_security()
+                if not security:
+                    return {}
+                raw = security.decrypt(cache_path)
+                if not raw:
+                    try:
+                        os.remove(cache_path)
+                    except Exception:
+                        pass
+                    return {}
+                data = json.loads(raw)
+                if isinstance(data, dict):
+                    return data
+                try:
+                    os.remove(cache_path)
+                except Exception:
+                    pass
+                return {}
+        except Exception as e:
+            _log_persistent_error("archive_cache_load", e)
+            try:
+                cache_path = self._cache_path()
+                if os.path.exists(cache_path):
+                    os.remove(cache_path)
+            except Exception:
+                pass
+            return {}
+        return {}
+
+    def _save_archive_cache(self) -> None:
+        try:
+            cache_path = self._cache_path()
+            tmp_path = None
+            security = self._get_cache_security()
+            if not security:
+                return
+            payload = json.dumps(self._archive_cache)
+            tmp_handle = tempfile.NamedTemporaryFile(delete=False, dir=os.path.dirname(cache_path), suffix=".tmp")
+            tmp_path = tmp_handle.name
+            tmp_handle.close()
+            if security.encrypt(payload, tmp_path):
+                os.replace(tmp_path, cache_path)
+        except Exception as e:
+            _log_persistent_error("archive_cache_save", e)
+            try:
+                if tmp_path and os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
+
+    def _get_cached_archive_names(self, arch_path: str) -> Optional[List[str]]:
+        try:
+            cached = self._archive_cache.get(arch_path)
+            if not isinstance(cached, dict):
+                return None
+            cached_mtime = cached.get("mtime")
+            names = cached.get("names")
+            if not isinstance(names, list):
+                return None
+            if cached_mtime is None:
+                return None
+            current_mtime = os.path.getmtime(arch_path)
+            if abs(float(cached_mtime) - float(current_mtime)) < 0.0001:
+                return names
+        except Exception as e:
+            _log_persistent_error("archive_cache_read", e)
+            return None
+        return None
+
+    def _set_cached_archive_names(self, arch_path: str, names: List[str]) -> None:
+        try:
+            self._archive_cache[arch_path] = {
+                "mtime": os.path.getmtime(arch_path),
+                "names": names,
+            }
+            self._save_archive_cache()
+        except Exception as e:
+            _log_persistent_error("archive_cache_set", e)
 
     def _encrypt_selected_archive(self):
         """Encrypt the selected zip archive with a password."""
@@ -2070,7 +2362,7 @@ class ArchiveViewer(tk.Toplevel):
             return
 
         # Check if archive already has encrypted entries
-        temp_path = f"{archive_full}.tmp"
+        temp_path = None
         try:
             with pyzipper.AESZipFile(archive_full, 'r') as zf_in:
                 try:
@@ -2088,6 +2380,10 @@ class ArchiveViewer(tk.Toplevel):
                     return
                 new_password = new_pw_dialog.result
 
+                tmp_handle = tempfile.NamedTemporaryFile(delete=False, dir=os.path.dirname(archive_full), suffix=".tmp")
+                temp_path = tmp_handle.name
+                tmp_handle.close()
+
                 with pyzipper.AESZipFile(
                     temp_path,
                     'w',
@@ -2103,8 +2399,9 @@ class ArchiveViewer(tk.Toplevel):
             os.replace(temp_path, archive_full)
             show_info(self, "Archive Encryption", "Archive encrypted successfully.")
         except RuntimeError as e:
+            _log_persistent_error("archive_temp", e)
             try:
-                if os.path.exists(temp_path):
+                if temp_path and os.path.exists(temp_path):
                     os.remove(temp_path)
             except Exception:
                 pass
@@ -2158,11 +2455,15 @@ class ArchiveViewer(tk.Toplevel):
             return
         new_password = new_pw_dialog.result
 
-        temp_path = f"{archive_full}.tmp"
+        temp_path = None
         try:
             with pyzipper.AESZipFile(archive_full, 'r') as zf_in:
                 zf_in.setpassword(old_password.encode('utf-8'))
                 names = zf_in.namelist()
+                tmp_handle = tempfile.NamedTemporaryFile(delete=False, dir=os.path.dirname(archive_full), suffix=".tmp")
+                temp_path = tmp_handle.name
+                tmp_handle.close()
+
                 with pyzipper.AESZipFile(
                     temp_path,
                     'w',
@@ -2178,22 +2479,25 @@ class ArchiveViewer(tk.Toplevel):
             os.replace(temp_path, archive_full)
             show_info(self, "Archive Encryption", "Password updated successfully.")
         except RuntimeError as e:
+            _log_persistent_error("archive_temp", e)
             try:
-                if os.path.exists(temp_path):
+                if temp_path and os.path.exists(temp_path):
                     os.remove(temp_path)
             except Exception:
                 pass
             show_error(self, "Archive Encryption", f"Unable to change password: {e}")
         except Exception as e:
+            _log_persistent_error("archive_temp", e)
             try:
-                if os.path.exists(temp_path):
+                if temp_path and os.path.exists(temp_path):
                     os.remove(temp_path)
             except Exception:
                 pass
             show_error(self, "Archive Encryption", f"Unable to change password: {e}")
         except Exception as e:
+            _log_persistent_error("archive_temp", e)
             try:
-                if os.path.exists(temp_path):
+                if temp_path and os.path.exists(temp_path):
                     os.remove(temp_path)
             except Exception:
                 pass
@@ -2251,48 +2555,118 @@ class ArchiveViewer(tk.Toplevel):
             ZipCls = zipfile.ZipFile
         try:
             arch_path = os.path.join(self.archive_dir, archive_name)
-            
-            # Try to read without password first
-            names = []
-            try:
-                with ZipCls(arch_path, 'r') as zf:
-                    names = zf.namelist()
-            except RuntimeError as e:
-                # Password-protected, prompt for it
-                if "Bad password" in str(e) or "password" in str(e).lower():
-                    dialog = ArchivePasswordDialog(self, prompt=f"Enter password for {archive_name}:", default="")
-                    self.wait_window(dialog)
-                    if not dialog.result:
-                        return
-                    archive_password = dialog.result
+            cached_names = self._get_cached_archive_names(arch_path)
 
-                    # Try again with password
-                    with ZipCls(arch_path, 'r') as zf:
-                        zf.setpassword(archive_password.encode('utf-8') if isinstance(archive_password, str) else archive_password)
-                        names = zf.namelist()
-                else:
-                    show_error(self, "Archive Error", f"Error reading archive: {e}")
-                    return
-            except Exception as e:
-                show_error(self, "Archive Error", f"Error reading archive: {e}")
+            def _populate_tree(names_list):
+                try:
+                    self.tree.delete(*self.tree.get_children(parent_node))
+                    month_nodes = {}
+                    for internal_path in names_list:
+                        if not internal_path.endswith('.txt'):
+                            continue
+                        internal_path = internal_path.replace('\\', '/')
+                        if '/' in internal_path:
+                            m_folder, c_file = internal_path.split('/', 1)
+                            if m_folder not in month_nodes:
+                                month_nodes[m_folder] = self.tree.insert(parent_node, "end", text=m_folder)
+                            display_name = c_file.replace(".txt", "").replace("_", " ")
+                            self.tree.insert(month_nodes[m_folder], "end", text=display_name, values=(archive_name, internal_path))
+                except Exception as e:
+                    show_error(self, "Archive Error", f"Error loading archive contents: {e}")
+
+            # If cache present use it immediately
+            if cached_names is not None:
+                _populate_tree(cached_names)
                 return
-            
-            # Build tree of files organized by month
-            month_nodes = {}
-            for internal_path in names:
-                if not internal_path.endswith('.txt'):
-                    continue
-                
-                internal_path = internal_path.replace('\\', '/')
-                if '/' in internal_path:
-                    m_folder, c_file = internal_path.split('/', 1)
-                    if m_folder not in month_nodes:
-                        month_nodes[m_folder] = self.tree.insert(parent_node, "end", text=m_folder)
-                    
-                    display_name = c_file.replace(".txt", "").replace("_", " ")
-                    self.tree.insert(month_nodes[m_folder], "end", text=display_name, values=(archive_name, internal_path))
+
+            # Otherwise, do background read (try first without password)
+            spinner = self._show_spinner(self, f"Loading {archive_name}...")
+
+            def _read_no_pw():
+                try:
+                    with ZipCls(arch_path, 'r') as zf:
+                        return zf.namelist()
+                except RuntimeError as e:
+                    if "Bad password" in str(e) or "password" in str(e).lower():
+                        return 'PASSWORD_REQUIRED'
+                    raise
+
+            def _on_read(result):
+                try:
+                    self._hide_spinner(spinner)
+                    if result == 'PASSWORD_REQUIRED':
+                        dialog = ArchivePasswordDialog(self, prompt=f"Enter password for {archive_name}:", default="")
+                        self.wait_window(dialog)
+                        if not dialog.result:
+                            return
+                        archive_password = dialog.result
+
+                        spinner2 = self._show_spinner(self, f"Decrypting {archive_name}...")
+
+                        def _read_with_pw():
+                            with ZipCls(arch_path, 'r') as zf:
+                                zf.setpassword(archive_password.encode('utf-8') if isinstance(archive_password, str) else archive_password)
+                                return zf.namelist()
+
+                        def _on_pw_read(names):
+                            try:
+                                self._hide_spinner(spinner2)
+                                self._set_cached_archive_names(arch_path, names)
+                                _populate_tree(names)
+                            except Exception as e:
+                                show_error(self, "Archive Error", f"Error loading archive contents: {e}")
+
+                        def _on_pw_error(err):
+                            self._hide_spinner(spinner2)
+                            show_error(self, "Archive Error", f"Error reading archive with password: {err}")
+
+                        self._run_in_background(_read_with_pw, on_done=_on_pw_read, on_error=_on_pw_error)
+                        return
+
+                    # Normal case: got names
+                    self._set_cached_archive_names(arch_path, result)
+                    _populate_tree(result)
+                except Exception as e:
+                    show_error(self, "Archive Error", f"Error loading archive contents: {e}")
+
+            def _on_error(err):
+                try:
+                    self._hide_spinner(spinner)
+                except Exception:
+                    pass
+                try:
+                    # If the ArchiveViewer has been destroyed, fall back to root error parent
+                    parent = self if getattr(self, 'winfo_exists', lambda: False)() else None
+                except Exception:
+                    parent = None
+                try:
+                    if parent:
+                        show_error(parent, "Archive Error", f"Error reading archive: {err}")
+                    else:
+                        show_error(self.master if getattr(self, 'master', None) else None, "Archive Error", f"Error reading archive: {err}")
+                except Exception:
+                    # Last-ditch: print to stderr
+                    try:
+                        print(f"Error reading archive: {err}")
+                    except Exception:
+                        pass
+
+            self._run_in_background(_read_no_pw, on_done=_on_read, on_error=_on_error)
         except Exception as e:
-            show_error(self, "Archive Error", f"Error loading archive contents: {e}")
+            try:
+                parent = self if getattr(self, 'winfo_exists', lambda: False)() else None
+            except Exception:
+                parent = None
+            try:
+                if parent:
+                    show_error(parent, "Archive Error", f"Error loading archive contents: {e}")
+                else:
+                    show_error(self.master if getattr(self, 'master', None) else None, "Archive Error", f"Error loading archive contents: {e}")
+            except Exception:
+                try:
+                    print(f"Error loading archive contents: {e}")
+                except Exception:
+                    pass
 
     def view_archive_file(self, archive_name, internal_path):
         """Extract and display file from ZIP (with or without password protection)."""
@@ -2304,56 +2678,73 @@ class ArchiveViewer(tk.Toplevel):
             ZipCls = zipfile.ZipFile
         try:
             arch_path = os.path.join(self.archive_dir, archive_name)
-            
-            # Try to read without password first
-            content = None
-            try:
-                with ZipCls(arch_path, 'r') as zf:
-                    raw = zf.read(internal_path)
-                    if isinstance(raw, bytes):
-                        try:
-                            content = raw.decode('utf-8')
-                        except Exception:
-                            content = raw.decode('utf-8', errors='replace')
-                    else:
-                        content = str(raw)
-            except RuntimeError as e:
-                # Password-protected, prompt for it
-                if "Bad password" in str(e) or "password" in str(e).lower():
-                    dialog = ArchivePasswordDialog(self, prompt=f"Enter password for {archive_name}:", default="")
-                    self.wait_window(dialog)
-                    if not dialog.result:
-                        return
-                    archive_password = dialog.result
 
-                    # Try again with password
+            spinner = self._show_spinner(self, f"Reading {os.path.basename(internal_path)}...")
+
+            def _read_no_pw():
+                try:
                     with ZipCls(arch_path, 'r') as zf:
-                        zf.setpassword(archive_password.encode('utf-8') if isinstance(archive_password, str) else archive_password)
                         raw = zf.read(internal_path)
-                        if isinstance(raw, bytes):
+                        return raw
+                except RuntimeError as e:
+                    if "Bad password" in str(e) or "password" in str(e).lower():
+                        return 'PASSWORD_REQUIRED'
+                    raise
+
+            def _on_read(result):
+                try:
+                    self._hide_spinner(spinner)
+                    if result == 'PASSWORD_REQUIRED':
+                        dialog = ArchivePasswordDialog(self, prompt=f"Enter password for {archive_name}:", default="")
+                        self.wait_window(dialog)
+                        if not dialog.result:
+                            return
+                        archive_password = dialog.result
+
+                        spinner2 = self._show_spinner(self, f"Decrypting {os.path.basename(internal_path)}...")
+
+                        def _read_with_pw():
+                            with ZipCls(arch_path, 'r') as zf:
+                                zf.setpassword(archive_password.encode('utf-8') if isinstance(archive_password, str) else archive_password)
+                                return zf.read(internal_path)
+
+                        def _on_pw_read(raw):
                             try:
-                                content = raw.decode('utf-8')
-                            except Exception:
-                                content = raw.decode('utf-8', errors='replace')
-                        else:
-                            content = str(raw)
-                else:
-                    show_error(self, "Error", f"Could not read file: {e}")
-                    return
-            except KeyError:
-                show_error(self, "Error", f"File not found in archive")
-                return
-            except Exception as e:
-                show_error(self, "Error", f"Could not read archived file: {e}")
-                return
-            
-            # Display in text view
-            if content:
-                self.title_lbl.config(text=f"Viewing: {os.path.basename(internal_path)}")
-                self.text_view.config(state=tk.NORMAL)
-                self.text_view.delete("1.0", tk.END)
-                self.text_view.insert(tk.END, content)
-                self.text_view.config(state=tk.DISABLED)
+                                self._hide_spinner(spinner2)
+                                content = raw.decode('utf-8') if isinstance(raw, bytes) else str(raw)
+                                self.title_lbl.config(text=f"Viewing: {os.path.basename(internal_path)}")
+                                self.text_view.config(state=tk.NORMAL)
+                                self.text_view.delete("1.0", tk.END)
+                                self.text_view.insert(tk.END, content)
+                                self.text_view.config(state=tk.DISABLED)
+                            except Exception as e:
+                                show_error(self, "Error", f"Could not read archived file: {e}")
+
+                        def _on_pw_error(err):
+                            self._hide_spinner(spinner2)
+                            show_error(self, "Error", f"Could not read archived file with password: {err}")
+
+                        self._run_in_background(_read_with_pw, on_done=_on_pw_read, on_error=_on_pw_error)
+                        return
+
+                    # Normal case: got raw bytes
+                    raw = result
+                    content = raw.decode('utf-8') if isinstance(raw, bytes) else str(raw)
+                    self.title_lbl.config(text=f"Viewing: {os.path.basename(internal_path)}")
+                    self.text_view.config(state=tk.NORMAL)
+                    self.text_view.delete("1.0", tk.END)
+                    self.text_view.insert(tk.END, content)
+                    self.text_view.config(state=tk.DISABLED)
+                except KeyError:
+                    show_error(self, "Error", f"File not found in archive")
+                except Exception as e:
+                    show_error(self, "Error", f"Could not read archived file: {e}")
+
+            def _on_error(err):
+                self._hide_spinner(spinner)
+                show_error(self, "Error", f"Could not read archived file: {err}")
+
+            self._run_in_background(_read_no_pw, on_done=_on_read, on_error=_on_error)
         except Exception as e:
             show_error(self, "Error", f"Could not read archived file: {e}")
 
@@ -2426,11 +2817,28 @@ class WorkflowGUI:
         self.filter_has_me_cleared = False
         self.filter_show_unscheduled = True
         self.filter_show_scheduled = True
+        self._last_filter_state = None
         
         # Search state (simplified - no dataclass overhead)
         self.search_query = ""
         self.search_matches = []
         self.search_current_index = -1
+        self._search_apply_after_id = None
+        self._render_limits = {"scheduled": 200, "unscheduled": 200}
+        self._last_render_signature = None
+        self._last_render_context = None
+
+        # UI widget registry for incremental updates & virtualization
+        # maps person id -> card widget
+        self._person_widgets: Dict[int, tk.Widget] = {}
+        # average card heights to help virtual window estimation (px)
+        self._avg_card_height: Dict[str, int] = {"scheduled": 120, "unscheduled": 60}
+        # visible index window per column (start, end)
+        self._visible_window: Dict[str, Tuple[int, int]] = {"scheduled": (0, 0), "unscheduled": (0, 0)}
+        # thresholds for activating virtualization
+        self._virtualize_threshold = 400  # items
+        # lock for background thread callbacks
+        self._bg_lock = threading.Lock()
         
         self.root.configure(bg=CURRENT_PALETTE["bg_color"])
         
@@ -2447,11 +2855,55 @@ class WorkflowGUI:
         
         self.load_data()
         self._migrate_codes_safe()
+        self._normalize_all_people()
         
         # Create UI and render
         self.create_widgets()
         self.refresh_blocks()
         self._apply_chrome_styling()
+
+    def _normalize_person_fields(self, person: Dict[str, Any]) -> None:
+        try:
+            self._ensure_person_uid(person)
+            person["_norm_name"] = (person.get("Name", "") or "").strip().lower()
+            person["_norm_branch"] = (person.get("Branch", "") or "").strip().lower()
+            person["_norm_manager"] = (person.get("Manager Name", "") or "").strip().lower()
+        except Exception:
+            pass
+
+    def _ensure_person_uid(self, person: Dict[str, Any]) -> str:
+        try:
+            uid = (person.get("_uid") or "").strip()
+            if uid:
+                return uid
+            uid = uuid.uuid4().hex
+            person["_uid"] = uid
+            return uid
+        except Exception:
+            # Fallback to stable string even if mutation fails
+            return uuid.uuid4().hex
+
+    def _normalize_all_people(self) -> None:
+        try:
+            for person in self.people_data:
+                self._normalize_person_fields(person)
+        except Exception:
+            pass
+
+    def _build_render_signature(self) -> Tuple:
+        try:
+            return tuple(
+                (
+                    (p.get("Employee ID", "") or ""),
+                    (p.get("Name", "") or ""),
+                    (p.get("NEO Scheduled Date", "") or ""),
+                    (p.get("Branch", "") or ""),
+                    (p.get("Manager Name", "") or ""),
+                )
+                for p in (self.people_data or [])
+            )
+        except Exception:
+            return ()
 
     def _migrate_legacy_data_dir(self) -> None:
         """Copy data from legacy app-relative data folder to Documents/Workflow."""
@@ -2942,6 +3394,10 @@ class WorkflowGUI:
         self.search_container.pack(side=tk.LEFT, padx=(12, 0))
         pack_action_button(self.search_container, "<", self.search_prev, role="charcoal", font=FONTS["button"], padx=2)
         pack_action_button(self.search_container, ">", self.search_next, role="charcoal", font=FONTS["button"], padx=2)
+        try:
+            self.search_var.trace_add("write", lambda *args: self._on_search_change())
+        except Exception:
+            pass
 
         # Close filters button (X) on the right
         pack_action_button(self.filters_frame, "X", self._hide_filters, role="charcoal", font=FONTS["button"], side=tk.RIGHT, padx=10)
@@ -3552,6 +4008,18 @@ class WorkflowGUI:
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         # Adjust the window width to match the canvas
         self.canvas.itemconfig(self.canvas_window, width=event.width - 40)
+        # Virtualization: update visible window after geometry changes
+        try:
+            if getattr(self, '_virtualize_threshold', 0) and self._virtualize_threshold > 0:
+                # small debounce
+                try:
+                    if getattr(self, '_virtual_update_after_id', None):
+                        self.root.after_cancel(self._virtual_update_after_id)
+                except Exception:
+                    pass
+                self._virtual_update_after_id = self.root.after(80, self._update_virtual_window)
+        except Exception:
+            pass
 
     def _on_mousewheel(self, event):
         try:
@@ -3566,19 +4034,68 @@ class WorkflowGUI:
                 self.canvas.yview_scroll(-1, "units")
             elif scroll_down:
                 self.canvas.yview_scroll(1, "units")
+            # Debounced virtualization update
+            try:
+                if getattr(self, '_virtual_update_after_id', None):
+                    self.root.after_cancel(self._virtual_update_after_id)
+            except Exception:
+                pass
+            self._virtual_update_after_id = self.root.after(60, self._update_virtual_window)
         except Exception:
             pass
 
+    def _increase_render_limit(self, column: str) -> None:
+        try:
+            current = int(self._render_limits.get(column, 200))
+            self._render_limits[column] = current + 200
+        except Exception:
+            self._render_limits[column] = 400
+        self.refresh_blocks()
+
     def refresh_blocks(self) -> None:
         """Clear and rebuild the blocks with dual-column sorting"""
-        # Clear columns
-        for widget in self.left_col.winfo_children():
-            widget.destroy()
-        for widget in self.right_col.winfo_children():
-            widget.destroy()
-        # Reset card registry used for searching
+        render_signature = self._build_render_signature()
+        current_query = (self.search_var.get() or '').strip().lower() if getattr(self, 'search_var', None) else ''
+        render_context = (
+            render_signature,
+            self._last_filter_state,
+            current_query,
+            tuple(sorted(self._render_limits.items())),
+        )
+        if self._last_render_context == render_context:
+            return
+        self._last_render_context = render_context
+
+        # Reset card registry used for searching (we keep widgets for incremental updates)
         self.card_registry = []
-            
+
+        # Ensure headers exist (created once, updated as needed)
+        def ensure_headers(unscheduled_exists: bool):
+            try:
+                if not hasattr(self, '_left_header') and unscheduled_exists:
+                    self._left_header = tk.Label(self.left_col, text=LABEL_TEXT['unscheduled_section'], font=FONTS["subtext_bold"], bg=CURRENT_PALETTE["bg_color"], fg=TEXT_COLORS['section_unscheduled'])
+                    self._left_header.pack(pady=(10, 5), anchor="w")
+                elif hasattr(self, '_left_header') and not unscheduled_exists:
+                    try:
+                        self._left_header.destroy()
+                        delattr = getattr(self, '_left_header', None)
+                        if delattr is not None:
+                            del self._left_header
+                    except Exception:
+                        pass
+                # Right header always present
+                if not hasattr(self, '_right_header'):
+                    self._right_header = tk.Label(self.right_col, text=LABEL_TEXT['scheduled_section'], font=FONTS["subtext_bold"], bg=CURRENT_PALETTE["bg_color"], fg=TEXT_COLORS['section_scheduled'])
+                    self._right_header.pack(pady=(10, 5), anchor="w")
+                else:
+                    # update text in case themes changed
+                    try:
+                        self._right_header.config(text=LABEL_TEXT['scheduled_section'])
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
         if not self.people_data:
             lbl = tk.Label(
                 self.right_col,
@@ -3590,62 +4107,116 @@ class WorkflowGUI:
             lbl.pack(pady=50)
             return
 
-        # Split into Scheduled and Unscheduled using list comprehensions
-        scheduled = [p for p in self.people_data if p.get("NEO Scheduled Date", "").strip()]
-        unscheduled = [p for p in self.people_data if not p.get("NEO Scheduled Date", "").strip()]
 
-        # Sort Scheduled: Date then Name
-        def get_scheduled_key(person):
-            date_str = person.get("NEO Scheduled Date", "").strip()
-            try:
-                date_obj = datetime.strptime(date_str, "%m/%d/%Y")
-            except:
-                date_obj = datetime(9999, 12, 31)
-            return (date_obj, person.get("Name", "").strip().lower())
+        # Build scheduled/unscheduled lists in one pass (apply filters early) using helper
+        scheduled_entries: List[Tuple[datetime, str, Dict[str, Any]]] = []
+        unscheduled_entries: List[Tuple[str, Dict[str, Any]]] = []
+        date_cache: Dict[str, datetime] = {}
 
-        scheduled.sort(key=get_scheduled_key)
-        
-        # Sort Unscheduled: Name
-        unscheduled.sort(key=lambda p: p.get("Name", "").strip().lower())
+        for person in self.people_data:
+            neo_date = (person.get("NEO Scheduled Date", "") or "").strip()
+            is_scheduled = bool(neo_date)
 
-        # Apply filters using FilterState
-        scheduled = [p for p in scheduled if self._passes_filters(p, scheduled=True)] if self.filter_show_scheduled else []
-        unscheduled = [p for p in unscheduled if self._passes_filters(p, scheduled=False)] if self.filter_show_unscheduled else []
+            if is_scheduled and not self.filter_show_scheduled:
+                continue
+            if (not is_scheduled) and not self.filter_show_unscheduled:
+                continue
+            if not self._passes_filters(person, scheduled=is_scheduled):
+                continue
+
+            name_lower = (person.get("_norm_name") or (person.get("Name", "") or "").strip().lower())
+
+            if is_scheduled:
+                if neo_date in date_cache:
+                    date_obj = date_cache[neo_date]
+                else:
+                    try:
+                        date_obj = datetime.strptime(neo_date, "%m/%d/%Y")
+                    except Exception:
+                        date_obj = datetime(9999, 12, 31)
+                    date_cache[neo_date] = date_obj
+                scheduled_entries.append((date_obj, name_lower, person))
+            else:
+                unscheduled_entries.append((name_lower, person))
+
+        scheduled_entries.sort(key=lambda item: (item[0], item[1]))
+        unscheduled_entries.sort(key=lambda item: item[0])
+
+        # Apply render limits unless searching
+        if not current_query:
+            sched_limit = self._render_limits.get("scheduled", 200)
+            unsched_limit = self._render_limits.get("unscheduled", 200)
+            scheduled_display = scheduled_entries[:sched_limit]
+            unscheduled_display = unscheduled_entries[:unsched_limit]
+            sched_has_more = len(scheduled_entries) > len(scheduled_display)
+            unsched_has_more = len(unscheduled_entries) > len(unscheduled_display)
+        else:
+            scheduled_display = scheduled_entries
+            unscheduled_display = unscheduled_entries
+            sched_has_more = False
+            unsched_has_more = False
+
+        # Convert entries to simple lists for synchronization helpers
+        scheduled_display_persons = [p for _, _, p in scheduled_display]
+        unscheduled_display_persons = [p for _, p in unscheduled_display]
 
         # Build index mapping to avoid O(n²) lookups
-        person_to_index = {id(person): idx for idx, person in enumerate(self.people_data)}
+        person_to_index = {self._ensure_person_uid(person): idx for idx, person in enumerate(self.people_data)}
 
         # Headers for columns - only show unscheduled header if there are unscheduled people
-        if unscheduled:
+        if unscheduled_entries:
             tk.Label(self.left_col, text=LABEL_TEXT['unscheduled_section'], font=FONTS["subtext_bold"], bg=CURRENT_PALETTE["bg_color"], fg=TEXT_COLORS['section_unscheduled']).pack(pady=(10, 5), anchor="w")
         tk.Label(self.right_col, text=LABEL_TEXT['scheduled_section'], font=FONTS["subtext_bold"], bg=CURRENT_PALETTE["bg_color"], fg=TEXT_COLORS['section_scheduled']).pack(pady=(10, 5), anchor="w")
 
-        # Create blocks in Left Column (Compact) - O(n) using pre-built index
-        for person in unscheduled:
-            orig_idx = person_to_index.get(id(person), -1)
-            if orig_idx >= 0:
-                self.create_person_block(orig_idx, person, self.left_col, compact=True)
-            
-        # Create blocks in Right Column (Detailed) - O(n) using pre-built index  
-        for person in scheduled:
-            orig_idx = person_to_index.get(id(person), -1)
-            if orig_idx >= 0:
-                self.create_person_block(orig_idx, person, self.right_col, compact=False)
-        
+        # Sync columns using incremental helpers (creates/removes only necessary widgets)
+        try:
+            self._sync_column('unscheduled', unscheduled_display_persons, self.left_col, compact=True, has_more=unsched_has_more)
+            self._sync_column('scheduled', scheduled_display_persons, self.right_col, compact=False, has_more=sched_has_more)
+        except Exception:
+            # Fallback to brute-force render if anything goes wrong
+            for w in self.left_col.winfo_children():
+                w.destroy()
+            for w in self.right_col.winfo_children():
+                w.destroy()
+            for p in unscheduled_display_persons:
+                self.create_person_block(person_to_index.get(self._ensure_person_uid(p), -1), p, self.left_col, compact=True)
+            for p in scheduled_display_persons:
+                self.create_person_block(person_to_index.get(self._ensure_person_uid(p), -1), p, self.right_col, compact=False)
+
         # Re-bind mousewheel
         self.bind_mousewheel(self.root, self._on_mousewheel)
+        # Kick off virtual window update (debounced)
+        try:
+            if getattr(self, '_virtualize_threshold', 0) and len(self.people_data) > 0:
+                self.root.after(50, self._update_virtual_window)
+        except Exception:
+            pass
 
-    def create_person_block(self, index, person, parent_frame, compact=False):
-        """Create a person block, either compact (Name/Reqs) or detailed"""
+    def create_person_block(self, index, person, parent_frame, compact=False, before_widget=None):
+        """Create a person block, either compact (Name/Reqs) or detailed.
+
+        If `before_widget` is supplied, pack the card before that widget to preserve order
+        without rebuilding everything.
+        Returns the created card widget.
+        """
         # Create a "Card" for the person
         card = tk.Frame(parent_frame, bg=self.card_bg_color, bd=0, relief=tk.FLAT)
         # Remove internal vertical padding that created an empty area below each card
         # Keep external spacing between cards using pady only
-        card.pack(fill=tk.X, pady=5)
+        if before_widget is not None:
+            card.pack(fill=tk.X, pady=5, before=before_widget)
+        else:
+            card.pack(fill=tk.X, pady=5)
+
+        # Keep a reference by person id for incremental updates
+        try:
+            self._person_widgets[self._ensure_person_uid(person)] = card
+        except Exception:
+            pass
 
         # Register this card for search by name
         try:
-            name_key = (person.get('Name', '') or '').strip().lower()
+            name_key = (person.get('_norm_name') or (person.get('Name', '') or '').strip().lower())
         except Exception:
             name_key = ''
         self.card_registry.append({
@@ -3786,6 +4357,15 @@ class WorkflowGUI:
         if compact:
             # Add a bottom border and END HERE for compact
             tk.Frame(card, height=1, bg=SEPARATOR_COLOR).pack(fill=tk.X, pady=(5, 0))
+            # update average compact card height for virtualization heuristics
+            try:
+                self.root.update_idletasks()
+                h = max(1, card.winfo_height())
+                # moving average update
+                prev = self._avg_card_height.get('unscheduled', 60)
+                self._avg_card_height['unscheduled'] = int((prev * 0.6) + (h * 0.4))
+            except Exception:
+                pass
             return
 
         # --- THREE-COLUMN DETAILED INFO ---
@@ -3933,25 +4513,392 @@ class WorkflowGUI:
         # Uniform Sub-row
         build_uniform_row(col3, person, bg=self.bg_color)
 
-        # Notes Section (moved to bottom, only shows if present)
+        # Notes Section (lazy-expand to reduce initial widget cost)
         notes = person.get("Notes", "").strip()
         if notes:
             add_separator(card, color=SEPARATOR_COLOR, pady=PADDING['section_top'])
-            notes_frame = tk.Frame(card, bg=self.card_bg_color, padx=10 if compact else 15, pady=5)
-            notes_frame.pack(fill=tk.X, padx=10 if compact else 15, pady=5)
-            tk.Label(notes_frame, text="Additional Notes:", font=FONTS["tiny_bold"], bg=self.card_bg_color, fg="#7f8c8d").pack(anchor="w")
-            tk.Label(notes_frame, text=notes, font=FONTS["tiny"], bg=self.card_bg_color, wraplength=800, justify=tk.LEFT).pack(anchor="w")
+            toggle_frame = tk.Frame(card, bg=self.card_bg_color)
+            toggle_frame.pack(fill=tk.X, padx=10 if compact else 15, pady=(4, 2))
+
+            notes_container = {"frame": None, "expanded": False}
+
+            def _toggle_notes():
+                if notes_container["expanded"]:
+                    try:
+                        if notes_container["frame"] is not None:
+                            notes_container["frame"].destroy()
+                    except Exception:
+                        pass
+                    notes_container["frame"] = None
+                    notes_container["expanded"] = False
+                    try:
+                        btn.config(text="Show Notes")
+                    except Exception:
+                        pass
+                    return
+
+                notes_container["expanded"] = True
+                try:
+                    btn.config(text="Hide Notes")
+                except Exception:
+                    pass
+                notes_frame = tk.Frame(card, bg=self.card_bg_color, padx=10 if compact else 15, pady=5)
+                notes_frame.pack(fill=tk.X, padx=10 if compact else 15, pady=5)
+                tk.Label(notes_frame, text="Additional Notes:", font=FONTS["tiny_bold"], bg=self.card_bg_color, fg="#7f8c8d").pack(anchor="w")
+                tk.Label(notes_frame, text=notes, font=FONTS["tiny"], bg=self.card_bg_color, wraplength=800, justify=tk.LEFT).pack(anchor="w")
+                notes_container["frame"] = notes_frame
+
+            btn = pack_action_button(toggle_frame, "Show Notes", _toggle_notes, role="charcoal", font=FONTS["tiny_bold"], width=12, side=tk.LEFT)
 
         # Bottom Border
         add_separator(card, color=SEPARATOR_COLOR, pady=PADDING['section_top'])
 
+        # Update average detailed card height for virtualization heuristics
+        try:
+            self.root.update_idletasks()
+            h = max(1, card.winfo_height())
+            prev = self._avg_card_height.get('scheduled', 120)
+            self._avg_card_height['scheduled'] = int((prev * 0.6) + (h * 0.4))
+        except Exception:
+            pass
+
+    # --- Incremental Rendering & Background Utilities ---
+    def _get_display_lists(self, current_query: str = ''):
+        """Return tuple of (scheduled_persons_list, unscheduled_persons_list, sched_has_more, unsched_has_more)
+        using the same filtering logic as refresh_blocks."""
+        try:
+            scheduled_entries: List[Tuple[datetime, str, Dict[str, Any]]] = []
+            unscheduled_entries: List[Tuple[str, Dict[str, Any]]] = []
+            date_cache: Dict[str, datetime] = {}
+
+            for person in self.people_data:
+                neo_date = (person.get("NEO Scheduled Date", "") or "").strip()
+                is_scheduled = bool(neo_date)
+
+                if is_scheduled and not self.filter_show_scheduled:
+                    continue
+                if (not is_scheduled) and not self.filter_show_unscheduled:
+                    continue
+                if not self._passes_filters(person, scheduled=is_scheduled):
+                    continue
+
+                name_lower = (person.get("_norm_name") or (person.get("Name", "") or "").strip().lower())
+
+                if is_scheduled:
+                    if neo_date in date_cache:
+                        date_obj = date_cache[neo_date]
+                    else:
+                        try:
+                            date_obj = datetime.strptime(neo_date, "%m/%d/%Y")
+                        except Exception:
+                            date_obj = datetime(9999, 12, 31)
+                        date_cache[neo_date] = date_obj
+                    scheduled_entries.append((date_obj, name_lower, person))
+                else:
+                    unscheduled_entries.append((name_lower, person))
+
+            scheduled_entries.sort(key=lambda item: (item[0], item[1]))
+            unscheduled_entries.sort(key=lambda item: item[0])
+
+            # Apply render limits unless searching
+            if not current_query:
+                sched_limit = self._render_limits.get("scheduled", 200)
+                unsched_limit = self._render_limits.get("unscheduled", 200)
+                scheduled_display = scheduled_entries[:sched_limit]
+                unscheduled_display = unscheduled_entries[:unsched_limit]
+                sched_has_more = len(scheduled_entries) > len(scheduled_display)
+                unsched_has_more = len(unscheduled_entries) > len(unscheduled_display)
+            else:
+                scheduled_display = scheduled_entries
+                unscheduled_display = unscheduled_entries
+                sched_has_more = False
+                unsched_has_more = False
+
+            return [p for _, _, p in scheduled_display], [p for _, p in unscheduled_display], sched_has_more, unsched_has_more
+        except Exception:
+            return [], [], False, False
+
+    def _sync_after_change(self):
+        """Incrementally synchronizes both columns after a small change (add/edit/delete)."""
+        try:
+            current_query = (self.search_var.get() or '').strip().lower() if getattr(self, 'search_var', None) else ''
+            scheduled_display_persons, unscheduled_display_persons, sched_has_more, unsched_has_more = self._get_display_lists(current_query)
+            self._sync_column('unscheduled', unscheduled_display_persons, self.left_col, compact=True, has_more=unsched_has_more)
+            self._sync_column('scheduled', scheduled_display_persons, self.right_col, compact=False, has_more=sched_has_more)
+            # Rebuild the search registry to reflect current widgets
+            try:
+                new_registry = []
+                for p in (unscheduled_display_persons + scheduled_display_persons):
+                    w = self._person_widgets.get(self._ensure_person_uid(p))
+                    if w:
+                        name_key = (p.get('_norm_name') or (p.get('Name', '') or '').strip().lower())
+                        new_registry.append({'name': name_key, 'widget': w})
+                self.card_registry = new_registry
+            except Exception:
+                pass
+        except Exception:
+            try:
+                self.refresh_blocks()
+            except Exception:
+                pass
+
+    def _sync_column(self, column_key: str, desired_persons: List[Dict[str, Any]], parent_frame: tk.Frame, compact: bool = False, has_more: bool = False) -> None:
+        """Ensure that `parent_frame` contains widgets for `desired_persons` in the same order.
+        This function creates, reorders, and removes only what is necessary, enabling incremental updates.
+        """
+        try:
+            # Build set of desired ids
+            desired_ids = [self._ensure_person_uid(p) for p in desired_persons]
+            desired_set = set(desired_ids)
+
+            # Remove any person widgets in this frame that are no longer desired
+            to_remove = []
+            for pid, widget in list(self._person_widgets.items()):
+                try:
+                    if widget is None:
+                        continue
+                    if widget.master is parent_frame and pid not in desired_set:
+                        to_remove.append(pid)
+                except Exception:
+                    continue
+            for pid in to_remove:
+                try:
+                    w = self._person_widgets.pop(pid, None)
+                    if w:
+                        w.destroy()
+                except Exception:
+                    pass
+
+            # Ensure header exists for columns
+            if column_key == 'unscheduled' and desired_persons:
+                if not hasattr(self, '_left_header'):
+                    self._left_header = tk.Label(self.left_col, text=LABEL_TEXT['unscheduled_section'], font=FONTS["subtext_bold"], bg=CURRENT_PALETTE["bg_color"], fg=TEXT_COLORS['section_unscheduled'])
+                    self._left_header.pack(pady=(10, 5), anchor="w")
+            if column_key == 'scheduled' and not hasattr(self, '_right_header'):
+                self._right_header = tk.Label(self.right_col, text=LABEL_TEXT['scheduled_section'], font=FONTS["subtext_bold"], bg=CURRENT_PALETTE["bg_color"], fg=TEXT_COLORS['section_scheduled'])
+                self._right_header.pack(pady=(10, 5), anchor="w")
+
+            # Create or move widgets to match desired order
+            # Build a quick map of current widgets for desired ids
+            current_map = {pid: widget for pid, widget in self._person_widgets.items() if getattr(widget, 'winfo_exists', lambda: False)() and widget.master is parent_frame}
+
+            # Find an insertion helper: the next created widget in desired order
+            for i, person in enumerate(desired_persons):
+                pid = self._ensure_person_uid(person)
+                next_widget = None
+                # find next already-created widget after i
+                for j in range(i + 1, len(desired_persons)):
+                    nxt_pid = id(desired_persons[j])
+                    if nxt_pid in current_map:
+                        next_widget = current_map[nxt_pid]
+                        break
+                if pid in current_map:
+                    w = current_map[pid]
+                    # ensure it's packed at the correct place (just before next_widget if available)
+                    children = [
+                        c for c in parent_frame.winfo_children()
+                        if c not in (getattr(self, '_left_header', None), getattr(self, '_right_header', None))
+                        and not getattr(c, '_is_load_more', False)
+                    ]
+                    try:
+                        pos = children.index(w)
+                        # if next_widget exists, ensure child at pos+1 is next_widget
+                        if next_widget is not None:
+                            if pos + 1 < len(children) and children[pos + 1] is next_widget:
+                                pass  # already at right spot
+                            else:
+                                # move it
+                                w.pack_forget()
+                                if next_widget is not None:
+                                    w.pack(fill=tk.X, pady=5, before=next_widget)
+                                else:
+                                    w.pack(fill=tk.X, pady=5)
+                        else:
+                            # ensure it's at end
+                            if pos != len(children) - 1:
+                                w.pack_forget()
+                                w.pack(fill=tk.X, pady=5)
+                    except ValueError:
+                        # not present in children, pack it
+                        if next_widget is not None:
+                            w.pack(fill=tk.X, pady=5, before=next_widget)
+                        else:
+                            w.pack(fill=tk.X, pady=5)
+                else:
+                    # create missing widget before the next_widget (if any)
+                    try:
+                        before = next_widget
+                    except Exception:
+                        before = None
+                    try:
+                        idx = self.people_data.index(person)
+                    except Exception:
+                        idx = -1
+                    self.create_person_block(idx, person, parent_frame, compact=compact, before_widget=before)
+
+            # Manage 'Load more' button: remove any existing load more buttons then add if has_more
+            for child in list(parent_frame.winfo_children()):
+                try:
+                    if getattr(child, '_is_load_more', False):
+                        child.destroy()
+                except Exception:
+                    pass
+            if has_more:
+                btn = pack_action_button(
+                    parent_frame,
+                    "Load more",
+                    lambda: self._increase_render_limit(column_key),
+                    role="charcoal",
+                    font=FONTS["small_bold"],
+                    width=12,
+                    padx=4,
+                )
+                try:
+                    btn._is_load_more = True
+                except Exception:
+                    pass
+        except Exception:
+            # On failure fall back to naive rebuild
+            for child in list(parent_frame.winfo_children()):
+                try:
+                    child.destroy()
+                except Exception:
+                    pass
+            for person in desired_persons:
+                try:
+                    idx = self.people_data.index(person)
+                    self.create_person_block(idx, person, parent_frame, compact=compact)
+                except Exception:
+                    pass
+
+    def _remove_person_widget(self, person_id: int) -> None:
+        try:
+            w = self._person_widgets.pop(person_id, None)
+            if w:
+                w.destroy()
+            # also clean card_registry entries
+            self.card_registry = [e for e in self.card_registry if e.get('widget') is not w]
+        except Exception:
+            pass
+
+    def _on_person_saved(self, index: Optional[int], person: Dict[str, Any]) -> None:
+        # For now, synchronize both columns incrementally; future improvement: only sync affected column
+        self._sync_after_change()
+
+    # --- Background thread helpers & spinner UI ---
+    def _show_spinner(self, parent, message: str = 'Loading...'):
+        try:
+            win = tk.Toplevel(parent)
+            win.transient(parent)
+            win.overrideredirect(True)
+            win.attributes('-topmost', True)
+            win.configure(bg='#000000')
+            # Position over parent
+            try:
+                parent.update_idletasks()
+                px = parent.winfo_rootx()
+                py = parent.winfo_rooty()
+                pw = parent.winfo_width()
+                ph = parent.winfo_height()
+                ww = 260
+                wh = 80
+                x = px + max(0, (pw - ww) // 2)
+                y = py + max(0, (ph - wh) // 2)
+                win.geometry(f"{ww}x{wh}+{x}+{y}")
+            except Exception:
+                pass
+            frm = tk.Frame(win, bg='#ffffff', bd=1, relief=tk.RIDGE)
+            frm.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+            lbl = tk.Label(frm, text=message, font=FONTS['small_bold'], bg='#ffffff')
+            lbl.pack(side=tk.TOP, pady=(8, 4))
+            try:
+                pb = ttk.Progressbar(frm, mode='indeterminate', length=200)
+                pb.pack(side=tk.TOP, pady=(0, 8))
+                pb.start(10)
+            except Exception:
+                pb = None
+            return win
+        except Exception:
+            return None
+
+    def _hide_spinner(self, spinner) -> None:
+        try:
+            if spinner:
+                spinner.destroy()
+        except Exception:
+            pass
+
+    def _run_in_background(self, func, on_done=None, on_error=None):
+        """Run func() in a background thread and call on_done(result) or on_error(exc) in the main thread."""
+        def runner():
+            try:
+                res = func()
+                if on_done:
+                    try:
+                        safe_ui_call(self.root, on_done, res)
+                    except Exception as e:
+                        logger.exception("WorkflowGUI: on_done callback failed: %s", e)
+            except Exception as e:
+                if on_error:
+                    try:
+                        safe_ui_call(self.root, on_error, e)
+                    except Exception as e2:
+                        logger.exception("WorkflowGUI: on_error callback failed: %s", e2)
+        t = threading.Thread(target=runner, daemon=True)
+        t.start()
+
+    def _update_virtual_window(self):
+        """Compute a reasonable visible index window and synchronize only that slice for large lists.
+
+        This is a conservative, index-based virtualization to avoid creating thousands of widgets at once.
+        """
+        try:
+            current_query = (self.search_var.get() or '').strip().lower() if getattr(self, 'search_var', None) else ''
+            scheduled_display_persons, unscheduled_display_persons, sched_has_more, unsched_has_more = self._get_display_lists(current_query)
+
+            # Utility to compute slice based on canvas view and average card height
+            def slice_for_column(items, col_key):
+                total = len(items)
+                if total == 0:
+                    return items, (0, 0), False
+                if total <= self._virtualize_threshold:
+                    return items, (0, total), False
+                try:
+                    y0, y1 = self.canvas.yview()
+                    canvas_h = max(1, self.canvas.winfo_height())
+                    avg_h = max(10, int(self._avg_card_height.get('scheduled' if col_key == 'scheduled' else 'unscheduled', 60)))
+                    visible_approx = max(3, int(canvas_h / avg_h) + 4)
+                    first = max(0, int(y0 * total) - 3)
+                    last = min(total, first + visible_approx + 6)
+                    return items[first:last], (first, last), total > last
+                except Exception:
+                    return items[:200], (0, min(200, total)), total > 200
+
+            # Schedule syncs (non-blocking)
+            unsched_slice, unsched_range, unsched_truncated = slice_for_column(unscheduled_display_persons, 'unscheduled')
+            sched_slice, sched_range, sched_truncated = slice_for_column(scheduled_display_persons, 'scheduled')
+
+            # Sync only visible windows or full lists depending on heuristics
+            self._sync_column('unscheduled', unsched_slice, self.left_col, compact=True, has_more=unsched_has_more)
+            self._sync_column('scheduled', sched_slice, self.right_col, compact=False, has_more=sched_has_more)
+
+            # Save visible window for debugging or future refinements
+            self._visible_window['unscheduled'] = unsched_range
+            self._visible_window['scheduled'] = sched_range
+        except Exception:
+            try:
+                # fallback conservative full sync
+                self._sync_after_change()
+            except Exception:
+                pass
     # --- Search & Scroll Helpers ---
     def search_person(self):
         """Find the first card whose name contains the query and scroll to it."""
         query = (self.search_var.get() or '').strip().lower()
         if not query:
             return
-        self._update_search_matches(query)
+        if query != getattr(self, "search_query", "") or not getattr(self, "_search_matches", None):
+            self._update_search_matches(query)
         target = self._get_current_search_target()
         if not target:
             show_info(self.root, "Not Found", f"No person found matching: {self.search_var.get()}")
@@ -3981,6 +4928,26 @@ class WorkflowGUI:
         registry = getattr(self, 'card_registry', [])
         self._search_matches = [e.get('widget') for e in registry if query in (e.get('name') or '')]
         self._search_index = 0 if self._search_matches else -1
+        self.search_query = query
+
+    def _on_search_change(self):
+        try:
+            if self._search_apply_after_id:
+                self.root.after_cancel(self._search_apply_after_id)
+        except Exception:
+            self._search_apply_after_id = None
+
+        def _apply():
+            self._search_apply_after_id = None
+            query = (self.search_var.get() or '').strip().lower()
+            if not query:
+                self.search_query = ""
+                self._search_matches = []
+                self._search_index = -1
+                return
+            self._update_search_matches(query)
+
+        self._search_apply_after_id = self.root.after(150, _apply)
 
     def _get_current_search_target(self):
         if self._search_index < 0 or not self._search_matches:
@@ -4032,17 +4999,36 @@ class WorkflowGUI:
             self.filter_show_scheduled = bool(self._sched_var.get())
         except (AttributeError, tk.TclError):
             pass
-        self.refresh_blocks()
+        filter_state = (
+            self.filter_branch,
+            self.filter_manager,
+            self.filter_has_bg_cleared,
+            self.filter_has_cori_cleared,
+            self.filter_has_nh_cleared,
+            self.filter_has_me_cleared,
+            self.filter_show_unscheduled,
+            self.filter_show_scheduled,
+        )
+        if filter_state == self._last_filter_state:
+            return
+        self._last_filter_state = filter_state
+        # After changing filters, do an incremental sync that respects virtualization
+        try:
+            self._sync_after_change()
+        except Exception:
+            self.refresh_blocks()
 
     def _passes_filters(self, person: Dict[str, Any], scheduled: bool = False) -> bool:
         """Check if person passes current filter criteria."""
         # Branch filter
         if self.filter_branch != 'All':
-            if (person.get('Branch', '') or '').strip().lower() != self.filter_branch.strip().lower():
+            branch_val = person.get('_norm_branch') or (person.get('Branch', '') or '').strip().lower()
+            if branch_val != self.filter_branch.strip().lower():
                 return False
         # Manager filter
         if self.filter_manager != 'All':
-            if (person.get('Manager Name', '') or '').strip().lower() != self.filter_manager.strip().lower():
+            mgr_val = person.get('_norm_manager') or (person.get('Manager Name', '') or '').strip().lower()
+            if mgr_val != self.filter_manager.strip().lower():
                 return False
         # BG filter: require completion date present
         if self.filter_has_bg_cleared:
@@ -4682,7 +5668,7 @@ class WorkflowGUI:
         
     def open_archive_viewer(self):
         """Launches the archive browser without prompting; password is asked on access."""
-        ArchiveViewer(self.root, self.archive_dir)
+        ArchiveViewer(self.root, self.archive_dir, owner_gui=self)
 
     def _ensure_pyzipper_on_startup(self) -> None:
         """First-run dependency check for pyzipper (silent)."""
@@ -4770,9 +5756,22 @@ class WorkflowGUI:
 
     def delete_person(self, index):
         if ask_yes_no(self.root, "Confirm Delete", f"Are you sure you want to delete {self.people_data[index].get('Name', 'this person')}?"):
+            try:
+                pid = self._ensure_person_uid(self.people_data[index])
+            except Exception:
+                pid = None
             self.people_data.pop(index)
             self.save_data()
-            self.refresh_blocks()
+            # Remove widget for deleted person and sync visible columns
+            try:
+                if pid is not None:
+                    self._remove_person_widget(pid)
+            except Exception:
+                pass
+            try:
+                self._sync_after_change()
+            except Exception:
+                self.refresh_blocks()
 
     def _calculate_neo_hours(self, start_time: str, end_time: str) -> str:
         """Calculate NEO hours from time strings in HHMM format."""
@@ -4797,22 +5796,19 @@ class WorkflowGUI:
             return "N/A"
 
     def _parse_archive_date(self, neo_date_str: str) -> tuple:
-        """Parse NEO date and return (month_folder, year)."""
-        try:
-            if not neo_date_str:
-                now = datetime.now()
-                return now.strftime("%m_%B"), now.strftime("%Y")
-            parts = neo_date_str.strip().split('/')
-            if len(parts) < 3:
-                now = datetime.now()
-                return now.strftime("%m_%B"), now.strftime("%Y")
-            mm = parts[0].zfill(2)
-            yyyy = parts[2]
-            month_name = MONTHS.get(mm, "Unknown")
-            return f"{mm}_{month_name}", yyyy
-        except Exception:
-            now = datetime.now()
-            return now.strftime("%m_%B"), now.strftime("%Y")
+        """Parse NEO date and return (year, month) as integers.
+        Raises ValueError if invalid.
+        """
+        if not neo_date_str:
+            raise ValueError("Missing NEO date")
+        parts = neo_date_str.strip().split('/')
+        if len(parts) < 3:
+            raise ValueError("Invalid NEO date format")
+        mm = int(parts[0])
+        yyyy = int(parts[2])
+        if mm < 1 or mm > 12 or yyyy < 1900:
+            raise ValueError("Invalid NEO date values")
+        return yyyy, mm
 
     def _build_archive_text(self, person: dict, start_time: str, end_time: str, total_hours: str) -> str:
         """Build formatted archive text content."""
@@ -4883,7 +5879,12 @@ class WorkflowGUI:
 
             # Prompt for archive password
             now = datetime.now()
-            month_str = now.strftime("%Y-%m")
+            try:
+                year, month = self._parse_archive_date(req_neo)
+                month_str = f"{year}_{int(month):02d}"
+            except Exception:
+                show_error(self.root, "Error", "Cannot archive! NEO Scheduled Date is invalid or missing.")
+                return
             archive_file = f"{month_str}.zip"
             archive_full = os.path.join(self.archive_dir, archive_file)
             prompt = f"Set password for {req_name}'s archive:" if not os.path.exists(archive_full) else f"Enter password for {archive_file}:"
@@ -4910,34 +5911,134 @@ class WorkflowGUI:
             
             # Create password-protected ZIP file
             os.makedirs(self.archive_dir, exist_ok=True)
-            temp_month_path = os.path.join(self.archive_dir, month_folder)
-            os.makedirs(temp_month_path, exist_ok=True)
+
+            readme_name = "README.txt"
+            temp_archive = None
+
+            def _count_people(entries: set) -> int:
+                prefix = f"{month_folder}/"
+                return sum(1 for name in entries if name.startswith(prefix) and name.lower().endswith(".txt"))
+
+            def _read_created_date(text: str, fallback: str) -> str:
+                for line in text.splitlines():
+                    if line.lower().startswith("archive created:"):
+                        value = line.split(":", 1)[1].strip()
+                        return value or fallback
+                return fallback
+
+            created_date = now.strftime("%Y-%m-%d")
+
+            try:
+                if os.path.exists(archive_full):
+                    tmp_handle = tempfile.NamedTemporaryFile(delete=False, dir=os.path.dirname(archive_full), suffix=".tmp")
+                    temp_archive = tmp_handle.name
+                    tmp_handle.close()
+                    with pyzipper.AESZipFile(archive_full, 'r') as zf_in:
+                        zf_in.setpassword(archive_password.encode('utf-8'))
+                        existing = set(zf_in.namelist())
+                        arcname = f"{month_folder}/{clean_name}.txt"
+                        if arcname in existing:
+                            counter = 2
+                            while True:
+                                candidate = f"{month_folder}/{clean_name}_{counter}.txt"
+                                if candidate not in existing:
+                                    arcname = candidate
+                                    break
+                                counter += 1
+
+                        if readme_name in existing:
+                            try:
+                                existing_text = zf_in.read(readme_name).decode('utf-8', errors='replace')
+                                created_date = _read_created_date(existing_text, created_date)
+                            except Exception:
+                                pass
+
+                        updated_entries = set(existing)
+                        updated_entries.add(arcname)
+                        people_count = _count_people(updated_entries)
+
+                        readme_text = "\n".join([
+                            "Workflow Archive",
+                            f"Program Version: {APP_VERSION}",
+                            f"Archive Created: {created_date}",
+                            f"Last Updated: {now.strftime('%Y-%m-%d')}",
+                            f"People in Archive: {people_count}",
+                            "",
+                            "Contents:",
+                            "This archive contains exported candidate records from the Workflow program.",
+                            "Use common sense when handling sensitive PII. Keep files secure, share only with authorized staff,",
+                            "and delete when no longer needed.",
+                        ])
+
+                        with pyzipper.AESZipFile(
+                            temp_archive,
+                            'w',
+                            compression=pyzipper.ZIP_DEFLATED,
+                            encryption=pyzipper.WZ_AES,
+                        ) as zf_out:
+                            zf_out.setpassword(archive_password.encode('utf-8'))
+                            zf_out.setencryption(pyzipper.WZ_AES, nbits=256)
+                            for name in existing:
+                                if name == readme_name:
+                                    continue
+                                data = zf_in.read(name)
+                                zf_out.writestr(name, data)
+                            zf_out.writestr(arcname, file_body)
+                            zf_out.writestr(readme_name, readme_text)
+
+                    os.replace(temp_archive, archive_full)
+                else:
+                    tmp_handle = tempfile.NamedTemporaryFile(delete=False, dir=os.path.dirname(archive_full), suffix=".tmp")
+                    temp_archive = tmp_handle.name
+                    tmp_handle.close()
+                    arcname = f"{month_folder}/{clean_name}.txt"
+                    people_count = 1
+                    readme_text = "\n".join([
+                        "Workflow Archive",
+                        f"Program Version: {APP_VERSION}",
+                        f"Archive Created: {created_date}",
+                        f"Last Updated: {now.strftime('%Y-%m-%d')}",
+                        f"People in Archive: {people_count}",
+                        "",
+                        "Contents:",
+                        "This archive contains exported candidate records from the Workflow program.",
+                        "Use common sense when handling sensitive PII. Keep files secure, share only with authorized staff,",
+                        "and delete when no longer needed.",
+                    ])
+
+                    with pyzipper.AESZipFile(
+                        temp_archive,
+                        'w',
+                        compression=pyzipper.ZIP_DEFLATED,
+                        encryption=pyzipper.WZ_AES,
+                    ) as zf_out:
+                        zf_out.setpassword(archive_password.encode('utf-8'))
+                        zf_out.setencryption(pyzipper.WZ_AES, nbits=256)
+                        zf_out.writestr(arcname, file_body)
+                        zf_out.writestr(readme_name, readme_text)
+                    os.replace(temp_archive, archive_full)
+            except Exception:
+                try:
+                    if temp_archive and os.path.exists(temp_archive):
+                        os.remove(temp_archive)
+                except Exception:
+                    pass
+                raise
             
-            mode = 'a' if os.path.exists(archive_full) else 'w'
-            with pyzipper.AESZipFile(
-                archive_full,
-                mode,
-                compression=pyzipper.ZIP_DEFLATED,
-                encryption=pyzipper.WZ_AES,
-            ) as zf:
-                zf.setpassword(archive_password.encode('utf-8'))
-                zf.setencryption(pyzipper.WZ_AES, nbits=256)
-                arcname = f"{month_folder}/{clean_name}.txt"
-                existing = set(zf.namelist())
-                if arcname in existing:
-                    counter = 2
-                    while True:
-                        candidate = f"{month_folder}/{clean_name}_{counter}.txt"
-                        if candidate not in existing:
-                            arcname = candidate
-                            break
-                        counter += 1
-                zf.writestr(arcname, file_body)
-            
-            # Remove from active list
+            # Remove from active list (ensure widget removed immediately)
+            try:
+                removed_pid = self._ensure_person_uid(person)
+            except Exception:
+                removed_pid = None
             self.people_data.pop(index)
             self.save_data()
-            self.refresh_blocks()
+            try:
+                if removed_pid is not None:
+                    self._remove_person_widget(removed_pid)
+                # Incremental UI sync
+                self._sync_after_change()
+            except Exception:
+                self.refresh_blocks()
 
             archive_dir = os.path.dirname(archive_full)
             success_dialog = ArchiveSuccessDialog(
@@ -5674,6 +6775,23 @@ class WorkflowGUI:
             for cb_field, var in checkbox_vars.items():
                 new_data[cb_field] = var.get()
 
+            # Preserve stable UID on edits
+            try:
+                if index is not None and person and person.get("_uid"):
+                    new_data["_uid"] = person.get("_uid")
+            except Exception:
+                pass
+
+            # Validate date fields (if provided)
+            for df in date_fields:
+                try:
+                    val = (new_data.get(df) or "").strip()
+                    if val:
+                        datetime.strptime(val, "%m/%d/%Y")
+                except Exception:
+                    show_error(dialog, "Invalid Date", f"{df} must be in MM/DD/YYYY format.")
+                    return
+
             # Derive status strings from checkboxes (for compatibility)
             # CORI
             try:
@@ -5723,12 +6841,19 @@ class WorkflowGUI:
                 pass
             
             if index is not None:
+                self._normalize_person_fields(new_data)
                 self.people_data[index] = new_data
             else:
+                self._normalize_person_fields(new_data)
                 self.people_data.append(new_data)
                 
             self.save_data()
-            self.refresh_blocks()
+            # Use incremental update instead of full re-render
+            try:
+                self._on_person_saved(index, new_data)
+            except Exception:
+                # Fallback: full refresh
+                self.refresh_blocks()
             dialog.destroy()
         
         # Create button frame inside content_frame (scrollable with content)

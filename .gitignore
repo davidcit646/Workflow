@@ -18,6 +18,8 @@ build/
 dist/
 *.spec
 
+.pyinstaller.log
+pyinstaller.log
 # Caches/tools
 .pytest_cache/
 .mypy_cache/
