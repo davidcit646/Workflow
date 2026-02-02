@@ -6,13 +6,13 @@ Track employee onboarding progress with blocks of tea :).
 
 import sys
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox, simpledialog, scrolledtext
 import os
 import json
 import subprocess
 import re
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import hashlib
 import binascii
@@ -23,6 +23,19 @@ from typing import Optional, List, Dict, Any, Tuple
 
 # Module-level constants
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+def get_documents_dir() -> str:
+    """Return the user's Documents directory path."""
+    home_dir = os.path.expanduser("~")
+    return os.path.join(home_dir, "Documents")
+
+
+def get_app_data_dir() -> str:
+    """Return the app data directory under Documents/Workflow."""
+    return os.path.join(get_documents_dir(), "Workflow")
+
+
+APP_DATA_DIR = get_app_data_dir()
 
 # Add local vendor directory to import path for bundled libraries
 try:
@@ -127,10 +140,27 @@ DATA_FILE_NAME = "workflow_data.json"
 DATA_FILE_ENC_NAME = "workflow_data.json.enc"
 ARCHIVE_DIR_NAME = "Archive"
 EXPORTS_DIR_NAME = "exports"
-THEME_PREF_FILE = "data/theme_pref.json"
-REQUIRED_DIRECTORIES = ["data", "data/exports", "data/Archive"]
+THEME_PREF_FILE = "theme_pref.json"
+REQUIRED_DIRECTORIES = ["exports", "Archive", "Backups"]
 DIRECTORY_PERMISSIONS = 0o700
 ARCHIVE_EXTENSION = ".zip"
+
+# ==========================================================================
+# WEEKLY TRACKER CONSTANTS
+# ==========================================================================
+WEEKDAY_NAMES = [
+    "Friday",
+    "Saturday",
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+]
+NO_ENTRIES_TEXT = "(No entries for this day)"
+NO_ACTIVITIES_TEXT = "(No activities entered)"
+TRACKER_DIR_NAME = "WeeklyTracker"
+TRACKER_EXPORTS_DIR_NAME = "exports"
 
 # ============================================================================
 # APPLICATION SETTINGS
@@ -348,17 +378,6 @@ STATUS_REQUIRED = "Required"
 STATUS_SUBMITTED = "Submitted"
 STATUS_CLEARED = "Cleared"
 STATUS_SENT_TO_DENISE = "Sent to Denise"
-
-# ============================================================================
-# ENUMS
-# ============================================================================
-
-
-# ============================================================================
-# STATE OBJECTS
-# ============================================================================
-
-
 
 class ThemeManager:
     """Manages theme colors and styling."""
@@ -1443,7 +1462,7 @@ class ArchiveSuccessDialog(BaseDialog):
 class ExportSuccessDialog(BaseDialog):
     """Export success dialog with quick actions."""
     def __init__(self, parent, title, message, on_open_location=None, on_view_csv=None):
-        super().__init__(parent, title, width=560, height=220)
+        super().__init__(parent, title, width=640, height=120)
         self.on_open_location = on_open_location
         self.on_view_csv = on_view_csv
 
@@ -1463,11 +1482,11 @@ class ExportSuccessDialog(BaseDialog):
         btn_frame = tk.Frame(main_frame, bg=self.dlg_bg)
         btn_frame.pack(pady=6)
 
-        btn_ok = make_action_button(btn_frame, "OK", self.on_cancel, role="confirm", font=FONTS["button"], width=BUTTON_WIDTHS['dialog_button'])
+        btn_ok = make_action_button(btn_frame, "OK", self.on_cancel, role="confirm", font=FONTS["button"], width=8)
         btn_ok.pack(side=tk.LEFT, padx=8)
-        btn_open = make_action_button(btn_frame, "Open File Location", self._open_location, role="view", font=FONTS["button"], width=BUTTON_WIDTHS['dialog_button'])
+        btn_open = make_action_button(btn_frame, "Open File Location", self._open_location, role="view", font=FONTS["button"], width=18)
         btn_open.pack(side=tk.LEFT, padx=8)
-        btn_view = make_action_button(btn_frame, "View CSV", self._view_csv, role="continue", font=FONTS["button"], width=BUTTON_WIDTHS['dialog_button'])
+        btn_view = make_action_button(btn_frame, "View CSV", self._view_csv, role="continue", font=FONTS["button"], width=12)
         btn_view.pack(side=tk.LEFT, padx=8)
 
         self.bind("<Return>", lambda e: btn_ok.invoke())
@@ -1497,6 +1516,383 @@ class ExportSuccessDialog(BaseDialog):
                 self.on_view_csv()
         finally:
             self.on_cancel()
+
+
+class WeeklyTrackerGUI(tk.Toplevel):
+    """Weekly work tracker embedded inside the Workflow app."""
+    def __init__(self, parent, data_dir: str):
+        super().__init__(parent)
+        self.title("Weekly Work Tracker")
+        self.geometry("1400x1000")
+        self.resizable(True, True)
+
+        palette = CURRENT_PALETTE
+        self.bg_color = palette.get("bg_color", "#e2e6e9")
+        self.fg_color = palette.get("fg_color", "#2c3e50")
+        self.accent_color = palette.get("accent_color", "#3498db")
+        self.button_color = palette.get("button_color", "#27ae60")
+        self.error_color = palette.get("error_color", "#e74c3c")
+        self.warning_color = palette.get("warning_color", "#f39c12")
+        self.card_bg_color = palette.get("card_bg_color", "#ffffff")
+        self.fonts = FONTS
+
+        self.configure(bg=self.bg_color)
+
+        self.tracker_dir = os.path.join(data_dir, TRACKER_DIR_NAME)
+        self.tracker_exports_dir = os.path.join(data_dir, EXPORTS_DIR_NAME)
+        try:
+            os.makedirs(self.tracker_dir, exist_ok=True)
+            os.makedirs(self.tracker_exports_dir, exist_ok=True)
+        except Exception:
+            pass
+
+        self.week_start, self.week_end = self.get_current_work_week()
+        self.week_file = self.get_week_filename()
+
+        self.day_widgets = {}
+        self.days = WEEKDAY_NAMES
+
+        self.create_widgets()
+        self.load_week_data()
+        self._setup_keyboard_shortcuts()
+
+    def _setup_keyboard_shortcuts(self) -> None:
+        try:
+            self.bind("<Control-s>", lambda e: self.save_week())
+            self.bind("<Control-e>", lambda e: self.export_summary())
+            self.bind("<Control-k>", lambda e: self.clear_week())
+        except RuntimeError:
+            pass
+
+    def get_current_work_week(self):
+        today = datetime.now().date()
+        weekday = today.weekday()
+        if weekday >= 4:
+            days_since_friday = weekday - 4
+            week_start = today - timedelta(days=days_since_friday)
+        else:
+            days_since_friday = weekday + 3
+            week_start = today - timedelta(days=days_since_friday)
+        week_end = week_start + timedelta(days=6)
+        return week_start, week_end
+
+    def get_week_filename(self):
+        start_str = self.week_start.strftime("%Y-%m-%d")
+        end_str = self.week_end.strftime("%Y-%m-%d")
+        filename = f"Week_{start_str}_to_{end_str}.json"
+        return os.path.join(self.tracker_dir, filename)
+
+    def create_widgets(self):
+        self._build_title()
+        self._build_week_info()
+        self._build_content_area()
+        self._build_buttons()
+
+    def _build_title(self) -> None:
+        title_frame = tk.Frame(self, bg=self.accent_color, height=60)
+        title_frame.pack(fill=tk.X, pady=(0, 10))
+        title_frame.pack_propagate(False)
+        title_label = tk.Label(
+            title_frame,
+            text="📅 Weekly Work Tracker",
+            font=FONTS["title"],
+            bg=self.accent_color,
+            fg="white",
+        )
+        title_label.pack(expand=True)
+
+    def _build_week_info(self) -> None:
+        week_info_frame = tk.Frame(self, bg=self.bg_color)
+        week_info_frame.pack(fill=tk.X, padx=20, pady=(0, 10))
+        week_label = tk.Label(
+            week_info_frame,
+            text=f"Work Week: {self.week_start.strftime('%B %d, %Y')} - {self.week_end.strftime('%B %d, %Y')}",
+            font=FONTS["subheader"],
+            bg=self.bg_color,
+            fg="#1a3a5a",
+        )
+        week_label.pack()
+
+    def _build_content_area(self) -> None:
+        container = tk.Frame(self, bg=self.bg_color)
+        container.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        self.content_frame = tk.Frame(container, bg=self.bg_color)
+        self.content_frame.pack(fill=tk.BOTH, expand=True)
+        self.create_day_sections()
+
+    def _build_buttons(self) -> None:
+        button_frame = tk.Frame(self, bg=self.bg_color)
+        button_frame.pack(fill=tk.X, padx=20, pady=20)
+        save_btn = make_action_button(
+            button_frame,
+            "Save Week",
+            self.save_week,
+            role="save",
+            font=FONTS["button"],
+            width=16,
+        )
+        save_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 5))
+        export_btn = make_action_button(
+            button_frame,
+            "📤 Export Summary",
+            self.export_summary,
+            role="view",
+            font=FONTS["button"],
+            width=18,
+        )
+        export_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(5, 5))
+        clear_btn = make_action_button(
+            button_frame,
+            "🗑️ Clear Week",
+            self.clear_week,
+            role="delete",
+            font=FONTS["button"],
+            width=16,
+        )
+        clear_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(5, 0))
+
+    def create_day_sections(self):
+        self.content_frame.columnconfigure(0, weight=1)
+        self.content_frame.columnconfigure(1, weight=1)
+
+        for i, day_name in enumerate(self.days):
+            row = i // 2
+            col = i % 2
+            is_last_day = (i == len(self.days) - 1)
+            day_date = self.week_start + timedelta(days=i)
+            date_str = day_date.strftime("%B %d, %Y")
+            today = datetime.now().date()
+            is_past = day_date <= today
+            is_today = day_date == today
+
+            section_frame = tk.Frame(self.content_frame, bg=self.bg_color)
+            if is_last_day:
+                section_frame.grid(row=row, column=0, columnspan=2, sticky="nsew", padx=10, pady=5)
+            else:
+                section_frame.grid(row=row, column=col, sticky="nsew", padx=10, pady=5)
+            self.content_frame.rowconfigure(row, weight=1)
+            section_frame.columnconfigure(0, weight=1)
+
+            if is_today:
+                indicator_color = self.button_color
+                day_label_text = f"📍 {day_name} - {date_str} (TODAY)"
+            elif is_past:
+                indicator_color = self.accent_color
+                day_label_text = f"{day_name} - {date_str}"
+            else:
+                indicator_color = "#7f8c8d"
+                day_label_text = f"{day_name} - {date_str} (upcoming)"
+
+            header_frame = tk.Frame(section_frame, bg=self.bg_color)
+            header_frame.pack(fill=tk.X, pady=(0, 5))
+            day_label = tk.Label(
+                header_frame,
+                text=day_label_text,
+                font=FONTS["subtext_bold"],
+                bg=self.bg_color,
+                fg=indicator_color if not is_today else "#1a3a5a",
+                anchor="w",
+            )
+            day_label.pack(side=tk.LEFT)
+
+            time_frame = tk.Frame(header_frame, bg=self.bg_color)
+            time_frame.pack(side=tk.RIGHT)
+            tk.Label(time_frame, text="Start:", bg=self.bg_color, fg="#1a3a5a", font=FONTS["tiny"]).pack(side=tk.LEFT)
+            start_entry = tk.Entry(time_frame, width=8, font=FONTS["tiny"], relief=tk.FLAT, bg=self.card_bg_color, fg=self.fg_color, insertbackground=self.fg_color)
+            start_entry.pack(side=tk.LEFT, padx=(2, 10))
+            tk.Label(time_frame, text="End:", bg=self.bg_color, fg="#1a3a5a", font=FONTS["tiny"]).pack(side=tk.LEFT)
+            end_entry = tk.Entry(time_frame, width=8, font=FONTS["tiny"], relief=tk.FLAT, bg=self.card_bg_color, fg=self.fg_color, insertbackground=self.fg_color)
+            end_entry.pack(side=tk.LEFT, padx=(2, 0))
+
+            separator = tk.Frame(section_frame, height=2, bg=indicator_color)
+            separator.pack(fill=tk.X, pady=(0, 8))
+
+            text_widget = scrolledtext.ScrolledText(
+                section_frame,
+                height=5,
+                font=FONTS["body"],
+                bg=self.card_bg_color,
+                fg=self.fg_color,
+                insertbackground=self.fg_color,
+                relief=tk.FLAT,
+                wrap=tk.WORD,
+                padx=15,
+                pady=10,
+            )
+            text_widget.pack(fill=tk.BOTH, expand=True)
+
+            self.day_widgets[day_name] = {
+                "widget": text_widget,
+                "start_entry": start_entry,
+                "end_entry": end_entry,
+                "date": day_date,
+                "date_str": date_str,
+            }
+
+    def load_week_data(self):
+        if os.path.exists(self.week_file):
+            try:
+                with open(self.week_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+
+                entries = data.get("entries") if isinstance(data, dict) else None
+                if not entries and isinstance(data, dict):
+                    entries = data
+
+                for day_name, content_data in (entries or {}).items():
+                    if day_name in self.day_widgets:
+                        day_info = self.day_widgets[day_name]
+                        if isinstance(content_data, dict):
+                            content = content_data.get("content", "")
+                            start = content_data.get("start", "")
+                            end = content_data.get("end", "")
+                        else:
+                            content = content_data
+                            start = ""
+                            end = ""
+
+                        day_info["widget"].delete("1.0", tk.END)
+                        if content != NO_ENTRIES_TEXT:
+                            day_info["widget"].insert("1.0", content)
+
+                        day_info["start_entry"].delete(0, tk.END)
+                        day_info["start_entry"].insert(0, start)
+
+                        day_info["end_entry"].delete(0, tk.END)
+                        day_info["end_entry"].insert(0, end)
+
+            except (OSError, json.JSONDecodeError) as e:
+                show_error(self, "Load Error", f"Could not load week data:\n{str(e)}")
+
+    def save_week(self):
+        try:
+            data = self.generate_week_data()
+            with open(self.week_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4, ensure_ascii=False)
+            show_info(self, "Saved!", f"Week tracker saved to:\n{self.week_file}")
+        except OSError as e:
+            show_error(self, "Save Error", f"Could not save week data:\n{str(e)}")
+
+    def generate_week_data(self):
+        data = {
+            "metadata": {
+                "week_start": self.week_start.strftime("%Y-%m-%d"),
+                "week_end": self.week_end.strftime("%Y-%m-%d"),
+                "exported_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            },
+            "entries": {},
+        }
+
+        for day_name in self.days:
+            day_info = self.day_widgets[day_name]
+            day_content = day_info["widget"].get("1.0", tk.END).strip()
+            day_start = day_info["start_entry"].get().strip()
+            day_end = day_info["end_entry"].get().strip()
+            data["entries"][day_name] = {
+                "content": day_content if day_content else NO_ENTRIES_TEXT,
+                "start": day_start,
+                "end": day_end,
+            }
+        return data
+
+    def _parse_time_to_minutes(self, time_str: str):
+        if not time_str:
+            return None
+        t = time_str.replace(":", "").replace(" ", "").strip()
+        if not t:
+            return None
+        if not t.isdigit():
+            return None
+        if len(t) == 1:
+            t = f"0{t}00"
+        elif len(t) == 2:
+            t = f"{t}00"
+        elif len(t) == 3:
+            t = f"0{t}"
+        if len(t) != 4:
+            return None
+        try:
+            hours = int(t[:2])
+            minutes = int(t[2:])
+        except ValueError:
+            return None
+        if hours > 23 or minutes > 59:
+            return None
+        return hours * 60 + minutes
+
+    def calculate_day_hours(self, start_str, end_str):
+        if not start_str or not end_str:
+            return 0.0
+        start_mins = self._parse_time_to_minutes(start_str)
+        end_mins = self._parse_time_to_minutes(end_str)
+        if start_mins is None or end_mins is None:
+            return 0.0
+        diff = end_mins - start_mins
+        if diff < 0:
+            diff += 24 * 60
+        hours = diff / 60.0
+        return round(hours * 2) / 2
+
+    def export_summary(self):
+        try:
+            data = self.generate_week_data()
+            entries = data.get("entries", {})
+            total_week_hours = 0.0
+
+            lines = []
+            lines.append("=" * 60)
+            lines.append("WEEKLY WORK TRACKER SUMMARY")
+            lines.append(f"Work Week: {self.week_start.strftime('%B %d, %Y')} - {self.week_end.strftime('%B %d, %Y')}")
+            lines.append(f"Generated: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}")
+            lines.append("=" * 60)
+            lines.append("")
+
+            day_details = []
+            for day_name in self.days:
+                day_data = entries.get(day_name, {})
+                content = day_data.get("content", "")
+                start = day_data.get("start", "")
+                end = day_data.get("end", "")
+
+                day_hours = self.calculate_day_hours(start, end)
+                total_week_hours += day_hours
+
+                day_details.append(f"--- {day_name} ---")
+                if start and end:
+                    day_details.append(f"Time: {start} to {end} ({day_hours} hours)")
+                else:
+                    day_details.append("Time: (Not specified)")
+
+                day_details.append("Activities:")
+                if content and content != NO_ENTRIES_TEXT:
+                    day_details.append(content)
+                else:
+                    day_details.append(NO_ACTIVITIES_TEXT)
+                day_details.append("")
+
+            lines.append(f"TOTAL WEEKLY HOURS: {total_week_hours}")
+            lines.append("-" * 60)
+            lines.append("")
+            lines.extend(day_details)
+
+            content_str = "\n".join(lines)
+            filename = os.path.basename(self.week_file).replace(".json", "_SUMMARY.txt")
+            summary_file = os.path.join(self.tracker_exports_dir, filename)
+
+            with open(summary_file, "w", encoding="utf-8") as f:
+                f.write(content_str)
+
+            show_info(self, "Exported!", f"Summary exported to:\n{summary_file}")
+
+        except OSError as e:
+            show_error(self, "Export Error", f"Could not export summary:\n{str(e)}")
+
+    def clear_week(self):
+        result = ask_yes_no(self, "Clear Week?", "Are you sure you want to clear all entries for this week?\n\nThis cannot be undone!")
+        if result:
+            for day_info in self.day_widgets.values():
+                day_info["widget"].delete("1.0", tk.END)
+            show_info(self, "Cleared", "All entries have been cleared.")
 
 class ArchiveViewer(tk.Toplevel):
     """Simplified archive viewer using basic ZIP password protection."""
@@ -1944,9 +2340,24 @@ class WorkflowGUI:
         self.root.resizable(True, True)
         
         # Initialize managers and state objects
-        os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True); os.makedirs(os.path.join(BASE_DIR, "data", "Archive"), exist_ok=True); os.makedirs(os.path.join(BASE_DIR, "data", "exports"), exist_ok=True)
+        try:
+            os.makedirs(APP_DATA_DIR, exist_ok=True)
+            os.makedirs(os.path.join(APP_DATA_DIR, "Archive"), exist_ok=True)
+            os.makedirs(os.path.join(APP_DATA_DIR, "exports"), exist_ok=True)
+            os.makedirs(os.path.join(APP_DATA_DIR, "Backups"), exist_ok=True)
+        except Exception:
+            pass
+        # File paths (simplified - no PathManager class overhead)
+        self.data_dir = APP_DATA_DIR
+        self.auth_file = os.path.join(self.data_dir, "prog_auth.json")
+        self.enc_file = os.path.join(self.data_dir, "workflow_data.json.enc")
+        self.data_file = os.path.join(self.data_dir, "workflow_data.json")
+        self.archive_dir = os.path.join(self.data_dir, ARCHIVE_DIR_NAME)
+        self.exports_dir = os.path.join(self.data_dir, EXPORTS_DIR_NAME)
+        self.theme_pref_file = os.path.join(self.data_dir, THEME_PREF_FILE)
+
         self._ensure_pyzipper_on_startup()
-        
+
         # Theme setup
         self._init_theme()
         self._setup_hotkeys()
@@ -1992,14 +2403,6 @@ class WorkflowGUI:
         self.search_matches = []
         self.search_current_index = -1
         
-        # File paths (simplified - no PathManager class overhead)
-        self.auth_file = os.path.join(BASE_DIR, "data", "prog_auth.json")
-        self.enc_file = os.path.join(BASE_DIR, "data", "workflow_data.json.enc")
-        self.data_file = os.path.join(BASE_DIR, "data", "workflow_data.json")
-        self.data_dir = os.path.join(BASE_DIR, "data")
-        self.archive_dir = os.path.join(BASE_DIR, "data", ARCHIVE_DIR_NAME)
-        self.exports_dir = os.path.join(BASE_DIR, "data", EXPORTS_DIR_NAME)
-        
         self.root.configure(bg=CURRENT_PALETTE["bg_color"])
         
         # Data initialization
@@ -2008,6 +2411,7 @@ class WorkflowGUI:
         self.master_password = None
         
         # Security and data loading
+        self._migrate_legacy_data_dir()
         if not self.run_security_check():
             self.root.destroy()
             return
@@ -2019,6 +2423,64 @@ class WorkflowGUI:
         self.create_widgets()
         self.refresh_blocks()
         self._apply_chrome_styling()
+
+    def _migrate_legacy_data_dir(self) -> None:
+        """Copy data from legacy app-relative data folder to Documents/Workflow."""
+        legacy_dir = os.path.join(BASE_DIR, "data")
+        try:
+            if os.path.abspath(legacy_dir) == os.path.abspath(self.data_dir):
+                return
+            if not os.path.exists(legacy_dir):
+                return
+            import shutil  # Lazy import
+
+            os.makedirs(self.data_dir, exist_ok=True)
+
+            files_to_copy = [
+                "prog_auth.json",
+                "workflow_data.json",
+                "workflow_data.json.enc",
+                "theme_pref.json",
+                "deps.json",
+            ]
+            for name in files_to_copy:
+                src = os.path.join(legacy_dir, name)
+                dst = os.path.join(self.data_dir, name)
+                if os.path.exists(src) and not os.path.exists(dst):
+                    try:
+                        shutil.copy2(src, dst)
+                    except Exception:
+                        pass
+
+            for folder in ["Archive", "exports", "Backups"]:
+                src_dir = os.path.join(legacy_dir, folder)
+                dst_dir = os.path.join(self.data_dir, folder)
+                if not os.path.exists(src_dir):
+                    continue
+                if not os.path.exists(dst_dir):
+                    try:
+                        shutil.copytree(src_dir, dst_dir)
+                        continue
+                    except Exception:
+                        pass
+                for root, _, files in os.walk(src_dir):
+                    rel = os.path.relpath(root, src_dir)
+                    target_root = dst_dir if rel == "." else os.path.join(dst_dir, rel)
+                    try:
+                        os.makedirs(target_root, exist_ok=True)
+                    except Exception:
+                        pass
+                    for fn in files:
+                        src = os.path.join(root, fn)
+                        dst = os.path.join(target_root, fn)
+                        if os.path.exists(dst):
+                            continue
+                        try:
+                            shutil.copy2(src, dst)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
     
     def _init_theme(self) -> None:
         """Initialize theme engine and load preferences."""
@@ -2026,8 +2488,8 @@ class WorkflowGUI:
         self._current_theme = 'light'
         
         try:
-            if os.path.exists(os.path.join(BASE_DIR, "data", "theme_pref.json")):
-                with open(os.path.join(BASE_DIR, "data", "theme_pref.json"), 'r', encoding='utf-8') as f:
+            if os.path.exists(self.theme_pref_file):
+                with open(self.theme_pref_file, 'r', encoding='utf-8') as f:
                     val = json.load(f)
                 num = val.get('theme') if isinstance(val, dict) else int(val) if isinstance(val, (int, str)) else None
                 self._current_theme = 'dark' if num == 2 else 'light'
@@ -2258,23 +2720,23 @@ class WorkflowGUI:
         self.security = SecurityManager(self.master_password)
 
         # --- Legacy migration: plaintext JSON -> encrypted file ---
-        if os.path.exists(os.path.join(BASE_DIR, "data", "workflow_data.json")) and not os.path.exists(os.path.join(BASE_DIR, "data", "workflow_data.json.enc")):
+        if os.path.exists(self.data_file) and not os.path.exists(self.enc_file):
             msg = "A legacy plain-text database was found. It will be encrypted with your program password."
             show_info(self.root, "Security Migration", msg)
             try:
-                with open(os.path.join(BASE_DIR, "data", "workflow_data.json"), 'r', encoding='utf-8') as f:
+                with open(self.data_file, 'r', encoding='utf-8') as f:
                     self.people_data = json.load(f)
                 self.save_data()
-                os.remove(os.path.join(BASE_DIR, "data", "workflow_data.json"))
+                os.remove(self.data_file)
                 show_info(self.root, "Success", "Database migrated and encrypted successfully.")
             except (OSError, IOError, json.JSONDecodeError) as e:
                 show_error(self.root, "Error", f"Migration failed: {e}")
                 return False
 
         # --- Normal load: decrypt existing encrypted DB if present ---
-        if os.path.exists(os.path.join(BASE_DIR, "data", "workflow_data.json.enc")):
+        if os.path.exists(self.enc_file):
             try:
-                decrypted_json = self.security.decrypt(os.path.join(BASE_DIR, "data", "workflow_data.json.enc"))
+                decrypted_json = self.security.decrypt(self.enc_file)
                 if decrypted_json:
                     self.people_data = json.loads(decrypted_json)
                 else:
@@ -2289,11 +2751,11 @@ class WorkflowGUI:
 
     def load_data(self) -> None:
         """Load data from encrypted JSON file"""
-        if os.path.exists(os.path.join(BASE_DIR, "data", "workflow_data.json.enc")):
+        if os.path.exists(self.enc_file):
             try:
                 if not self.security:
                     raise RuntimeError("Security manager is not initialized.")
-                decrypted_json = self.security.decrypt(os.path.join(BASE_DIR, "data", "workflow_data.json.enc"))
+                decrypted_json = self.security.decrypt(self.enc_file)
                 if decrypted_json:
                     self.people_data = json.loads(decrypted_json)
                 else:
@@ -2375,7 +2837,7 @@ class WorkflowGUI:
             json_str = json.dumps(self.people_data, indent=4)
             if not self.security:
                 raise RuntimeError("Security manager is not initialized.")
-            if not self.security.encrypt(json_str, os.path.join(BASE_DIR, "data", "workflow_data.json.enc")):
+            if not self.security.encrypt(json_str, self.enc_file):
                 raise RuntimeError("OpenSSL encryption process failed.")
         except (OSError, IOError, json.JSONDecodeError, RuntimeError) as e:
             show_error(self.root, "Save Error", f"Could not encrypt/save data:\n{str(e)}")
@@ -2746,9 +3208,8 @@ class WorkflowGUI:
                 pass
             # Persist preference (1=light, 2=dark)
             try:
-                pref_path = os.path.join(base_dir, 'data', 'theme_pref.json')
                 val = 2 if self._current_theme == 'dark' else 1
-                with open(pref_path, 'w', encoding='utf-8') as f:
+                with open(self.theme_pref_file, 'w', encoding='utf-8') as f:
                     json.dump({"theme": val}, f)
             except Exception:
                 pass
@@ -3637,12 +4098,8 @@ class WorkflowGUI:
         except Exception as e:
             show_error(self.root, 'Export CSV', f'Failed to write CSV: {e}')
             return
-        try:
-            rel = os.path.relpath(out_path, start=os.path.dirname(os.path.abspath(__file__)))
-        except Exception:
-            rel = out_path
         # Confirmation with quick actions
-        msg = f"Exported {len(rows)} rows to:\n{rel}"
+        msg = f"Exported {len(rows)} rows to:\n{out_path}"
         try:
             dlg = ExportSuccessDialog(
                 self.root,
@@ -3785,9 +4242,15 @@ class WorkflowGUI:
                 shutil.copy2(self.enc_file, dest)
             except Exception:
                 pass
-        # Prune to last 10 by modified time
+        # Prune only autosave backups; keep user-created snapshots forever
         try:
-            files = [os.path.join(backups_dir, fn) for fn in os.listdir(backups_dir) if fn.endswith('.enc')]
+            files = []
+            for fn in os.listdir(backups_dir):
+                if not fn.endswith('.enc'):
+                    continue
+                if not fn.startswith('workflow_data_'):
+                    continue
+                files.append(os.path.join(backups_dir, fn))
             files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
             for old in files[10:]:
                 try:
@@ -4183,7 +4646,7 @@ class WorkflowGUI:
     def _ensure_pyzipper_on_startup(self) -> None:
         """First-run dependency check for pyzipper (silent)."""
         try:
-            marker = os.path.join(BASE_DIR, "data", "deps.json")
+            marker = os.path.join(self.data_dir, "deps.json")
             if os.path.exists(marker):
                 return
             try:
@@ -4241,9 +4704,7 @@ class WorkflowGUI:
     def open_weekly_tracker(self):
         """Launch the Weekly Tracker in a new window."""
         try:
-            import weekly_tracker
-            tracker_window = tk.Toplevel(self.root)
-            weekly_tracker.WeeklyTrackerGUI(tracker_window)
+            WeeklyTrackerGUI(self.root, self.data_dir)
         except Exception as e:
             show_error(self.root, 'Weekly Tracker', f'Failed to open Weekly Tracker:\n{e}')
         
@@ -5360,11 +5821,14 @@ def main():
     root = tk.Tk()
     root.withdraw()
     try:
-        os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
+        os.makedirs(APP_DATA_DIR, exist_ok=True)
+        os.makedirs(os.path.join(APP_DATA_DIR, "Archive"), exist_ok=True)
+        os.makedirs(os.path.join(APP_DATA_DIR, "exports"), exist_ok=True)
+        os.makedirs(os.path.join(APP_DATA_DIR, "Backups"), exist_ok=True)
     except Exception:
         pass
 
-    marker = os.path.join(BASE_DIR, "data", "deps.json")
+    marker = os.path.join(APP_DATA_DIR, "deps.json")
     if os.path.exists(marker):
         root.deiconify()
         WorkflowGUI(root)
