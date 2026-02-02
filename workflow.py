@@ -1146,17 +1146,34 @@ class BaseDialog(tk.Toplevel):
     def center_on_parent(self, parent):
         """Center this dialog on the parent window."""
         try:
-            self.update_idletasks()
-            w, h = self.winfo_width(), self.winfo_height()
-            px = parent.winfo_rootx()
-            py = parent.winfo_rooty()
-            pw = parent.winfo_width() or 600
-            ph = parent.winfo_height() or 400
-            x = px + (pw - w) // 2
-            y = py + (ph - h) // 2
-            self.geometry(f"{w}x{h}+{x}+{y}")
+            center_window(self, parent)
         except Exception:
             pass
+
+
+def center_window(window: tk.Toplevel | tk.Tk, parent: Optional[tk.Misc] = None) -> None:
+    """Center a window on its parent or the screen."""
+    try:
+        window.update_idletasks()
+        w = window.winfo_width() or window.winfo_reqwidth()
+        h = window.winfo_height() or window.winfo_reqheight()
+
+        if parent is not None and parent.winfo_exists():
+            px = parent.winfo_rootx()
+            py = parent.winfo_rooty()
+            pw = parent.winfo_width() or parent.winfo_reqwidth() or 600
+            ph = parent.winfo_height() or parent.winfo_reqheight() or 400
+            x = px + (pw - w) // 2
+            y = py + (ph - h) // 2
+        else:
+            sw = window.winfo_screenwidth()
+            sh = window.winfo_screenheight()
+            x = (sw - w) // 2
+            y = (sh - h) // 2
+
+        window.geometry(f"{w}x{h}+{x}+{y}")
+    except Exception:
+        pass
 
 
 class LoginDialog(BaseDialog):
@@ -1462,7 +1479,7 @@ class ArchiveSuccessDialog(BaseDialog):
 class ExportSuccessDialog(BaseDialog):
     """Export success dialog with quick actions."""
     def __init__(self, parent, title, message, on_open_location=None, on_view_csv=None):
-        super().__init__(parent, title, width=640, height=120)
+        super().__init__(parent, title, width=640, height=220)
         self.on_open_location = on_open_location
         self.on_view_csv = on_view_csv
 
@@ -1555,6 +1572,10 @@ class WeeklyTrackerGUI(tk.Toplevel):
         self.create_widgets()
         self.load_week_data()
         self._setup_keyboard_shortcuts()
+        try:
+            center_window(self, parent)
+        except Exception:
+            pass
 
     def _setup_keyboard_shortcuts(self) -> None:
         try:
@@ -1988,6 +2009,10 @@ class ArchiveViewer(tk.Toplevel):
         pack_action_button(btn_bar, "Close", self.destroy, role="cancel", font=FONTS["button"], width=12, side=tk.RIGHT, padx=6)
 
         self.load_archive_list()
+        try:
+            center_window(self, self.master)
+        except Exception:
+            pass
 
     def _open_archive_location(self):
         """Open the archives folder in the system file manager."""
@@ -2338,6 +2363,10 @@ class WorkflowGUI:
         self.root.title("Candidate Tracker")
         self.root.geometry("1500x1000")
         self.root.resizable(True, True)
+        try:
+            center_window(self.root)
+        except Exception:
+            pass
         
         # Initialize managers and state objects
         try:
@@ -3344,6 +3373,10 @@ class WorkflowGUI:
         win.configure(bg=self.bg_color)
         win.geometry("640x420")
         win.transient(self.root)
+        try:
+            center_window(win, self.root)
+        except Exception:
+            pass
 
         frame = tk.Frame(win, bg=self.bg_color, padx=12, pady=12)
         frame.pack(fill=tk.BOTH, expand=True)
@@ -4304,6 +4337,10 @@ class WorkflowGUI:
         win.configure(bg=self.bg_color)
         win.geometry("520x360")
         win.transient(self.root)
+        try:
+            center_window(win, self.root)
+        except Exception:
+            pass
 
         frame = tk.Frame(win, bg=self.bg_color, padx=12, pady=12)
         frame.pack(fill=tk.BOTH, expand=True)
@@ -4351,6 +4388,10 @@ class WorkflowGUI:
         win.configure(bg=bg)
         win.geometry("900x500")
         win.transient(self.root)
+        try:
+            center_window(win, self.root)
+        except Exception:
+            pass
         frame = tk.Frame(win, bg=bg)
         frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
@@ -5725,6 +5766,10 @@ class WorkflowGUI:
         height = min(content_height, max_height)
         
         dialog.geometry(f"{width}x{int(height)}")
+        try:
+            center_window(dialog, self.root)
+        except Exception:
+            pass
 
         def _constrain_dialog_width():
             try:
@@ -5787,6 +5832,10 @@ def _show_startup_loader(root: tk.Tk) -> tk.Toplevel:
     try:
         splash.transient(root)
         splash.grab_set()
+    except Exception:
+        pass
+    try:
+        center_window(splash, root)
     except Exception:
         pass
     return splash
