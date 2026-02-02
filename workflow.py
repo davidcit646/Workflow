@@ -2159,7 +2159,8 @@ class WorkflowGUI:
 
     # Helper to create a labeled grid Entry inside a parent frame and return the Entry widget
     def _label_and_entry(self, parent, label_text, row, label_col=0, entry_col=1, colspan=1, entry_kwargs=None):
-        tk.Label(parent, text=f"{label_text}:", bg=self.bg_color, fg=self.fg_color, font=self.form_label_font).grid(row=row, column=label_col, sticky="w", pady=5)
+        text = label_text if str(label_text).strip().endswith(":") else f"{label_text}:"
+        tk.Label(parent, text=text, bg=self.bg_color, fg=self.fg_color, font=self.form_label_font).grid(row=row, column=label_col, sticky="w", pady=5)
         # Use themed card background and foreground for all form entries
         field_bg = getattr(self, 'card_bg_color', CURRENT_PALETTE.get('card_bg_color', '#ffffff'))
         entry = tk.Entry(parent, font=self.form_entry_font, bg=field_bg, fg=self.fg_color, insertbackground=self.fg_color, **(entry_kwargs or {}))
@@ -2832,7 +2833,7 @@ class WorkflowGUI:
         try:
             x = self._files_btn.winfo_rootx()
             y = self._files_btn.winfo_rooty() + self._files_btn.winfo_height()
-            menu.geometry(f"220x150+{x}+{y}")
+            menu.geometry(f"220x180+{x}+{y}")
         except Exception:
             pass
 
@@ -2845,6 +2846,8 @@ class WorkflowGUI:
         btn_view_csv.pack(fill=tk.X, pady=(0, 6))
         btn_view_arch = make_action_button(frame, "View Archives", self.open_archive_viewer, role="view", font=FONTS["button"], width=18)
         btn_view_arch.pack(fill=tk.X, pady=(0, 6))
+        btn_snapshots = make_action_button(frame, "Snapshots", self.open_snapshot_dialog, role="view", font=FONTS["button"], width=18)
+        btn_snapshots.pack(fill=tk.X, pady=(0, 6))
         btn_export = make_action_button(frame, "Export CSV", self.export_current_view_csv, role="save", font=FONTS["button"], width=18)
         btn_export.pack(fill=tk.X)
 
@@ -2867,6 +2870,101 @@ class WorkflowGUI:
         except Exception:
             pass
         self._files_menu = None
+
+    def open_snapshot_dialog(self):
+        """Show snapshot manager for creating and restoring snapshots."""
+        try:
+            os.makedirs(self._get_snapshots_dir(), exist_ok=True)
+        except Exception:
+            pass
+
+        win = tk.Toplevel(self.root)
+        win.title("Snapshots")
+        win.configure(bg=self.bg_color)
+        win.geometry("640x420")
+        win.transient(self.root)
+
+        frame = tk.Frame(win, bg=self.bg_color, padx=12, pady=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(
+            frame,
+            text="Select a snapshot to restore or create a new one.",
+            bg=self.bg_color,
+            fg=self.fg_color,
+            font=FONTS["small"],
+        ).pack(anchor="w")
+
+        list_frame = tk.Frame(frame, bg=self.bg_color)
+        list_frame.pack(fill=tk.BOTH, expand=True, pady=8)
+
+        listbox = tk.Listbox(list_frame, font=FONTS["small"])
+        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        sb = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=listbox.yview)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        listbox.configure(yscrollcommand=sb.set)
+
+        snapshots: List[Dict[str, Any]] = []
+
+        def _label_for(snap: Dict[str, Any]) -> str:
+            ts = snap.get("timestamp")
+            ts_str = ts.strftime("%Y-%m-%d %H:%M:%S") if ts else "Unknown"
+            size = snap.get("size", 0)
+            kb = max(1, int(size / 1024))
+            return f"{ts_str}  ({kb} KB)  -  {snap.get('filename', '')}"
+
+        def _refresh():
+            nonlocal snapshots
+            snapshots = self.list_snapshots()
+            listbox.delete(0, tk.END)
+            if not snapshots:
+                listbox.insert(tk.END, "No snapshots found.")
+                listbox.configure(state=tk.DISABLED)
+            else:
+                listbox.configure(state=tk.NORMAL)
+                for s in snapshots:
+                    listbox.insert(tk.END, _label_for(s))
+
+        def _selected_snapshot() -> Optional[Dict[str, Any]]:
+            if not snapshots:
+                return None
+            sel = listbox.curselection()
+            if not sel:
+                return None
+            idx = sel[0]
+            if idx >= len(snapshots):
+                return None
+            return snapshots[idx]
+
+        def _restore_selected():
+            snap = _selected_snapshot()
+            if not snap:
+                show_info(self.root, "Snapshots", "Select a snapshot to restore.")
+                return
+            if self.restore_snapshot(snap.get("path")):
+                _refresh()
+
+        def _create_snapshot():
+            label = simpledialog.askstring("New Snapshot", "Optional label for this snapshot:", parent=win)
+            path = self.create_snapshot(label=label)
+            if path:
+                show_info(self.root, "Snapshots", "Snapshot created successfully.")
+                _refresh()
+
+        _refresh()
+
+        btn_frame = tk.Frame(frame, bg=self.bg_color)
+        btn_frame.pack(fill=tk.X, pady=(6, 0))
+
+        pack_action_button(btn_frame, "Restore", _restore_selected, role="confirm", font=FONTS["button"], side=tk.LEFT, padx=6)
+        pack_action_button(btn_frame, "New Snapshot", _create_snapshot, role="save", font=FONTS["button"], side=tk.LEFT, padx=6)
+        spacer = tk.Frame(btn_frame, bg=self.bg_color)
+        spacer.pack(side=tk.LEFT, expand=True, fill=tk.X)
+        pack_action_button(btn_frame, "Open Folder", lambda: self._open_path_in_file_manager(self._get_snapshots_dir()), role="view", font=FONTS["button"], side=tk.LEFT, padx=6)
+        pack_action_button(btn_frame, "Close", win.destroy, role="cancel", font=FONTS["button"], side=tk.RIGHT, padx=6)
+
+        listbox.bind("<Double-Button-1>", lambda e: _restore_selected())
 
     def _on_root_click(self, event):
         for menu, btn, close_fn in (
@@ -2962,10 +3060,20 @@ class WorkflowGUI:
         self.canvas.itemconfig(self.canvas_window, width=event.width - 40)
 
     def _on_mousewheel(self, event):
-        if event.num == 4 or event.delta > 0:
-            self.canvas.yview_scroll(-1, "units")
-        elif event.num == 5 or event.delta < 0:
-            self.canvas.yview_scroll(1, "units")
+        try:
+            y0, y1 = self.canvas.yview()
+            scroll_up = (event.num == 4) or (getattr(event, "delta", 0) > 0)
+            scroll_down = (event.num == 5) or (getattr(event, "delta", 0) < 0)
+            if scroll_up and y0 <= 0:
+                return
+            if scroll_down and y1 >= 1:
+                return
+            if scroll_up:
+                self.canvas.yview_scroll(-1, "units")
+            elif scroll_down:
+                self.canvas.yview_scroll(1, "units")
+        except Exception:
+            pass
 
     def refresh_blocks(self) -> None:
         """Clear and rebuild the blocks with dual-column sorting"""
@@ -3546,6 +3654,103 @@ class WorkflowGUI:
             self.root.wait_window(dlg)
         except Exception:
             pass
+
+    # --- Snapshot System ---
+    def _get_snapshots_dir(self) -> str:
+        return os.path.join(self.data_dir, 'Backups')
+
+    def _extract_snapshot_timestamp(self, filename: str) -> Optional[datetime]:
+        try:
+            m = re.search(r"(\d{8}_\d{6})", filename)
+            if not m:
+                return None
+            return datetime.strptime(m.group(1), "%Y%m%d_%H%M%S")
+        except Exception:
+            return None
+
+    def list_snapshots(self) -> List[Dict[str, Any]]:
+        """Return snapshot metadata sorted by newest first."""
+        snapshots_dir = self._get_snapshots_dir()
+        try:
+            os.makedirs(snapshots_dir, exist_ok=True)
+        except Exception:
+            pass
+        try:
+            files = [f for f in os.listdir(snapshots_dir) if f.endswith('.enc')]
+        except Exception:
+            files = []
+        items = []
+        for fn in files:
+            path = os.path.join(snapshots_dir, fn)
+            try:
+                stat = os.stat(path)
+                ts = self._extract_snapshot_timestamp(fn)
+                items.append({
+                    "filename": fn,
+                    "path": path,
+                    "mtime": stat.st_mtime,
+                    "size": stat.st_size,
+                    "timestamp": ts,
+                })
+            except Exception:
+                continue
+        items.sort(key=lambda x: x.get("mtime", 0), reverse=True)
+        return items
+
+    def create_snapshot(self, label: Optional[str] = None) -> Optional[str]:
+        """Create a manual snapshot from the current encrypted DB."""
+        import shutil  # Lazy import
+        try:
+            self.save_data()
+        except Exception:
+            pass
+        if not os.path.exists(self.enc_file):
+            show_error(self.root, "Snapshot", "No encrypted database found to snapshot.")
+            return None
+        snapshots_dir = self._get_snapshots_dir()
+        try:
+            os.makedirs(snapshots_dir, exist_ok=True)
+        except Exception:
+            pass
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        clean_label = (label or "").strip()
+        if clean_label:
+            clean_label = re.sub(r"[^a-zA-Z0-9_-]+", "_", clean_label)
+            clean_label = clean_label[:40].strip("_")
+        suffix = f"_{clean_label}" if clean_label else ""
+        dest = os.path.join(snapshots_dir, f"snapshot_{ts}{suffix}.enc")
+        try:
+            shutil.copy2(self.enc_file, dest)
+            return dest
+        except Exception as e:
+            show_error(self.root, "Snapshot", f"Failed to create snapshot:\n{e}")
+            return None
+
+    def restore_snapshot(self, snapshot_path: str, confirm: bool = True) -> bool:
+        """Restore encrypted DB from a snapshot file."""
+        import shutil  # Lazy import
+        if not snapshot_path or not os.path.exists(snapshot_path):
+            show_error(self.root, "Snapshot", "Snapshot file not found.")
+            return False
+        if confirm:
+            msg = (
+                "Restore this snapshot and overwrite your current database?\n\n"
+                "This cannot be undone unless you have another snapshot."
+            )
+            if not ask_yes_no(self.root, "Restore Snapshot", msg):
+                return False
+        try:
+            shutil.copy2(snapshot_path, self.enc_file)
+        except Exception as e:
+            show_error(self.root, "Snapshot", f"Failed to restore snapshot:\n{e}")
+            return False
+        try:
+            self.load_data()
+            self._apply_filters_and_refresh()
+        except Exception:
+            pass
+        show_info(self.root, "Snapshot", "Snapshot restored successfully.")
+        return True
 
     # --- Autosave & Backups ---
     def _schedule_autosave(self):
@@ -4346,9 +4551,60 @@ class WorkflowGUI:
         
         # Enable mousewheel scrolling
         def on_mousewheel(event):
-            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        
-        canvas.bind_all("<MouseWheel>", on_mousewheel)
+            try:
+                if not canvas.winfo_exists():
+                    return
+                delta = event.delta
+                if delta == 0:
+                    return
+                canvas.yview_scroll(int(-1 * (delta / 120)), "units")
+            except Exception:
+                pass
+
+        def on_mousewheel_linux(event):
+            try:
+                if not canvas.winfo_exists():
+                    return
+                if event.num == 4:
+                    canvas.yview_scroll(-1, "units")
+                elif event.num == 5:
+                    canvas.yview_scroll(1, "units")
+            except Exception:
+                pass
+
+        def on_mousewheel_dialog(event):
+            try:
+                if event.widget.winfo_toplevel() is not dialog:
+                    return
+                if not canvas.winfo_exists():
+                    return "break"
+                delta = getattr(event, "delta", 0)
+                if delta:
+                    canvas.yview_scroll(int(-1 * (delta / 120)), "units")
+                    return "break"
+            except Exception:
+                return "break"
+
+        def on_mousewheel_dialog_linux(event):
+            try:
+                if event.widget.winfo_toplevel() is not dialog:
+                    return
+                if not canvas.winfo_exists():
+                    return "break"
+                if event.num == 4:
+                    canvas.yview_scroll(-1, "units")
+                elif event.num == 5:
+                    canvas.yview_scroll(1, "units")
+                return "break"
+            except Exception:
+                return "break"
+
+        canvas.bind("<MouseWheel>", on_mousewheel)
+        canvas.bind("<Button-4>", on_mousewheel_linux)
+        canvas.bind("<Button-5>", on_mousewheel_linux)
+        dialog.bind_all("<MouseWheel>", on_mousewheel_dialog, add="+")
+        dialog.bind_all("<Button-4>", on_mousewheel_dialog_linux, add="+")
+        dialog.bind_all("<Button-5>", on_mousewheel_dialog_linux, add="+")
         
         # Pack canvas and scrollbar (expands to fill space above buttons)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -5008,15 +5264,31 @@ class WorkflowGUI:
         height = min(content_height, max_height)
         
         dialog.geometry(f"{width}x{int(height)}")
-        try:
-            canvas.itemconfig(scroll_window_id, width=width - 30)
-        except Exception:
-            pass
+
+        def _constrain_dialog_width():
+            try:
+                if not dialog.winfo_exists() or not canvas.winfo_exists():
+                    return
+                w = dialog.winfo_width()
+                inner = max(0, w - 30)
+                canvas.itemconfig(scroll_window_id, width=inner)
+                scrollable_frame.configure(width=inner)
+                content_frame.configure(width=inner)
+                main_form.configure(width=inner)
+            except Exception:
+                pass
+
+        _constrain_dialog_width()
         
         dialog.update_idletasks()
         
         dialog.deiconify()
         dialog.grab_set()
+
+        try:
+            dialog.after(0, _constrain_dialog_width)
+        except Exception:
+            pass
         
         # Ensure button role colors are applied within the dialog
         try:
