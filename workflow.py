@@ -21,6 +21,7 @@ import ctypes
 import logging
 import struct
 import tempfile
+from functools import lru_cache
 from typing import Optional, List, Dict, Any, Tuple
 
 # Module-level constants
@@ -34,7 +35,7 @@ def ensure_dirs(*paths: str) -> None:
         for p in paths:
             if p:
                 os.makedirs(p, exist_ok=True)
-    except Exception:
+    except OSError:
         pass
 
 # Logging setup (file-based debug log)
@@ -47,7 +48,7 @@ try:
         filename=_log_path,
         filemode="a",
     )
-except Exception:
+except (OSError, IOError, ValueError):
     pass
 logger = logging.getLogger("workflow")
 
@@ -388,7 +389,7 @@ class SecurityManager:
             try:
                 self._lib = ctypes.CDLL(name)
                 break
-            except Exception:
+            except OSError:
                 continue
 
     def decrypt(self, encrypted_file):
@@ -397,7 +398,7 @@ class SecurityManager:
         try:
             with open(encrypted_file, 'rb') as f:
                 enc = f.read()
-        except Exception:
+        except (OSError, IOError):
             return None
 
         # If we have libcrypto, try in-process decrypt (our own file format)
@@ -411,7 +412,7 @@ class SecurityManager:
                     return plain.decode('utf-8')
                 except UnicodeDecodeError:
                     return plain.decode('utf-8', errors='replace')
-            except Exception:
+            except (RuntimeError, ValueError):
                 pass
 
         # Fallback: use OpenSSL CLI (legacy compat)
@@ -449,15 +450,15 @@ class SecurityManager:
                         f.write(enc)
                     try:
                         os.chmod(output_file, 0o600)
-                    except Exception:
+                    except (OSError, PermissionError):
                         pass
                     return True
-                except Exception:
+                except (RuntimeError, OSError, IOError, ValueError):
                     pass
 
             # Fallback: use OpenSSL CLI
             if not self.password:
-                raise Exception("Encryption password is not set.")
+                raise ValueError("Encryption password is not set.")
             process = subprocess.Popen([
                 OPENSSL_CMD, "aes-256-cbc", "-e", "-pbkdf2", "-iter", "100000", "-k", str(self.password), "-in", "-", "-out", output_file
             ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=False)
@@ -465,14 +466,14 @@ class SecurityManager:
 
             if process.returncode != 0:
                 err_msg = stderr.decode('utf-8', errors='replace') if isinstance(stderr, (bytes, bytearray)) else str(stderr)
-                raise Exception(f"Encryption failed: {err_msg}")
+                raise RuntimeError(f"Encryption failed: {err_msg}")
 
             try:
                 os.chmod(output_file, 0o600)
-            except Exception:
+            except (OSError, PermissionError):
                 pass
             return True
-        except Exception as e:
+        except (OSError, IOError, ValueError, RuntimeError) as e:
             print(f"Encryption error: {e}")
             return False
 
@@ -673,6 +674,7 @@ def _migrate_codes_in_place(people_data: Any, code_maps: Dict[str, List[Tuple[st
 # UI HELPER FUNCTIONS
 # ============================================================================
 
+@lru_cache(maxsize=256)
 def _is_dark_color(h):
     """Check if a hex color is dark."""
     try:
@@ -681,9 +683,17 @@ def _is_dark_color(h):
             r, g, b = tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
             lum = (0.299*r + 0.587*g + 0.114*b) / 255.0
             return lum < 0.5
-    except Exception:
+    except (ValueError, TypeError):
         pass
     return True
+
+
+def _normalize_text(value: Optional[str]) -> str:
+    """Normalize free-text for case-insensitive comparisons."""
+    try:
+        return (value or "").strip().lower()
+    except (AttributeError, TypeError):
+        return ""
 
 
 def make_action_button(parent, text, command, role="default", font=None, width=None, compact=False):
@@ -704,7 +714,7 @@ def make_action_button(parent, text, command, role="default", font=None, width=N
     )
     try:
         btn._role = role
-    except Exception:
+    except AttributeError:
         pass
     pad_x = BUTTON_INTERNAL_PADX
     pad_y = BUTTON_INTERNAL_PADY
@@ -733,7 +743,7 @@ def _safe_parent(parent):
         if hasattr(parent, "winfo_exists") and not parent.winfo_exists():
             return None
         return parent
-    except Exception:
+    except (tk.TclError, AttributeError):
         return None
 
 
@@ -745,7 +755,7 @@ def safe_ui_call(widget, func, *args, **kwargs):
         if hasattr(widget, "winfo_exists") and not widget.winfo_exists():
             return
         widget.after(1, lambda: func(*args, **kwargs))
-    except Exception as e:
+    except (tk.TclError, AttributeError, RuntimeError) as e:
         logger.exception("safe_ui_call failed: %s", e)
 
 
@@ -754,7 +764,7 @@ def _show_message(kind: str, parent, title, message) -> None:
         parent = _safe_parent(parent)
         fn = getattr(messagebox, f"show{kind}")
         (fn(title, message, parent=parent) if parent is not None else fn(title, message))
-    except Exception as e:
+    except (tk.TclError, AttributeError, RuntimeError) as e:
         logger.exception("show_%s failed: %s", kind, e)
 
 
@@ -768,7 +778,7 @@ def ask_yes_no(parent, title, message):
     try:
         parent = _safe_parent(parent)
         return messagebox.askyesno(title, message, parent=parent) if parent is not None else messagebox.askyesno(title, message)
-    except Exception as e:
+    except (tk.TclError, AttributeError, RuntimeError) as e:
         logger.exception("ask_yes_no failed: %s", e)
         return False
 
@@ -791,7 +801,7 @@ def save_theme_pref(pref_path: str, theme: str) -> None:
     try:
         with open(pref_path, 'w', encoding='utf-8') as f:
             json.dump({"theme": 2 if theme == 'dark' else 1}, f)
-    except Exception:
+    except (OSError, IOError, TypeError, ValueError):
         pass
 
 
@@ -815,7 +825,7 @@ def apply_chrome_tokens(refs):
         lbl = refs.get('title_label')
         if lbl:
             lbl.config(font=FONTS['title'])
-    except Exception:
+    except (AttributeError, tk.TclError):
         pass
     # Update buttons
     for frame_key in ['title_frame', 'title_stack']:
@@ -844,7 +854,7 @@ def apply_palette(root, palette, refs):
     try:
         root.configure(bg=palette.get("bg_color"))
         CURRENT_PALETTE.update(palette)
-    except Exception:
+    except (AttributeError, tk.TclError):
         pass
 
 
@@ -2362,10 +2372,10 @@ class WorkflowGUI:
     def _normalize_person_fields(self, person: Dict[str, Any]) -> None:
         try:
             self._ensure_person_uid(person)
-            person["_norm_name"] = (person.get("Name", "") or "").strip().lower()
-            person["_norm_branch"] = (person.get("Branch", "") or "").strip().lower()
-            person["_norm_manager"] = (person.get("Manager Name", "") or "").strip().lower()
-        except Exception:
+            person["_norm_name"] = _normalize_text(person.get("Name", ""))
+            person["_norm_branch"] = _normalize_text(person.get("Branch", ""))
+            person["_norm_manager"] = _normalize_text(person.get("Manager Name", ""))
+        except (AttributeError, TypeError):
             pass
 
     def _ensure_person_uid(self, person: Dict[str, Any]) -> str:
@@ -3363,7 +3373,7 @@ class WorkflowGUI:
             if not self._passes_filters(person):
                 continue
 
-            name_lower = (person.get("_norm_name") or (person.get("Name", "") or "").strip().lower())
+            name_lower = person.get("_norm_name") or _normalize_text(person.get("Name", ""))
 
             if is_scheduled:
                 if neo_date in date_cache:
