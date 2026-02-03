@@ -13,7 +13,6 @@ import subprocess
 import re
 import threading
 from datetime import datetime, timedelta
-from pathlib import Path
 import hashlib
 import uuid
 import binascii
@@ -26,26 +25,20 @@ from typing import Optional, List, Dict, Any, Tuple
 
 # Module-level constants
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-def get_documents_dir() -> str:
-    """Return the user's Documents directory path."""
-    home_dir = os.path.expanduser("~")
-    return os.path.join(home_dir, "Documents")
-
-
-def get_app_data_dir() -> str:
-    """Return the app data directory under Documents/Workflow."""
-    return os.path.join(get_documents_dir(), "Workflow")
-
-
-APP_DATA_DIR = get_app_data_dir()
+APP_DATA_DIR = os.path.join(os.path.expanduser("~"), "Documents", "Workflow")
 APP_VERSION = "1.0.0"
 
+
+def ensure_dirs(*paths: str) -> None:
+    try:
+        for p in paths:
+            if p:
+                os.makedirs(p, exist_ok=True)
+    except Exception:
+        pass
+
 # Logging setup (file-based debug log)
-try:
-    os.makedirs(APP_DATA_DIR, exist_ok=True)
-except Exception:
-    pass
+ensure_dirs(APP_DATA_DIR)
 try:
     _log_path = os.path.join(APP_DATA_DIR, "workflow_debug.log")
     logging.basicConfig(
@@ -57,24 +50,6 @@ try:
 except Exception:
     pass
 logger = logging.getLogger("workflow")
-
-# Persistent error reporting for repeated temp/cache failures
-_error_counts: Dict[str, int] = {}
-
-
-def _log_persistent_error(category: str, err: Exception) -> None:
-    try:
-        _error_counts[category] = _error_counts.get(category, 0) + 1
-        logger.exception("%s error: %s", category, err)
-        if _error_counts[category] >= 3:
-            try:
-                report_path = os.path.join(APP_DATA_DIR, "workflow_error_report.txt")
-                with open(report_path, "a", encoding="utf-8") as f:
-                    f.write(f"[{datetime.now().isoformat()}] {category} error: {err}\n")
-            except Exception:
-                pass
-    except Exception:
-        pass
 
 # Add local vendor directory to import path for bundled libraries
 try:
@@ -153,7 +128,6 @@ BUTTON_ROLE_COLORS = {
 
 ALWAYS_BLACK_TEXT_ROLES = {"add", "view", "delete"}
 BUTTON_OUTLINE_COLOR = "#7f8c8d"
-BUTTON_DEFAULT_WIDTH = 12
 BUTTON_INTERNAL_PADX = 3
 BUTTON_INTERNAL_PADY = 2
 BUTTON_PACK_IPADY = 1
@@ -164,25 +138,14 @@ BUTTON_PACK_IPADY = 1
 PASSWORD_ITERATIONS = 200_000
 PASSWORD_SALT_BYTES = 16
 ENCRYPTION_ITERATIONS = 100_000
-ENCRYPTION_CIPHER = "aes-256-cbc"
-ENCRYPTION_PBKDF2 = "-pbkdf2"
 OPENSSL_CMD = "openssl"
-ENCRYPTION_HEADER = b'PBKDF2v1'
-ENCRYPTION_KEY_BYTES = 32
-ENCRYPTION_IV_BYTES = 16
 
 # ============================================================================
 # FILE PATHS & DIRECTORIES
 # ============================================================================
-AUTH_FILE_NAME = "prog_auth.json"
-DATA_FILE_NAME = "workflow_data.json"
-DATA_FILE_ENC_NAME = "workflow_data.json.enc"
 ARCHIVE_DIR_NAME = "Archive"
 EXPORTS_DIR_NAME = "exports"
 THEME_PREF_FILE = "theme_pref.json"
-REQUIRED_DIRECTORIES = ["exports", "Archive", "Backups"]
-DIRECTORY_PERMISSIONS = 0o700
-ARCHIVE_EXTENSION = ".zip"
 
 # ==========================================================================
 # WEEKLY TRACKER CONSTANTS
@@ -199,7 +162,6 @@ WEEKDAY_NAMES = [
 NO_ENTRIES_TEXT = "(No entries for this day)"
 NO_ACTIVITIES_TEXT = "(No activities entered)"
 TRACKER_DIR_NAME = "WeeklyTracker"
-TRACKER_EXPORTS_DIR_NAME = "exports"
 
 # ============================================================================
 # APPLICATION SETTINGS
@@ -207,25 +169,10 @@ TRACKER_EXPORTS_DIR_NAME = "exports"
 SCROLL_TOP_OFFSET = 80
 SCROLL_VIEW_MARGIN = 12
 AUTOSAVE_INTERVAL_MS = 60_000
-DEFAULT_WINDOW_WIDTH = 1500
-DEFAULT_WINDOW_HEIGHT = 1000
-ARCHIVE_VIEWER_WIDTH = 900
-ARCHIVE_VIEWER_HEIGHT = 650
-DIALOG_MIN_WIDTH = 420
-DIALOG_MAX_WIDTH = 780
-DIALOG_WRAP_RATIO = 0.65
-DIALOG_PADX = 24
-DIALOG_PADY = 20
 
 # ============================================================================
 # DATA MAPPINGS
 # ============================================================================
-MONTHS = {
-    '01': 'January', '02': 'February', '03': 'March', '04': 'April',
-    '05': 'May', '06': 'June', '07': 'July', '08': 'August',
-    '09': 'September', '10': 'October', '11': 'November', '12': 'December'
-}
-
 CODE_MAPS = {
     'CORI Status': [("None", "NONE"), ("Required", "REQ"), ("Submitted", "SUB"), ("Cleared", "CLR")],
     'NH GC Status': [("None", "NONE"), ("Required", "REQ"), ("Cleared", "CLR")],
@@ -269,18 +216,6 @@ BUTTON_WIDTHS = {
     'action_button': 8,
     'export_button': 8,
     'tools_button': 16,
-}
-
-FRAME_DIMENSIONS = {
-    'title_frame_height': 70,
-    'paned_sash_width': 4,
-    'canvas_window_width': 960,
-    'left_pane_width': 300,
-}
-
-TEXT_WRAPLENGTHS = {
-    'compact_card': 400,
-    'full_card': 800,
 }
 
 PADDING = {
@@ -418,52 +353,6 @@ STATUS_SUBMITTED = "Submitted"
 STATUS_CLEARED = "Cleared"
 STATUS_SENT_TO_DENISE = "Sent to Denise"
 
-class ThemeManager:
-    """Manages theme colors and styling."""
-    
-    def __init__(self, palette: dict):
-        self._palette = palette
-    
-    def update_palette(self, new_palette: dict) -> None:
-        """Update the color palette."""
-        self._palette = new_palette
-    
-    @property
-    def bg_color(self) -> str:
-        return self._palette.get('bg_color', '#e2e6e9')
-    
-    @property
-    def fg_color(self) -> str:
-        return self._palette.get('fg_color', '#2c3e50')
-    
-    @property
-    def accent_color(self) -> str:
-        return self._palette.get('accent_color', '#3498db')
-    
-    @property
-    def ribbon_color(self) -> str:
-        return self._palette.get('ribbon_color', '#3498db')
-    
-    @property
-    def button_color(self) -> str:
-        return self._palette.get('button_color', '#27ae60')
-    
-    @property
-    def error_color(self) -> str:
-        return self._palette.get('error_color', '#e74c3c')
-    
-    @property
-    def warning_color(self) -> str:
-        return self._palette.get('warning_color', '#f39c12')
-    
-    @property
-    def card_bg_color(self) -> str:
-        return self._palette.get('card_bg_color', '#ffffff')
-    
-    @property
-    def checkbox_select_color(self) -> str:
-        return self._palette.get('checkbox_select_color', '#000000')
-
 
 # ============================================================================
 # PASSWORD HASHING
@@ -482,7 +371,7 @@ def _hash_password(password: str, salt: bytes | None = None, iterations: int = P
 def _verify_password(password: str, salt_hex: str, iterations: int, key_hex: str) -> bool:
     salt = bytes.fromhex(salt_hex)
     key = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, iterations)
-    return binascii.hexlify(key).decode() == key_hex
+    return secrets.compare_digest(binascii.hexlify(key).decode(), key_hex)
 
 
 
@@ -570,12 +459,13 @@ class SecurityManager:
             if not self.password:
                 raise Exception("Encryption password is not set.")
             process = subprocess.Popen([
-                "openssl", "aes-256-cbc", "-e", "-pbkdf2", "-iter", "100000", "-k", str(self.password), "-out", output_file
+                OPENSSL_CMD, "aes-256-cbc", "-e", "-pbkdf2", "-iter", "100000", "-k", str(self.password), "-in", "-", "-out", output_file
             ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=False)
             stdout, stderr = process.communicate(input=data)
 
             if process.returncode != 0:
-                raise Exception(f"Encryption failed: {stderr}")
+                err_msg = stderr.decode('utf-8', errors='replace') if isinstance(stderr, (bytes, bytearray)) else str(stderr)
+                raise Exception(f"Encryption failed: {err_msg}")
 
             try:
                 os.chmod(output_file, 0o600)
@@ -611,7 +501,7 @@ class SecurityManager:
         EVP_aes_256_cbc = lib.EVP_aes_256_cbc
         EVP_aes_256_cbc.restype = ctypes.c_void_p
         EVP_EncryptInit_ex = lib.EVP_EncryptInit_ex
-        EVP_EncryptInit_ex.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p]
+        EVP_EncryptInit_ex.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
         EVP_EncryptUpdate = lib.EVP_EncryptUpdate
         # (ctx, out, outlen, in, inlen)
         EVP_EncryptUpdate.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int), ctypes.c_void_p, ctypes.c_int]
@@ -625,7 +515,9 @@ class SecurityManager:
 
         try:
             # Init
-            res = EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), None, ctypes.c_char_p(key), ctypes.c_char_p(iv))
+            key_buf = ctypes.create_string_buffer(key, len(key))
+            iv_buf = ctypes.create_string_buffer(iv, len(iv))
+            res = EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), None, ctypes.cast(key_buf, ctypes.c_void_p), ctypes.cast(iv_buf, ctypes.c_void_p))
             if res != 1:
                 raise RuntimeError("EncryptInit failed")
 
@@ -673,7 +565,7 @@ class SecurityManager:
         EVP_aes_256_cbc = lib.EVP_aes_256_cbc
         EVP_aes_256_cbc.restype = ctypes.c_void_p
         EVP_DecryptInit_ex = lib.EVP_DecryptInit_ex
-        EVP_DecryptInit_ex.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p]
+        EVP_DecryptInit_ex.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
         EVP_DecryptUpdate = lib.EVP_DecryptUpdate
         # (ctx, out, outlen, in, inlen)
         EVP_DecryptUpdate.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int), ctypes.c_void_p, ctypes.c_int]
@@ -685,7 +577,9 @@ class SecurityManager:
         if not ctx:
             return None
         try:
-            res = EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), None, ctypes.c_char_p(key), ctypes.c_char_p(iv))
+            key_buf = ctypes.create_string_buffer(key, len(key))
+            iv_buf = ctypes.create_string_buffer(iv, len(iv))
+            res = EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), None, ctypes.cast(key_buf, ctypes.c_void_p), ctypes.cast(iv_buf, ctypes.c_void_p))
             if res != 1:
                 return None
 
@@ -709,140 +603,69 @@ class SecurityManager:
             EVP_CIPHER_CTX_free(ctx)
 
 
-class DataManager:
-    """Manages data persistence and migration operations."""
-    
-    def __init__(self, security_manager, data_file: str, enc_file: str):
-        self.security = security_manager
-        self.data_file = data_file
-        self.enc_file = enc_file
-        self.people_data: List[Dict[str, Any]] = []
-    
-    def load(self) -> List[Dict[str, Any]]:
-        """Load data from encrypted JSON file."""
-        if os.path.exists(self.enc_file):
-            try:
-                if not self.security:
-                    raise Exception("Security manager is not initialized.")
-                decrypted_json = self.security.decrypt(self.enc_file)
-                if decrypted_json:
-                    self.people_data = json.loads(decrypted_json)
-                else:
-                    raise Exception("Decryption returned empty or failed.")
-            except Exception as e:
-                raise Exception(f"Could not decrypt/load data: {e}")
-        else:
-            self.people_data = []
-        
-        return self.people_data
-    
-    def save(self, people_data: Optional[List[Dict[str, Any]]] = None) -> None:
-        """Save data to encrypted JSON file."""
-        if people_data is not None:
-            self.people_data = people_data
-            
-        try:
-            json_str = json.dumps(self.people_data, indent=4)
-            if not self.security:
-                raise Exception("Security manager is not initialized.")
-            if not self.security.encrypt(json_str, self.enc_file):
-                raise Exception("OpenSSL encryption process failed.")
-        except Exception as e:
-            raise Exception(f"Could not encrypt/save data: {e}")
-    
-    def migrate_codes(self) -> None:
-        """Backfill code fields and canonicalize display values for dropdowns."""
-        if not isinstance(self.people_data, list):
-            return
-        
-        def norm(s: str) -> str:
-            return ''.join(ch for ch in (s or '').lower() if ch.isalnum())
-        
-        def canonicalize(field: str, val: str) -> str:
-            t = (val or '').strip()
-            n = norm(t)
-            
-            if field in ("CORI Status", "NH GC Status", "ME GC Status"):
-                if 'req' in n:
-                    return 'Required'
-                if 'sub' in n and field == 'CORI Status':
-                    return 'Submitted'
-                if 'clear' in n or 'clr' in n:
-                    return 'Cleared'
-                if field == 'ME GC Status' and ('senttodenise' in n or ('sent' in n and 'denise' in n)):
-                    return 'Sent to Denise'
-                if 'none' in n or t == '':
-                    return 'None'
-                return t
-            
-            if field == 'Deposit Account Type':
-                if 'saving' in n:
-                    return 'Savings'
-                if 'check' in n:
-                    return 'Checking'
-                return '' if t == '' else t
-            
-            if field == 'Shirt Size':
-                for disp, _ in CODE_MAPS['Shirt Size']:
-                    if norm(disp) == n:
-                        return disp
-                return t or 'MD'
-            
+def _migrate_codes_in_place(people_data: Any, code_maps: Dict[str, List[Tuple[str, str]]] | None = None) -> None:
+    if not isinstance(people_data, list):
+        return
+    maps = code_maps or CODE_MAPS
+
+    def norm(s: str) -> str:
+        return ''.join(ch for ch in (s or '').lower() if ch.isalnum())
+
+    def canonicalize(field: str, val: str) -> str:
+        t = (val or '').strip()
+        n = norm(t)
+        if field in ("CORI Status", "NH GC Status", "ME GC Status"):
+            if 'req' in n:
+                return 'Required'
+            if 'sub' in n and field == 'CORI Status':
+                return 'Submitted'
+            if 'clear' in n or 'clr' in n:
+                return 'Cleared'
+            if field == 'ME GC Status' and ('senttodenise' in n or ('sent' in n and 'denise' in n)):
+                return 'Sent to Denise'
+            if 'none' in n or t == '':
+                return 'None'
             return t
-        
-        def code_from_display(field: str, display: str) -> str:
-            pairs = CODE_MAPS.get(field, [])
-            for disp, c in pairs:
-                if (display or '').strip().lower() == disp.lower():
-                    return c
-            return ''
-        
-        def display_from_code(field: str, code: str) -> Optional[str]:
-            pairs = CODE_MAPS.get(field, [])
-            for disp, c in pairs:
-                if (code or '').strip().upper() == c.upper():
+        if field == 'Deposit Account Type':
+            if 'saving' in n:
+                return 'Savings'
+            if 'check' in n:
+                return 'Checking'
+            return '' if t == '' else t
+        if field == 'Shirt Size':
+            for disp, _ in maps.get('Shirt Size', []):
+                if norm(disp) == n:
                     return disp
-            return None
-        
-        for person in self.people_data:
-            if not isinstance(person, dict):
-                continue
-            
-            for field in STATUS_FIELDS:
-                code_key = f"{field}_Code"
-                disp = person.get(field, '')
-                code = person.get(code_key, '')
-                
-                if code:
-                    disp_from_code = display_from_code(field, code)
-                    if disp_from_code:
-                        person[field] = disp_from_code
-                else:
-                    canon = canonicalize(field, disp)
-                    person[field] = canon
-                    person[code_key] = code_from_display(field, canon)
-    
-    def add_person(self, person_data: Dict[str, Any]) -> None:
-        self.people_data.append(person_data)
-    
-    def update_person(self, index: int, person_data: Dict[str, Any]) -> None:
-        if 0 <= index < len(self.people_data):
-            self.people_data[index] = person_data
-    
-    def delete_person(self, index: int) -> None:
-        if 0 <= index < len(self.people_data):
-            del self.people_data[index]
-    
-    def get_person(self, index: int) -> Optional[Dict[str, Any]]:
-        if 0 <= index < len(self.people_data):
-            return self.people_data[index]
+            return t or 'MD'
+        return t
+
+    def code_from_display(field: str, display: str) -> str:
+        for disp, c in maps.get(field, []):
+            if (display or '').strip().lower() == disp.lower():
+                return c
+        return ''
+
+    def display_from_code(field: str, code: str) -> Optional[str]:
+        for disp, c in maps.get(field, []):
+            if (code or '').strip().upper() == c.upper():
+                return disp
         return None
-    
-    def get_all_people(self) -> List[Dict[str, Any]]:
-        return self.people_data
-    
-    def count(self) -> int:
-        return len(self.people_data)
+
+    for person in people_data:
+        if not isinstance(person, dict):
+            continue
+        for field in STATUS_FIELDS:
+            code_key = f"{field}_Code"
+            disp = person.get(field, '')
+            code = person.get(code_key, '')
+            if code:
+                disp_from_code = display_from_code(field, code)
+                if disp_from_code:
+                    person[field] = disp_from_code
+            else:
+                canon = canonicalize(field, disp)
+                person[field] = canon
+                person[code_key] = code_from_display(field, canon)
 
 
 
@@ -926,62 +749,50 @@ def safe_ui_call(widget, func, *args, **kwargs):
         logger.exception("safe_ui_call failed: %s", e)
 
 
-def show_error(parent, title, message):
-    """Show error message dialog."""
+def _show_message(kind: str, parent, title, message) -> None:
     try:
         parent = _safe_parent(parent)
-        if parent is not None:
-            messagebox.showerror(title, message, parent=parent)
-        else:
-            messagebox.showerror(title, message)
+        fn = getattr(messagebox, f"show{kind}")
+        (fn(title, message, parent=parent) if parent is not None else fn(title, message))
     except Exception as e:
-        logger.exception("show_error failed: %s", e)
+        logger.exception("show_%s failed: %s", kind, e)
 
 
-def show_info(parent, title, message):
-    """Show info message dialog."""
-    try:
-        parent = _safe_parent(parent)
-        if parent is not None:
-            messagebox.showinfo(title, message, parent=parent)
-        else:
-            messagebox.showinfo(title, message)
-    except Exception as e:
-        logger.exception("show_info failed: %s", e)
-
-
-def show_warning(parent, title, message):
-    """Show warning message dialog."""
-    try:
-        parent = _safe_parent(parent)
-        if parent is not None:
-            messagebox.showwarning(title, message, parent=parent)
-        else:
-            messagebox.showwarning(title, message)
-    except Exception as e:
-        logger.exception("show_warning failed: %s", e)
+show_error = lambda parent, title, message: _show_message("error", parent, title, message)
+show_info = lambda parent, title, message: _show_message("info", parent, title, message)
+show_warning = lambda parent, title, message: _show_message("warning", parent, title, message)
 
 
 def ask_yes_no(parent, title, message):
     """Ask yes/no question dialog."""
     try:
         parent = _safe_parent(parent)
-        if parent is not None:
-            return messagebox.askyesno(title, message, parent=parent)
-        return messagebox.askyesno(title, message)
+        return messagebox.askyesno(title, message, parent=parent) if parent is not None else messagebox.askyesno(title, message)
     except Exception as e:
         logger.exception("ask_yes_no failed: %s", e)
         return False
 
 
-def show_message_dialog(parent, title, message, buttons=None, default_role="continue"):
-    """Simple message dialog - uses standard messagebox for now."""
-    # Simplified version - for full custom dialogs, would need more code
-    if buttons and len(buttons) > 1:
-        return ask_yes_no(parent, title, message)
-    show_info(parent, title, message)
-    return True
+def load_theme_pref(pref_path: str, default: str = "light") -> str:
+    """Load theme preference from a json file (1=light, 2=dark)."""
+    try:
+        if os.path.exists(pref_path):
+            with open(pref_path, 'r', encoding='utf-8') as f:
+                val = json.load(f)
+            num = val.get('theme') if isinstance(val, dict) else int(val) if isinstance(val, (int, str)) else None
+            return 'dark' if num == 2 else 'light'
+    except (OSError, IOError, ValueError, json.JSONDecodeError):
+        pass
+    return default
 
+
+def save_theme_pref(pref_path: str, theme: str) -> None:
+    """Persist theme preference to a json file (1=light, 2=dark)."""
+    try:
+        with open(pref_path, 'w', encoding='utf-8') as f:
+            json.dump({"theme": 2 if theme == 'dark' else 1}, f)
+    except Exception:
+        pass
 
 
 
@@ -1035,16 +846,6 @@ def apply_palette(root, palette, refs):
         CURRENT_PALETTE.update(palette)
     except Exception:
         pass
-
-
-def apply_stylesheet(root, path, refs):
-    """Load and apply stylesheet - simplified version."""
-    return get_palette('light' if 'light' in path else 'dark')
-
-
-def reset_stylesheet(root, refs, theme='light'):
-    """Reset to default theme."""
-    return get_palette(theme)
 
 
 def build_search_bar(parent, search_var, on_search, width=None):
@@ -1240,6 +1041,106 @@ class BaseDialog(tk.Toplevel):
         except Exception:
             pass
 
+    def _make_modal(self, parent, focus_widget=None, topmost: bool = False) -> None:
+        try:
+            self.center_on_parent(parent)
+        except Exception:
+            pass
+        try:
+            self.deiconify()
+            self.wait_visibility()
+        except Exception:
+            pass
+        try:
+            self.grab_set()
+        except Exception:
+            pass
+        if topmost:
+            try:
+                self.attributes("-topmost", True)
+            except Exception:
+                pass
+        if focus_widget is not None:
+            try:
+                focus_widget.focus_set()
+            except Exception:
+                pass
+
+    def _build_confirm_cancel_bar(
+        self,
+        parent,
+        confirm_text: str = "Confirm",
+        cancel_text: str = "Cancel",
+        confirm_cmd=None,
+        cancel_cmd=None,
+        width: int = BUTTON_WIDTHS['dialog_button'],
+        padx: int = 8,
+        bind_return: bool = True,
+        bind_escape: bool = True,
+        bind_kp_enter: bool = False,
+    ):
+        btn_frame = tk.Frame(parent, bg=self.dlg_bg)
+        btn_frame.pack(pady=10, fill="x")
+
+        confirm_cmd = confirm_cmd or self.on_confirm
+        cancel_cmd = cancel_cmd or self.on_cancel
+
+        btn_confirm = make_action_button(
+            btn_frame,
+            confirm_text,
+            confirm_cmd,
+            role="confirm",
+            font=FONTS["button"],
+            width=width,
+        )
+        btn_confirm.pack(side=tk.LEFT, padx=padx)
+
+        spacer = tk.Frame(btn_frame, bg=self.dlg_bg)
+        spacer.pack(side=tk.LEFT, expand=True, fill="x")
+
+        btn_cancel = make_action_button(
+            btn_frame,
+            cancel_text,
+            cancel_cmd,
+            role="cancel",
+            font=FONTS["button"],
+            width=width,
+        )
+        btn_cancel.pack(side=tk.RIGHT, padx=padx)
+
+        if bind_return:
+            self.bind("<Return>", lambda e: btn_confirm.invoke())
+        if bind_kp_enter:
+            self.bind("<KP_Enter>", lambda e: btn_confirm.invoke())
+        if bind_escape:
+            self.bind("<Escape>", lambda e: btn_cancel.invoke())
+
+        return btn_frame, btn_confirm, btn_cancel
+
+    def _build_action_bar(
+        self,
+        parent,
+        buttons,
+        padx: int = 6,
+        pady: int = 6,
+    ):
+        btn_frame = tk.Frame(parent, bg=self.dlg_bg)
+        btn_frame.pack(pady=pady)
+
+        created = []
+        for text, command, role, width in buttons:
+            btn = make_action_button(
+                btn_frame,
+                text,
+                command,
+                role=role,
+                font=FONTS["button"],
+                width=width,
+            )
+            btn.pack(side=tk.LEFT, padx=padx)
+            created.append(btn)
+        return btn_frame, created
+
 
 def center_window(window: tk.Toplevel | tk.Tk, parent: Optional[tk.Misc] = None) -> None:
     """Center a window on its parent or the screen."""
@@ -1285,24 +1186,14 @@ class LoginDialog(BaseDialog):
         self.pw_entry = tk.Entry(main_frame, show="*", font=FONTS["subheader"], justify="center", bg=self.field_bg, fg=self.dlg_fg, insertbackground=self.dlg_fg)
         self.pw_entry.pack(fill="x", pady=8, ipady=6)
         self.pw_entry.focus_set()
-        self.pw_entry.bind("<Return>", lambda e: self.on_confirm())
-        
-        btn_frame = tk.Frame(main_frame, bg=self.dlg_bg)
-        btn_frame.pack(pady=10, fill="x")
-
-        # Create standardized action buttons
-        btn_confirm = make_action_button(btn_frame, "Confirm", self.on_confirm, role="confirm", font=FONTS["button"], width=BUTTON_WIDTHS['dialog_button'])
-        btn_confirm.pack(side=tk.LEFT, padx=12)
+        _, btn_confirm, _ = self._build_confirm_cancel_bar(
+            main_frame,
+            confirm_text="Confirm",
+            cancel_text="Exit",
+            padx=12,
+            bind_kp_enter=True,
+        )
         btn_confirm.configure(default="active")
-        spacer = tk.Frame(btn_frame, bg=self.dlg_bg)
-        spacer.pack(side=tk.LEFT, expand=True, fill="x")
-        btn_exit = make_action_button(btn_frame, "Exit", self.on_cancel, role="cancel", font=FONTS["button"], width=BUTTON_WIDTHS['dialog_button'])
-        btn_exit.pack(side=tk.RIGHT, padx=12)
-
-        # Make Enter/Return and keypad Enter invoke the Confirm button, and Escape invoke Exit
-        self.bind("<Return>", lambda e: btn_confirm.invoke())
-        self.bind("<KP_Enter>", lambda e: btn_confirm.invoke())
-        self.bind("<Escape>", lambda e: btn_exit.invoke())
 
         self.grab_set()
 
@@ -1330,38 +1221,10 @@ class ArchivePasswordDialog(BaseDialog):
                 self.pw_entry.insert(0, default)
             except Exception:
                 pass
-        btn_frame = tk.Frame(main_frame, bg=self.dlg_bg)
-        btn_frame.pack(pady=10, fill="x")
-        btn_confirm = make_action_button(btn_frame, "Confirm", self.on_confirm, role="confirm", font=FONTS["button"], width=BUTTON_WIDTHS['dialog_button'])
-        btn_confirm.pack(side=tk.LEFT, padx=8)
-        btn_cancel = make_action_button(btn_frame, "Cancel", self.on_cancel, role="cancel", font=FONTS["button"], width=BUTTON_WIDTHS['dialog_button'])
-        spacer = tk.Frame(btn_frame, bg=self.dlg_bg)
-        spacer.pack(side=tk.LEFT, expand=True, fill="x")
-        btn_cancel.pack(side=tk.RIGHT, padx=8)
-
-        self.bind("<Return>", lambda e: btn_confirm.invoke())
-        self.bind("<Escape>", lambda e: btn_cancel.invoke())
-        self.pw_entry.bind("<Return>", lambda e: btn_confirm.invoke())
+        self._build_confirm_cancel_bar(main_frame)
 
         # Center and make modal
-        self.center_on_parent(parent)
-        try:
-            self.deiconify()
-            self.wait_visibility()
-        except Exception:
-            pass
-        try:
-            self.grab_set()
-        except Exception:
-            pass
-        try:
-            self.attributes("-topmost", True)
-        except Exception:
-            pass
-        try:
-            self.pw_entry.focus_set()
-        except Exception:
-            pass
+        self._make_modal(parent, focus_widget=self.pw_entry, topmost=True)
 
     def on_confirm(self):
         pw = self.pw_entry.get().strip()
@@ -1392,38 +1255,10 @@ class NEOTimeDialog(BaseDialog):
         tk.Label(main_frame, text="End Time (e.g., 1700):", bg=self.dlg_bg, fg=self.dlg_fg, font=FONTS["body"]).pack(anchor="w", pady=(0, 4))
         self.end_entry = tk.Entry(main_frame, font=FONTS["subheader"], justify="center", bg=self.field_bg, fg=self.dlg_fg, insertbackground=self.dlg_fg)
         self.end_entry.pack(fill="x", pady=(0, 12), ipady=6)
-        
-        btn_frame = tk.Frame(main_frame, bg=self.dlg_bg)
-        btn_frame.pack(pady=10, fill="x")
-        btn_confirm = make_action_button(btn_frame, "Confirm", self.on_confirm, role="confirm", font=FONTS["button"], width=BUTTON_WIDTHS['dialog_button'])
-        btn_confirm.pack(side=tk.LEFT, padx=8)
-        btn_cancel = make_action_button(btn_frame, "Cancel", self.on_cancel, role="cancel", font=FONTS["button"], width=BUTTON_WIDTHS['dialog_button'])
-        spacer = tk.Frame(btn_frame, bg=self.dlg_bg)
-        spacer.pack(side=tk.LEFT, expand=True, fill="x")
-        btn_cancel.pack(side=tk.RIGHT, padx=8)
-
-        self.bind("<Return>", lambda e: btn_confirm.invoke())
-        self.bind("<Escape>", lambda e: btn_cancel.invoke())
+        self._build_confirm_cancel_bar(main_frame)
 
         # Center and make modal
-        self.center_on_parent(parent)
-        try:
-            self.deiconify()
-            self.wait_visibility()
-        except Exception:
-            pass
-        try:
-            self.grab_set()
-        except Exception:
-            pass
-        try:
-            self.attributes("-topmost", True)
-        except Exception:
-            pass
-        try:
-            self.start_entry.focus_set()
-        except Exception:
-            pass
+        self._make_modal(parent, focus_widget=self.start_entry, topmost=True)
 
     def on_confirm(self):
         start = self.start_entry.get().strip()
@@ -1434,53 +1269,6 @@ class NEOTimeDialog(BaseDialog):
         self.start_time = start
         self.end_time = end
         self.result = (start, end)
-        self.destroy()
-
-
-class ChangePasswordDialog(BaseDialog):
-    def __init__(self, parent):
-        super().__init__(parent, "Change Program Password", width=520, height=280)
-
-        main_frame = tk.Frame(self, bg=self.dlg_bg, padx=24, pady=18)
-        main_frame.pack(expand=True, fill="both")
-
-        tk.Label(main_frame, text="Enter current password:", bg=self.dlg_bg, fg=self.dlg_fg, font=FONTS["body"]).pack(anchor="w")
-        self.old_entry = tk.Entry(main_frame, show="*", font=FONTS["small"], bg=self.field_bg, fg=self.dlg_fg, insertbackground=self.dlg_fg) 
-        self.old_entry.pack(fill="x", pady=6)
-
-        tk.Label(main_frame, text="New password:", bg=self.dlg_bg, fg=self.dlg_fg, font=FONTS["body"]).pack(anchor="w")
-        self.new_entry = tk.Entry(main_frame, show="*", font=FONTS["small"], bg=self.field_bg, fg=self.dlg_fg, insertbackground=self.dlg_fg) 
-        self.new_entry.pack(fill="x", pady=6)
-
-        tk.Label(main_frame, text="Confirm new password:", bg=self.dlg_bg, fg=self.dlg_fg, font=FONTS["body"]).pack(anchor="w")
-        self.confirm_entry = tk.Entry(main_frame, show="*", font=FONTS["small"], bg=self.field_bg, fg=self.dlg_fg, insertbackground=self.dlg_fg) 
-        self.confirm_entry.pack(fill="x", pady=6)
-
-        btn_frame = tk.Frame(main_frame, bg=self.dlg_bg)
-        btn_frame.pack(pady=10, fill="x")
-        btn_confirm = make_action_button(btn_frame, "Change", self.on_confirm, role="confirm", font=FONTS["button"], width=BUTTON_WIDTHS['dialog_button'])
-        btn_confirm.pack(side=tk.LEFT, padx=8)
-        btn_cancel = make_action_button(btn_frame, "Cancel", self.on_cancel, role="cancel", font=FONTS["button"], width=BUTTON_WIDTHS['dialog_button'])
-        spacer = tk.Frame(btn_frame, bg=self.dlg_bg)
-        spacer.pack(side=tk.LEFT, expand=True, fill="x")
-        btn_cancel.pack(side=tk.RIGHT, padx=8)
-
-        self.bind("<Return>", lambda e: btn_confirm.invoke())
-        self.bind("<Escape>", lambda e: btn_cancel.invoke())
-
-        self.grab_set()
-
-    def on_confirm(self):
-        old = self.old_entry.get().strip()
-        new = self.new_entry.get().strip()
-        conf = self.confirm_entry.get().strip()
-        if not old or not new:
-            show_warning(self, "Warning", "Passwords cannot be empty.")
-            return
-        if new != conf:
-            show_warning(self, "Warning", "New passwords do not match.")
-            return
-        self.result = (old, new)
         self.destroy()
 
 
@@ -1512,48 +1300,16 @@ class ArchiveSuccessDialog(BaseDialog):
             justify="left",
         ).pack(pady=(0, 10))
 
-        btn_frame = tk.Frame(main_frame, bg=self.dlg_bg)
-        btn_frame.pack(pady=6)
-
-        btn_ok = make_action_button(
-            btn_frame,
-            "OK",
-            self.on_confirm,
-            role="confirm",
-            font=FONTS["button"],
-            width=12,
-        )
-        btn_ok.pack(side=tk.LEFT, padx=6)
-
+        buttons = [("OK", self.on_confirm, "confirm", 12)]
         if self.on_open_location:
-            btn_open = make_action_button(
-                btn_frame,
-                "Open File Location",
-                self._open_location,
-                role="view",
-                font=FONTS["button"],
-                width=20,
-            )
-            btn_open.pack(side=tk.LEFT, padx=6)
-
-        self.bind("<Return>", lambda e: btn_ok.invoke())
-        self.bind("<Escape>", lambda e: self.on_cancel())
+            buttons.append(("Open File Location", self._open_location, "view", 20))
+        _, created = self._build_action_bar(main_frame, buttons)
+        if created:
+            self.bind("<Return>", lambda e: created[0].invoke())
+            self.bind("<Escape>", lambda e: self.on_cancel())
 
         # Center and make modal
-        self.center_on_parent(parent)
-        try:
-            self.deiconify()
-            self.wait_visibility()
-        except Exception:
-            pass
-        try:
-            self.grab_set()
-        except Exception:
-            pass
-        try:
-            self.attributes("-topmost", True)
-        except Exception:
-            pass
+        self._make_modal(parent, topmost=True)
 
     def _open_location(self):
         try:
@@ -1585,30 +1341,20 @@ class ExportSuccessDialog(BaseDialog):
             justify="left",
             wraplength=520,
         ).pack(anchor="w", pady=(0, 12))
+        _, created = self._build_action_bar(
+            main_frame,
+            [
+                ("OK", self.on_cancel, "confirm", 8),
+                ("Open File Location", self._open_location, "view", 18),
+                ("View CSV", self._view_csv, "continue", 12),
+            ],
+            padx=8,
+        )
+        if created:
+            self.bind("<Return>", lambda e: created[0].invoke())
+            self.bind("<Escape>", lambda e: created[0].invoke())
 
-        btn_frame = tk.Frame(main_frame, bg=self.dlg_bg)
-        btn_frame.pack(pady=6)
-
-        btn_ok = make_action_button(btn_frame, "OK", self.on_cancel, role="confirm", font=FONTS["button"], width=8)
-        btn_ok.pack(side=tk.LEFT, padx=8)
-        btn_open = make_action_button(btn_frame, "Open File Location", self._open_location, role="view", font=FONTS["button"], width=18)
-        btn_open.pack(side=tk.LEFT, padx=8)
-        btn_view = make_action_button(btn_frame, "View CSV", self._view_csv, role="continue", font=FONTS["button"], width=12)
-        btn_view.pack(side=tk.LEFT, padx=8)
-
-        self.bind("<Return>", lambda e: btn_ok.invoke())
-        self.bind("<Escape>", lambda e: btn_ok.invoke())
-
-        self.center_on_parent(parent)
-        try:
-            self.deiconify()
-            self.wait_visibility()
-        except Exception:
-            pass
-        try:
-            self.grab_set()
-        except Exception:
-            pass
+        self._make_modal(parent)
 
     def _open_location(self):
         try:
@@ -1647,11 +1393,7 @@ class WeeklyTrackerGUI(tk.Toplevel):
 
         self.tracker_dir = os.path.join(data_dir, TRACKER_DIR_NAME)
         self.tracker_exports_dir = os.path.join(data_dir, EXPORTS_DIR_NAME)
-        try:
-            os.makedirs(self.tracker_dir, exist_ok=True)
-            os.makedirs(self.tracker_exports_dir, exist_ok=True)
-        except Exception:
-            pass
+        ensure_dirs(self.tracker_dir, self.tracker_exports_dir)
 
         self.week_start, self.week_end = self.get_current_work_week()
         self.week_file = self.get_week_filename()
@@ -2015,7 +1757,6 @@ class ArchiveViewer(tk.Toplevel):
         self.archive_dir = archive_dir
         # Reference to the owning WorkflowGUI (optional) so we can reuse its spinner helpers
         self.owner_gui = owner_gui
-        self._archive_cache = self._load_archive_cache()
         # Use active theme palette
         self.bg_color = CURRENT_PALETTE.get('bg_color', '#e2e6e9')
         self.fg_color = CURRENT_PALETTE.get('fg_color', '#2c3e50')
@@ -2109,10 +1850,7 @@ class ArchiveViewer(tk.Toplevel):
 
     def _open_archive_location(self):
         """Open the archives folder in the system file manager."""
-        try:
-            os.makedirs(self.archive_dir, exist_ok=True)
-        except Exception as e:
-            logger.exception("ArchiveViewer: failed to ensure archive dir: %s", e)
+        ensure_dirs(self.archive_dir)
         try:
             path = os.path.abspath(self.archive_dir)
             if sys.platform.startswith('linux'):
@@ -2204,145 +1942,91 @@ class ArchiveViewer(tk.Toplevel):
         t = threading.Thread(target=runner, daemon=True)
         t.start()
 
-    def _cache_path(self) -> str:
-        return os.path.join(tempfile.gettempdir(), "workflow_archive_cache.json")
-
-    def _get_cache_password(self) -> Optional[str]:
-        try:
-            os.makedirs(APP_DATA_DIR, exist_ok=True)
-        except Exception as e:
-            logger.exception("ArchiveViewer: failed to ensure APP_DATA_DIR: %s", e)
-
-        key_path = os.path.join(APP_DATA_DIR, ".cache_key")
-        try:
-            if os.path.exists(key_path):
-                with open(key_path, "r", encoding="utf-8") as f:
-                    key = f.read().strip()
-                    return key or None
-        except Exception as e:
-            logger.exception("ArchiveViewer: failed to read cache key: %s", e)
-            return None
-
-        try:
-            key = secrets.token_urlsafe(32)
-            with open(key_path, "w", encoding="utf-8") as f:
-                f.write(key)
-            try:
-                os.chmod(key_path, 0o600)
-            except Exception as e:
-                logger.exception("ArchiveViewer: failed to chmod cache key: %s", e)
-            return key
-        except Exception as e:
-            logger.exception("ArchiveViewer: failed to write cache key: %s", e)
-            return None
-
-    def _get_cache_security(self) -> Optional[SecurityManager]:
-        password = self._get_cache_password()
-        if not password:
-            return None
-        return SecurityManager(password)
-
-    def _load_archive_cache(self) -> Dict[str, Any]:
-        try:
-            cache_path = self._cache_path()
-            if os.path.exists(cache_path):
-                security = self._get_cache_security()
-                if not security:
-                    return {}
-                raw = security.decrypt(cache_path)
-                if not raw:
-                    try:
-                        os.remove(cache_path)
-                    except Exception:
-                        pass
-                    return {}
-                data = json.loads(raw)
-                if isinstance(data, dict):
-                    return data
-                try:
-                    os.remove(cache_path)
-                except Exception:
-                    pass
-                return {}
-        except Exception as e:
-            _log_persistent_error("archive_cache_load", e)
-            try:
-                cache_path = self._cache_path()
-                if os.path.exists(cache_path):
-                    os.remove(cache_path)
-            except Exception:
-                pass
-            return {}
-        return {}
-
-    def _save_archive_cache(self) -> None:
-        try:
-            cache_path = self._cache_path()
-            tmp_path = None
-            security = self._get_cache_security()
-            if not security:
-                return
-            payload = json.dumps(self._archive_cache)
-            tmp_handle = tempfile.NamedTemporaryFile(delete=False, dir=os.path.dirname(cache_path), suffix=".tmp")
-            tmp_path = tmp_handle.name
-            tmp_handle.close()
-            if security.encrypt(payload, tmp_path):
-                os.replace(tmp_path, cache_path)
-        except Exception as e:
-            _log_persistent_error("archive_cache_save", e)
-            try:
-                if tmp_path and os.path.exists(tmp_path):
-                    os.remove(tmp_path)
-            except Exception:
-                pass
-
-    def _get_cached_archive_names(self, arch_path: str) -> Optional[List[str]]:
-        try:
-            cached = self._archive_cache.get(arch_path)
-            if not isinstance(cached, dict):
-                return None
-            cached_mtime = cached.get("mtime")
-            names = cached.get("names")
-            if not isinstance(names, list):
-                return None
-            if cached_mtime is None:
-                return None
-            current_mtime = os.path.getmtime(arch_path)
-            if abs(float(cached_mtime) - float(current_mtime)) < 0.0001:
-                return names
-        except Exception as e:
-            _log_persistent_error("archive_cache_read", e)
-            return None
-        return None
-
-    def _set_cached_archive_names(self, arch_path: str, names: List[str]) -> None:
-        try:
-            self._archive_cache[arch_path] = {
-                "mtime": os.path.getmtime(arch_path),
-                "names": names,
-            }
-            self._save_archive_cache()
-        except Exception as e:
-            _log_persistent_error("archive_cache_set", e)
-
-    def _encrypt_selected_archive(self):
-        """Encrypt the selected zip archive with a password."""
+    def _get_zip_class(self):
         try:
             import pyzipper  # type: ignore
+            return pyzipper.AESZipFile
+        except Exception:
+            import zipfile  # Lazy import
+            return zipfile.ZipFile
+
+    def _read_zip_with_password(self, arch_path: str, read_fn, on_success, spinner_msg: str, decrypt_msg: str, err_title: str, err_prefix: str):
+        ZipCls = self._get_zip_class()
+        spinner = self._show_spinner(self, spinner_msg)
+
+        def _read_no_pw():
+            try:
+                with ZipCls(arch_path, 'r') as zf:
+                    return read_fn(zf)
+            except RuntimeError as e:
+                if "password" in str(e).lower():
+                    return 'PASSWORD_REQUIRED'
+                raise
+
+        def _on_read(result):
+            try:
+                self._hide_spinner(spinner)
+                if result == 'PASSWORD_REQUIRED':
+                    dialog = ArchivePasswordDialog(self, prompt=f"Enter password for {os.path.basename(arch_path)}:", default="")
+                    self.wait_window(dialog)
+                    if not dialog.result:
+                        return
+                    archive_password = dialog.result
+
+                    spinner2 = self._show_spinner(self, decrypt_msg)
+
+                    def _read_with_pw():
+                        with ZipCls(arch_path, 'r') as zf:
+                            zf.setpassword(archive_password.encode('utf-8') if isinstance(archive_password, str) else archive_password)
+                            return read_fn(zf)
+
+                    def _on_pw_read(res):
+                        try:
+                            self._hide_spinner(spinner2)
+                            on_success(res)
+                        except Exception as e:
+                            show_error(self, err_title, f"{err_prefix}: {e}")
+
+                    def _on_pw_error(err):
+                        self._hide_spinner(spinner2)
+                        show_error(self, err_title, f"{err_prefix}: {err}")
+
+                    self._run_in_background(_read_with_pw, on_done=_on_pw_read, on_error=_on_pw_error)
+                    return
+
+                on_success(result)
+            except Exception as e:
+                show_error(self, err_title, f"{err_prefix}: {e}")
+
+        def _on_error(err):
+            try:
+                self._hide_spinner(spinner)
+            except Exception:
+                pass
+            show_error(self, err_title, f"{err_prefix}: {err}")
+
+        self._run_in_background(_read_no_pw, on_done=_on_read, on_error=_on_error)
+
+    def _require_pyzipper(self, action_desc: str):
+        try:
+            import pyzipper  # type: ignore
+            return pyzipper
         except Exception:
             try:
                 if not self._ensure_pyzipper():
                     show_error(self, "Missing Dependency", "Unable to install pyzipper automatically.")
-                    return
+                    return None
                 import pyzipper  # type: ignore
+                return pyzipper
             except Exception:
-                show_error(self, "Missing Dependency", "pyzipper is required to encrypt zip files.")
-                return
+                show_error(self, "Missing Dependency", f"pyzipper is required to {action_desc}.")
+                return None
 
+    def _select_archive(self, empty_message: str) -> Optional[Tuple[str, str]]:
         selected = self.tree.selection()
         if not selected:
-            show_info(self, "Archive Encryption", "Select a zip file from the list to encrypt.")
-            return
+            show_info(self, "Archive Encryption", empty_message)
+            return None
 
         item = self.tree.item(selected[0])
         values = item.get("values") or ()
@@ -2354,12 +2038,37 @@ class ArchiveViewer(tk.Toplevel):
 
         if not archive_name or not str(archive_name).lower().endswith(".zip"):
             show_info(self, "Archive Encryption", "The file you have selected is not a zip file. Please select a zip file from the list.")
-            return
+            return None
 
         archive_full = os.path.join(self.archive_dir, archive_name)
         if not os.path.exists(archive_full):
             show_error(self, "Archive Encryption", "Selected archive could not be found.")
+            return None
+
+        return archive_name, archive_full
+
+    def _make_temp_path(self, archive_full: str) -> str:
+        tmp_handle = tempfile.NamedTemporaryFile(delete=False, dir=os.path.dirname(archive_full), suffix=".tmp")
+        temp_path = tmp_handle.name
+        tmp_handle.close()
+        return temp_path
+
+    def _cleanup_temp(self, temp_path: Optional[str]) -> None:
+        try:
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
+        except Exception:
+            pass
+
+    def _encrypt_selected_archive(self):
+        """Encrypt the selected zip archive with a password."""
+        pyzipper = self._require_pyzipper("encrypt zip files")
+        if not pyzipper:
             return
+        selected = self._select_archive("Select a zip file from the list to encrypt.")
+        if not selected:
+            return
+        archive_name, archive_full = selected
 
         # Check if archive already has encrypted entries
         temp_path = None
@@ -2380,9 +2089,7 @@ class ArchiveViewer(tk.Toplevel):
                     return
                 new_password = new_pw_dialog.result
 
-                tmp_handle = tempfile.NamedTemporaryFile(delete=False, dir=os.path.dirname(archive_full), suffix=".tmp")
-                temp_path = tmp_handle.name
-                tmp_handle.close()
+                temp_path = self._make_temp_path(archive_full)
 
                 with pyzipper.AESZipFile(
                     temp_path,
@@ -2399,49 +2106,20 @@ class ArchiveViewer(tk.Toplevel):
             os.replace(temp_path, archive_full)
             show_info(self, "Archive Encryption", "Archive encrypted successfully.")
         except RuntimeError as e:
-            _log_persistent_error("archive_temp", e)
-            try:
-                if temp_path and os.path.exists(temp_path):
-                    os.remove(temp_path)
-            except Exception:
-                pass
+            logger.exception("archive_temp error: %s", e)
+            self._cleanup_temp(temp_path)
             show_error(self, "Archive Encryption", f"Unable to encrypt archive: {e}")
 
     def _change_zip_password(self):
         """Change password for an already encrypted zip archive."""
-        try:
-            import pyzipper  # type: ignore
-        except Exception:
-            try:
-                if not self._ensure_pyzipper():
-                    show_error(self, "Missing Dependency", "Unable to install pyzipper automatically.")
-                    return
-                import pyzipper  # type: ignore
-            except Exception:
-                show_error(self, "Missing Dependency", "pyzipper is required to change zip passwords.")
-                return
+        pyzipper = self._require_pyzipper("change zip passwords")
+        if not pyzipper:
+            return
 
-        selected = self.tree.selection()
+        selected = self._select_archive("Select a zip file from the list to change its password.")
         if not selected:
-            show_info(self, "Archive Encryption", "Select a zip file from the list to change its password.")
             return
-
-        item = self.tree.item(selected[0])
-        values = item.get("values") or ()
-        archive_name = None
-        if values and values[0] and str(values[0]).lower().endswith(".zip") and (len(values) == 1 or not values[1]):
-            archive_name = values[0]
-        elif (item.get("text") or "").lower().endswith(".zip") and not values:
-            archive_name = item.get("text")
-
-        if not archive_name or not str(archive_name).lower().endswith(".zip"):
-            show_info(self, "Archive Encryption", "The file you have selected is not a zip file. Please select a zip file from the list.")
-            return
-
-        archive_full = os.path.join(self.archive_dir, archive_name)
-        if not os.path.exists(archive_full):
-            show_error(self, "Archive Encryption", "Selected archive could not be found.")
-            return
+        archive_name, archive_full = selected
 
         old_pw_dialog = ArchivePasswordDialog(self, prompt=f"Enter CURRENT password for {archive_name}:", default="")
         self.wait_window(old_pw_dialog)
@@ -2460,9 +2138,7 @@ class ArchiveViewer(tk.Toplevel):
             with pyzipper.AESZipFile(archive_full, 'r') as zf_in:
                 zf_in.setpassword(old_password.encode('utf-8'))
                 names = zf_in.namelist()
-                tmp_handle = tempfile.NamedTemporaryFile(delete=False, dir=os.path.dirname(archive_full), suffix=".tmp")
-                temp_path = tmp_handle.name
-                tmp_handle.close()
+                temp_path = self._make_temp_path(archive_full)
 
                 with pyzipper.AESZipFile(
                     temp_path,
@@ -2478,30 +2154,10 @@ class ArchiveViewer(tk.Toplevel):
 
             os.replace(temp_path, archive_full)
             show_info(self, "Archive Encryption", "Password updated successfully.")
-        except RuntimeError as e:
-            _log_persistent_error("archive_temp", e)
-            try:
-                if temp_path and os.path.exists(temp_path):
-                    os.remove(temp_path)
-            except Exception:
-                pass
-            show_error(self, "Archive Encryption", f"Unable to change password: {e}")
         except Exception as e:
-            _log_persistent_error("archive_temp", e)
-            try:
-                if temp_path and os.path.exists(temp_path):
-                    os.remove(temp_path)
-            except Exception:
-                pass
+            logger.exception("archive_temp error: %s", e)
+            self._cleanup_temp(temp_path)
             show_error(self, "Archive Encryption", f"Unable to change password: {e}")
-        except Exception as e:
-            _log_persistent_error("archive_temp", e)
-            try:
-                if temp_path and os.path.exists(temp_path):
-                    os.remove(temp_path)
-            except Exception:
-                pass
-            show_error(self, "Archive Encryption", f"Unable to encrypt archive: {e}")
 
     def _ensure_pyzipper(self) -> bool:
         """Attempt to install pyzipper silently using the current Python executable."""
@@ -2547,206 +2203,56 @@ class ArchiveViewer(tk.Toplevel):
 
     def load_archive_contents(self, archive_name, parent_node):
         """List files in the ZIP archive (with or without password protection)."""
-        try:
-            import pyzipper  # type: ignore
-            ZipCls = pyzipper.AESZipFile
-        except Exception:
-            import zipfile  # Lazy import
-            ZipCls = zipfile.ZipFile
-        try:
-            arch_path = os.path.join(self.archive_dir, archive_name)
-            cached_names = self._get_cached_archive_names(arch_path)
+        arch_path = os.path.join(self.archive_dir, archive_name)
 
-            def _populate_tree(names_list):
-                try:
-                    self.tree.delete(*self.tree.get_children(parent_node))
-                    month_nodes = {}
-                    for internal_path in names_list:
-                        if not internal_path.endswith('.txt'):
-                            continue
-                        internal_path = internal_path.replace('\\', '/')
-                        if '/' in internal_path:
-                            m_folder, c_file = internal_path.split('/', 1)
-                            if m_folder not in month_nodes:
-                                month_nodes[m_folder] = self.tree.insert(parent_node, "end", text=m_folder)
-                            display_name = c_file.replace(".txt", "").replace("_", " ")
-                            self.tree.insert(month_nodes[m_folder], "end", text=display_name, values=(archive_name, internal_path))
-                except Exception as e:
-                    show_error(self, "Archive Error", f"Error loading archive contents: {e}")
-
-            # If cache present use it immediately
-            if cached_names is not None:
-                _populate_tree(cached_names)
-                return
-
-            # Otherwise, do background read (try first without password)
-            spinner = self._show_spinner(self, f"Loading {archive_name}...")
-
-            def _read_no_pw():
-                try:
-                    with ZipCls(arch_path, 'r') as zf:
-                        return zf.namelist()
-                except RuntimeError as e:
-                    if "Bad password" in str(e) or "password" in str(e).lower():
-                        return 'PASSWORD_REQUIRED'
-                    raise
-
-            def _on_read(result):
-                try:
-                    self._hide_spinner(spinner)
-                    if result == 'PASSWORD_REQUIRED':
-                        dialog = ArchivePasswordDialog(self, prompt=f"Enter password for {archive_name}:", default="")
-                        self.wait_window(dialog)
-                        if not dialog.result:
-                            return
-                        archive_password = dialog.result
-
-                        spinner2 = self._show_spinner(self, f"Decrypting {archive_name}...")
-
-                        def _read_with_pw():
-                            with ZipCls(arch_path, 'r') as zf:
-                                zf.setpassword(archive_password.encode('utf-8') if isinstance(archive_password, str) else archive_password)
-                                return zf.namelist()
-
-                        def _on_pw_read(names):
-                            try:
-                                self._hide_spinner(spinner2)
-                                self._set_cached_archive_names(arch_path, names)
-                                _populate_tree(names)
-                            except Exception as e:
-                                show_error(self, "Archive Error", f"Error loading archive contents: {e}")
-
-                        def _on_pw_error(err):
-                            self._hide_spinner(spinner2)
-                            show_error(self, "Archive Error", f"Error reading archive with password: {err}")
-
-                        self._run_in_background(_read_with_pw, on_done=_on_pw_read, on_error=_on_pw_error)
-                        return
-
-                    # Normal case: got names
-                    self._set_cached_archive_names(arch_path, result)
-                    _populate_tree(result)
-                except Exception as e:
-                    show_error(self, "Archive Error", f"Error loading archive contents: {e}")
-
-            def _on_error(err):
-                try:
-                    self._hide_spinner(spinner)
-                except Exception:
-                    pass
-                try:
-                    # If the ArchiveViewer has been destroyed, fall back to root error parent
-                    parent = self if getattr(self, 'winfo_exists', lambda: False)() else None
-                except Exception:
-                    parent = None
-                try:
-                    if parent:
-                        show_error(parent, "Archive Error", f"Error reading archive: {err}")
-                    else:
-                        show_error(self.master if getattr(self, 'master', None) else None, "Archive Error", f"Error reading archive: {err}")
-                except Exception:
-                    # Last-ditch: print to stderr
-                    try:
-                        print(f"Error reading archive: {err}")
-                    except Exception:
-                        pass
-
-            self._run_in_background(_read_no_pw, on_done=_on_read, on_error=_on_error)
-        except Exception as e:
+        def _populate_tree(names_list):
             try:
-                parent = self if getattr(self, 'winfo_exists', lambda: False)() else None
-            except Exception:
-                parent = None
-            try:
-                if parent:
-                    show_error(parent, "Archive Error", f"Error loading archive contents: {e}")
-                else:
-                    show_error(self.master if getattr(self, 'master', None) else None, "Archive Error", f"Error loading archive contents: {e}")
-            except Exception:
-                try:
-                    print(f"Error loading archive contents: {e}")
-                except Exception:
-                    pass
+                self.tree.delete(*self.tree.get_children(parent_node))
+                month_nodes = {}
+                for internal_path in names_list:
+                    if not internal_path.endswith('.txt'):
+                        continue
+                    internal_path = internal_path.replace('\\', '/')
+                    if '/' in internal_path:
+                        m_folder, c_file = internal_path.split('/', 1)
+                        if m_folder not in month_nodes:
+                            month_nodes[m_folder] = self.tree.insert(parent_node, "end", text=m_folder)
+                        display_name = c_file.replace(".txt", "").replace("_", " ")
+                        self.tree.insert(month_nodes[m_folder], "end", text=display_name, values=(archive_name, internal_path))
+            except Exception as e:
+                show_error(self, "Archive Error", f"Error loading archive contents: {e}")
+
+        self._read_zip_with_password(
+            arch_path,
+            read_fn=lambda zf: zf.namelist(),
+            on_success=_populate_tree,
+            spinner_msg=f"Loading {archive_name}...",
+            decrypt_msg=f"Decrypting {archive_name}...",
+            err_title="Archive Error",
+            err_prefix="Error loading archive contents",
+        )
 
     def view_archive_file(self, archive_name, internal_path):
         """Extract and display file from ZIP (with or without password protection)."""
-        try:
-            import pyzipper  # type: ignore
-            ZipCls = pyzipper.AESZipFile
-        except Exception:
-            import zipfile  # Lazy import
-            ZipCls = zipfile.ZipFile
-        try:
-            arch_path = os.path.join(self.archive_dir, archive_name)
+        arch_path = os.path.join(self.archive_dir, archive_name)
 
-            spinner = self._show_spinner(self, f"Reading {os.path.basename(internal_path)}...")
+        def _render_content(raw):
+            content = raw.decode('utf-8') if isinstance(raw, bytes) else str(raw)
+            self.title_lbl.config(text=f"Viewing: {os.path.basename(internal_path)}")
+            self.text_view.config(state=tk.NORMAL)
+            self.text_view.delete("1.0", tk.END)
+            self.text_view.insert(tk.END, content)
+            self.text_view.config(state=tk.DISABLED)
 
-            def _read_no_pw():
-                try:
-                    with ZipCls(arch_path, 'r') as zf:
-                        raw = zf.read(internal_path)
-                        return raw
-                except RuntimeError as e:
-                    if "Bad password" in str(e) or "password" in str(e).lower():
-                        return 'PASSWORD_REQUIRED'
-                    raise
-
-            def _on_read(result):
-                try:
-                    self._hide_spinner(spinner)
-                    if result == 'PASSWORD_REQUIRED':
-                        dialog = ArchivePasswordDialog(self, prompt=f"Enter password for {archive_name}:", default="")
-                        self.wait_window(dialog)
-                        if not dialog.result:
-                            return
-                        archive_password = dialog.result
-
-                        spinner2 = self._show_spinner(self, f"Decrypting {os.path.basename(internal_path)}...")
-
-                        def _read_with_pw():
-                            with ZipCls(arch_path, 'r') as zf:
-                                zf.setpassword(archive_password.encode('utf-8') if isinstance(archive_password, str) else archive_password)
-                                return zf.read(internal_path)
-
-                        def _on_pw_read(raw):
-                            try:
-                                self._hide_spinner(spinner2)
-                                content = raw.decode('utf-8') if isinstance(raw, bytes) else str(raw)
-                                self.title_lbl.config(text=f"Viewing: {os.path.basename(internal_path)}")
-                                self.text_view.config(state=tk.NORMAL)
-                                self.text_view.delete("1.0", tk.END)
-                                self.text_view.insert(tk.END, content)
-                                self.text_view.config(state=tk.DISABLED)
-                            except Exception as e:
-                                show_error(self, "Error", f"Could not read archived file: {e}")
-
-                        def _on_pw_error(err):
-                            self._hide_spinner(spinner2)
-                            show_error(self, "Error", f"Could not read archived file with password: {err}")
-
-                        self._run_in_background(_read_with_pw, on_done=_on_pw_read, on_error=_on_pw_error)
-                        return
-
-                    # Normal case: got raw bytes
-                    raw = result
-                    content = raw.decode('utf-8') if isinstance(raw, bytes) else str(raw)
-                    self.title_lbl.config(text=f"Viewing: {os.path.basename(internal_path)}")
-                    self.text_view.config(state=tk.NORMAL)
-                    self.text_view.delete("1.0", tk.END)
-                    self.text_view.insert(tk.END, content)
-                    self.text_view.config(state=tk.DISABLED)
-                except KeyError:
-                    show_error(self, "Error", f"File not found in archive")
-                except Exception as e:
-                    show_error(self, "Error", f"Could not read archived file: {e}")
-
-            def _on_error(err):
-                self._hide_spinner(spinner)
-                show_error(self, "Error", f"Could not read archived file: {err}")
-
-            self._run_in_background(_read_no_pw, on_done=_on_read, on_error=_on_error)
-        except Exception as e:
-            show_error(self, "Error", f"Could not read archived file: {e}")
+        self._read_zip_with_password(
+            arch_path,
+            read_fn=lambda zf: zf.read(internal_path),
+            on_success=_render_content,
+            spinner_msg=f"Reading {os.path.basename(internal_path)}...",
+            decrypt_msg=f"Decrypting {os.path.basename(internal_path)}...",
+            err_title="Error",
+            err_prefix="Could not read archived file",
+        )
 
 class WorkflowGUI:
     def __init__(self, root: tk.Tk):
@@ -2760,13 +2266,12 @@ class WorkflowGUI:
             pass
         
         # Initialize managers and state objects
-        try:
-            os.makedirs(APP_DATA_DIR, exist_ok=True)
-            os.makedirs(os.path.join(APP_DATA_DIR, "Archive"), exist_ok=True)
-            os.makedirs(os.path.join(APP_DATA_DIR, "exports"), exist_ok=True)
-            os.makedirs(os.path.join(APP_DATA_DIR, "Backups"), exist_ok=True)
-        except Exception:
-            pass
+        ensure_dirs(
+            APP_DATA_DIR,
+            os.path.join(APP_DATA_DIR, "Archive"),
+            os.path.join(APP_DATA_DIR, "exports"),
+            os.path.join(APP_DATA_DIR, "Backups"),
+        )
         # File paths (simplified - no PathManager class overhead)
         self.data_dir = APP_DATA_DIR
         self.auth_file = os.path.join(self.data_dir, "prog_auth.json")
@@ -2775,8 +2280,6 @@ class WorkflowGUI:
         self.archive_dir = os.path.join(self.data_dir, ARCHIVE_DIR_NAME)
         self.exports_dir = os.path.join(self.data_dir, EXPORTS_DIR_NAME)
         self.theme_pref_file = os.path.join(self.data_dir, THEME_PREF_FILE)
-
-        self._ensure_pyzipper_on_startup()
 
         # Theme setup
         self._init_theme()
@@ -2833,12 +2336,8 @@ class WorkflowGUI:
         self._person_widgets: Dict[int, tk.Widget] = {}
         # average card heights to help virtual window estimation (px)
         self._avg_card_height: Dict[str, int] = {"scheduled": 120, "unscheduled": 60}
-        # visible index window per column (start, end)
-        self._visible_window: Dict[str, Tuple[int, int]] = {"scheduled": (0, 0), "unscheduled": (0, 0)}
         # thresholds for activating virtualization
         self._virtualize_threshold = 400  # items
-        # lock for background thread callbacks
-        self._bg_lock = threading.Lock()
         
         self.root.configure(bg=CURRENT_PALETTE["bg_color"])
         
@@ -2848,12 +2347,10 @@ class WorkflowGUI:
         self.master_password = None
         
         # Security and data loading
-        self._migrate_legacy_data_dir()
         if not self.run_security_check():
             self.root.destroy()
             return
         
-        self.load_data()
         self._migrate_codes_safe()
         self._normalize_all_people()
         
@@ -2905,77 +2402,11 @@ class WorkflowGUI:
         except Exception:
             return ()
 
-    def _migrate_legacy_data_dir(self) -> None:
-        """Copy data from legacy app-relative data folder to Documents/Workflow."""
-        legacy_dir = os.path.join(BASE_DIR, "data")
-        try:
-            if os.path.abspath(legacy_dir) == os.path.abspath(self.data_dir):
-                return
-            if not os.path.exists(legacy_dir):
-                return
-            import shutil  # Lazy import
-
-            os.makedirs(self.data_dir, exist_ok=True)
-
-            files_to_copy = [
-                "prog_auth.json",
-                "workflow_data.json",
-                "workflow_data.json.enc",
-                "theme_pref.json",
-                "deps.json",
-            ]
-            for name in files_to_copy:
-                src = os.path.join(legacy_dir, name)
-                dst = os.path.join(self.data_dir, name)
-                if os.path.exists(src) and not os.path.exists(dst):
-                    try:
-                        shutil.copy2(src, dst)
-                    except Exception:
-                        pass
-
-            for folder in ["Archive", "exports", "Backups"]:
-                src_dir = os.path.join(legacy_dir, folder)
-                dst_dir = os.path.join(self.data_dir, folder)
-                if not os.path.exists(src_dir):
-                    continue
-                if not os.path.exists(dst_dir):
-                    try:
-                        shutil.copytree(src_dir, dst_dir)
-                        continue
-                    except Exception:
-                        pass
-                for root, _, files in os.walk(src_dir):
-                    rel = os.path.relpath(root, src_dir)
-                    target_root = dst_dir if rel == "." else os.path.join(dst_dir, rel)
-                    try:
-                        os.makedirs(target_root, exist_ok=True)
-                    except Exception:
-                        pass
-                    for fn in files:
-                        src = os.path.join(root, fn)
-                        dst = os.path.join(target_root, fn)
-                        if os.path.exists(dst):
-                            continue
-                        try:
-                            shutil.copy2(src, dst)
-                        except Exception:
-                            pass
-        except Exception:
-            pass
     
     def _init_theme(self) -> None:
         """Initialize theme engine and load preferences."""
         self._theme_engine, self._tb_style = None, None
-        self._current_theme = 'light'
-        
-        try:
-            if os.path.exists(self.theme_pref_file):
-                with open(self.theme_pref_file, 'r', encoding='utf-8') as f:
-                    val = json.load(f)
-                num = val.get('theme') if isinstance(val, dict) else int(val) if isinstance(val, (int, str)) else None
-                self._current_theme = 'dark' if num == 2 else 'light'
-        except (OSError, IOError, ValueError, json.JSONDecodeError):
-            self._current_theme = 'light'
+        self._current_theme = load_theme_pref(self.theme_pref_file, default='light')
         
         # Theme engine removed for simplicity
     
@@ -2995,6 +2426,22 @@ class WorkflowGUI:
         self.error_color = CURRENT_PALETTE["error_color"]
         self.warning_color = CURRENT_PALETTE["warning_color"]
         self.card_bg_color = CURRENT_PALETTE["card_bg_color"]
+
+    def _apply_theme_palette(self, pal: Dict[str, str], refs: Dict[str, Any]) -> None:
+        """Apply palette and update local color tokens."""
+        apply_palette(self.root, pal, refs)
+        try:
+            apply_chrome_tokens(refs)
+        except Exception:
+            pass
+        self.bg_color = pal["bg_color"]
+        self.fg_color = pal["fg_color"]
+        self.accent_color = pal["accent_color"]
+        self.ribbon_color = pal.get("ribbon_color", pal["accent_color"])
+        self.button_color = pal["button_color"]
+        self.error_color = pal["error_color"]
+        self.warning_color = pal["warning_color"]
+        self.card_bg_color = pal["card_bg_color"]
     
     def _init_card_styles(self) -> None:
         """Initialize shared card styling."""
@@ -3051,54 +2498,7 @@ class WorkflowGUI:
         except (AttributeError, TypeError, KeyError):
             pass
     
-    # Filter state helpers (replace FilterState dataclass methods)
-    def _reset_filters(self) -> None:
-        """Reset all filters to default values."""
-        self.filter_branch = "All"
-        self.filter_manager = "All"
-        self.filter_has_bg_cleared = False
-        self.filter_has_cori_cleared = False
-        self.filter_has_nh_cleared = False
-        self.filter_has_me_cleared = False
-        self.filter_show_unscheduled = True
-        self.filter_show_scheduled = True
-    
-    def _has_active_filters(self) -> bool:
-        """Check if any non-default filters are active."""
-        return (
-            self.filter_branch != "All" or
-            self.filter_manager != "All" or
-            self.filter_has_bg_cleared or
-            self.filter_has_cori_cleared or
-            self.filter_has_nh_cleared or
-            self.filter_has_me_cleared or
-            not self.filter_show_unscheduled or
-            not self.filter_show_scheduled
-        )
-    
-    # Search state helpers (replace SearchState dataclass methods)
-    def _reset_search(self) -> None:
-        """Reset search state."""
-        self.search_query = ""
-        self.search_matches = []
-        self.search_current_index = -1
-    
-    def _search_next_index(self) -> int:
-        """Get next match index (wraps around)."""
-        if len(self.search_matches) == 0:
-            return -1
-        self.search_current_index = (self.search_current_index + 1) % len(self.search_matches)
-        return self.search_current_index
-    
-    def _search_prev_index(self) -> int:
-        """Get previous match index (wraps around)."""
-        if len(self.search_matches) == 0:
-            return -1
-        self.search_current_index = (self.search_current_index - 1) % len(self.search_matches)
-        return self.search_current_index
-
-    # Utility: create a styled button and pack it (reduces repeated code)
-    # Removed local _make_button; use shared pack_action_button.
+    # Filter/search state helpers removed; direct state is updated where needed.
 
     # Helper to create a labeled grid Entry inside a parent frame and return the Entry widget
     def _label_and_entry(self, parent, label_text, row, label_col=0, entry_col=1, colspan=1, entry_kwargs=None):
@@ -3215,18 +2615,7 @@ class WorkflowGUI:
                 return False
 
         # --- Normal load: decrypt existing encrypted DB if present ---
-        if os.path.exists(self.enc_file):
-            try:
-                decrypted_json = self.security.decrypt(self.enc_file)
-                if decrypted_json:
-                    self.people_data = json.loads(decrypted_json)
-                else:
-                    raise RuntimeError("Decryption returned empty or failed.")
-            except (OSError, IOError, json.JSONDecodeError, RuntimeError) as e:
-                show_error(self.root, "Load Error", f"Could not decrypt/load data:\n{str(e)}")
-                self.people_data = []
-        else:
-            self.people_data = []
+        self.load_data()
 
         return True
 
@@ -3249,68 +2638,7 @@ class WorkflowGUI:
 
     def _migrate_codes(self) -> None:
         """Backfill code fields and canonicalize display values for dropdowns."""
-        if not isinstance(self.people_data, list):
-            return
-        code_maps = CODE_MAPS
-        def norm(s):
-            return ''.join(ch for ch in (s or '').lower() if ch.isalnum())
-        def canonicalize(field, val):
-            t = (val or '').strip()
-            n = norm(t)
-            if field in ("CORI Status", "NH GC Status", "ME GC Status"):
-                if 'req' in n:
-                    return 'Required'
-                if 'sub' in n and field == 'CORI Status':
-                    return 'Submitted'
-                if 'clear' in n or 'clr' in n:
-                    return 'Cleared'
-                if field == 'ME GC Status' and ('senttodenise' in n or ('sent' in n and 'denise' in n)):
-                    return 'Sent to Denise'
-                if 'none' in n or t == '':
-                    return 'None'
-                return t
-            if field == 'Deposit Account Type':
-                if 'saving' in n:
-                    return 'Savings'
-                if 'check' in n:
-                    return 'Checking'
-                return '' if t == '' else t
-            if field == 'Shirt Size':
-                for disp, _ in code_maps['Shirt Size']:
-                    if norm(disp) == n:
-                        return disp
-                return t or 'MD'
-            return t
-        def code_from_display(field, display):
-            pairs = code_maps.get(field, [])
-            for disp, c in pairs:
-                if (display or '').strip().lower() == disp.lower():
-                    return c
-            return ''
-        def display_from_code(field, code):
-            pairs = code_maps.get(field, [])
-            for disp, c in pairs:
-                if (code or '').strip().upper() == c.upper():
-                    return disp
-            return None
-        fields = ['CORI Status', 'NH GC Status', 'ME GC Status', 'Deposit Account Type', 'Shirt Size']
-        for person in self.people_data:
-            if not isinstance(person, dict):
-                continue
-            for field in fields:
-                code_key = f"{field}_Code"
-                disp = person.get(field, '')
-                code = person.get(code_key, '')
-                # Prefer existing code to set display
-                if code:
-                    disp_from_code = display_from_code(field, code)
-                    if disp_from_code:
-                        person[field] = disp_from_code
-                else:
-                    # Canonicalize display, then backfill code
-                    canon = canonicalize(field, disp)
-                    person[field] = canon
-                    person[code_key] = code_from_display(field, canon)
+        _migrate_codes_in_place(self.people_data)
 
     def save_data(self) -> None:
         """Save data to encrypted JSON file"""
@@ -3460,10 +2788,6 @@ class WorkflowGUI:
             pass
         # Apply initial palette to UI
         try:
-            # If initial theme is dark and a stylesheet exists, apply it
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            dark_path = os.path.join(base_dir, 'dark_mode.json')
-            light_path = os.path.join(base_dir, 'light_theme.json')
             refs = {
                 'title_frame': self.title_frame,
                 'title_label': self.title_label,
@@ -3478,31 +2802,8 @@ class WorkflowGUI:
                 'left_col': self.left_col,
                 'right_col': self.right_col,
             }
-            pal = None
-            if self._current_theme == 'dark' and os.path.exists(dark_path):
-                pal = apply_stylesheet(self.root, dark_path, refs)
-            elif self._current_theme == 'light' and os.path.exists(light_path):
-                pal = apply_stylesheet(self.root, light_path, refs)
-            if not pal:
-                pal = get_palette(self._current_theme)
-            apply_palette(self.root, pal, refs)
-            # Update chrome tokens (fonts + button role colors)
-            try:
-                apply_chrome_tokens(refs)
-            except Exception:
-                pass
-            # Update local color tokens from palette
-            self.bg_color = pal['bg_color']
-            self.fg_color = pal['fg_color']
-            self.accent_color = pal['accent_color']
-            self.ribbon_color = pal.get('ribbon_color', pal['accent_color'])
-            self.button_color = pal['button_color']
-            self.error_color = pal['error_color']
-            self.warning_color = pal['warning_color']
-            self.card_bg_color = pal['card_bg_color']
-            # Recompute card styles after accent/card bg set
-            self._recompute_styles()
-            # Ensure palette is applied to main screen widgets
+            pal = get_palette(self._current_theme)
+            self._apply_theme_palette(pal, refs)
             self._apply_palette()
         except Exception:
             pass
@@ -3639,9 +2940,6 @@ class WorkflowGUI:
             # Theme engine removed for simplicity
             self._current_theme = new_t
             # Get palette and apply across UI
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            dark_path = os.path.join(base_dir, 'dark_mode.json')
-            light_path = os.path.join(base_dir, 'light_theme.json')
             refs = {
                 'title_frame': self.title_frame,
                 'title_label': self.title_label,
@@ -3656,33 +2954,9 @@ class WorkflowGUI:
                 'left_col': self.left_col,
                 'right_col': self.right_col,
             }
-            if self._current_theme == 'dark' and os.path.exists(dark_path):
-                pal = apply_stylesheet(self.root, dark_path, refs)
-                if not pal:
-                    pal = get_palette(self._current_theme)
-            elif self._current_theme == 'light' and os.path.exists(light_path):
-                pal = apply_stylesheet(self.root, light_path, refs)
-                if not pal:
-                    pal = get_palette(self._current_theme)
-            else:
-                pal = reset_stylesheet(self.root, refs, theme=self._current_theme)
-            apply_palette(self.root, pal, refs)
-            # Update chrome tokens (fonts + button role colors)
-            try:
-                apply_chrome_tokens(refs)
-            except Exception:
-                pass
-            # Update local color tokens from palette
-            self.bg_color = pal['bg_color']
-            self.fg_color = pal['fg_color']
-            self.accent_color = pal['accent_color']
-            self.ribbon_color = pal.get('ribbon_color', pal['accent_color'])
-            self.button_color = pal['button_color']
-            self.error_color = pal['error_color']
-            self.warning_color = pal['warning_color']
-            self.card_bg_color = pal['card_bg_color']
+            pal = get_palette(self._current_theme)
+            self._apply_theme_palette(pal, refs)
             # Recompute styles and apply palette to all chrome
-            self._recompute_styles()
             self._apply_palette()
             # Update button label if present
             try:
@@ -3692,12 +2966,7 @@ class WorkflowGUI:
             except Exception:
                 pass
             # Persist preference (1=light, 2=dark)
-            try:
-                val = 2 if self._current_theme == 'dark' else 1
-                with open(self.theme_pref_file, 'w', encoding='utf-8') as f:
-                    json.dump({"theme": val}, f)
-            except Exception:
-                pass
+            save_theme_pref(self.theme_pref_file, self._current_theme)
             try:
                 self.root.update_idletasks()
             except Exception:
@@ -3819,10 +3088,7 @@ class WorkflowGUI:
 
     def open_snapshot_dialog(self):
         """Show snapshot manager for creating and restoring snapshots."""
-        try:
-            os.makedirs(self._get_snapshots_dir(), exist_ok=True)
-        except Exception:
-            pass
+        ensure_dirs(self._get_snapshots_dir())
 
         win = tk.Toplevel(self.root)
         win.title("Snapshots")
@@ -4069,33 +3335,6 @@ class WorkflowGUI:
         # Reset card registry used for searching (we keep widgets for incremental updates)
         self.card_registry = []
 
-        # Ensure headers exist (created once, updated as needed)
-        def ensure_headers(unscheduled_exists: bool):
-            try:
-                if not hasattr(self, '_left_header') and unscheduled_exists:
-                    self._left_header = tk.Label(self.left_col, text=LABEL_TEXT['unscheduled_section'], font=FONTS["subtext_bold"], bg=CURRENT_PALETTE["bg_color"], fg=TEXT_COLORS['section_unscheduled'])
-                    self._left_header.pack(pady=(10, 5), anchor="w")
-                elif hasattr(self, '_left_header') and not unscheduled_exists:
-                    try:
-                        self._left_header.destroy()
-                        delattr = getattr(self, '_left_header', None)
-                        if delattr is not None:
-                            del self._left_header
-                    except Exception:
-                        pass
-                # Right header always present
-                if not hasattr(self, '_right_header'):
-                    self._right_header = tk.Label(self.right_col, text=LABEL_TEXT['scheduled_section'], font=FONTS["subtext_bold"], bg=CURRENT_PALETTE["bg_color"], fg=TEXT_COLORS['section_scheduled'])
-                    self._right_header.pack(pady=(10, 5), anchor="w")
-                else:
-                    # update text in case themes changed
-                    try:
-                        self._right_header.config(text=LABEL_TEXT['scheduled_section'])
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
         if not self.people_data:
             lbl = tk.Label(
                 self.right_col,
@@ -4121,7 +3360,7 @@ class WorkflowGUI:
                 continue
             if (not is_scheduled) and not self.filter_show_unscheduled:
                 continue
-            if not self._passes_filters(person, scheduled=is_scheduled):
+            if not self._passes_filters(person):
                 continue
 
             name_lower = (person.get("_norm_name") or (person.get("Name", "") or "").strip().lower())
@@ -4162,11 +3401,6 @@ class WorkflowGUI:
 
         # Build index mapping to avoid O(n²) lookups
         person_to_index = {self._ensure_person_uid(person): idx for idx, person in enumerate(self.people_data)}
-
-        # Headers for columns - only show unscheduled header if there are unscheduled people
-        if unscheduled_entries:
-            tk.Label(self.left_col, text=LABEL_TEXT['unscheduled_section'], font=FONTS["subtext_bold"], bg=CURRENT_PALETTE["bg_color"], fg=TEXT_COLORS['section_unscheduled']).pack(pady=(10, 5), anchor="w")
-        tk.Label(self.right_col, text=LABEL_TEXT['scheduled_section'], font=FONTS["subtext_bold"], bg=CURRENT_PALETTE["bg_color"], fg=TEXT_COLORS['section_scheduled']).pack(pady=(10, 5), anchor="w")
 
         # Sync columns using incremental helpers (creates/removes only necessary widgets)
         try:
@@ -4299,12 +3533,9 @@ class WorkflowGUI:
         active_reqs = [label for data_key, label in REQUIRED_ITEMS if person.get(data_key)]
 
         # --- DYNAMIC CLEARANCES LOGIC ---
-        clearances = []
-        
         # BG Check
         bg_date = person.get("Background Completion Date", "").strip()
         if bg_date:
-            clearances.append(f"BG CHECK Cleared: {bg_date}")
             active_reqs.append("BG")
         
         # CORI (display only when cleared)
@@ -4315,36 +3546,26 @@ class WorkflowGUI:
             disp = "CORI Cleared"
             if cori_clr_date: disp += f": {cori_clr_date}"
             if cori_sub_date: disp += f" (Sub: {cori_sub_date})"
-            clearances.append(disp)
             active_reqs.append("CORI")
 
         # NH GC
         nh_status = person.get("NH GC Status", "None")
         nh_id = person.get("NH GC ID Number", "").strip()
         nh_exp = person.get("NH GC Expiration Date", "").strip()
-        if nh_status == "Required":
-            clearances.append("NH GC Required")
-        elif nh_status == "Cleared":
+        if nh_status == "Cleared":
             disp = f"NH GC Cleared ID:{nh_id}" if nh_id else "NH GC Cleared"
             if nh_exp: disp += f" EXP:{nh_exp}"
-            clearances.append(disp)
             active_reqs.append("NH GC")
 
         # ME GC
         me_status = person.get("ME GC Status", "None")
         me_sent = person.get("ME GC Sent Date", "").strip()
-        if me_status == "Required":
-            clearances.append("ME GC Required")
-        elif me_status == "Sent to Denise":
+        if me_status == "Sent to Denise":
             disp = "ME GC Sent to Denise"
             if me_sent: disp += f" ({me_sent})"
-            clearances.append(disp)
             active_reqs.append("ME GC")
 
-        # Others
-        if person.get("MVR"): clearances.append("MVR Cleared")
-        if person.get("DOD Clearance"): clearances.append("DOD Clearance")
-        if person.get("ME Guard License Sent"): clearances.append("ME Guard License Sent")
+        # Others (handled elsewhere)
         
         if active_reqs:
             req_text = " • ".join(active_reqs)
@@ -4579,7 +3800,7 @@ class WorkflowGUI:
                     continue
                 if (not is_scheduled) and not self.filter_show_unscheduled:
                     continue
-                if not self._passes_filters(person, scheduled=is_scheduled):
+                if not self._passes_filters(person):
                     continue
 
                 name_lower = (person.get("_norm_name") or (person.get("Name", "") or "").strip().lower())
@@ -4875,16 +4096,13 @@ class WorkflowGUI:
                     return items[:200], (0, min(200, total)), total > 200
 
             # Schedule syncs (non-blocking)
-            unsched_slice, unsched_range, unsched_truncated = slice_for_column(unscheduled_display_persons, 'unscheduled')
-            sched_slice, sched_range, sched_truncated = slice_for_column(scheduled_display_persons, 'scheduled')
+            unsched_slice, _, _ = slice_for_column(unscheduled_display_persons, 'unscheduled')
+            sched_slice, _, _ = slice_for_column(scheduled_display_persons, 'scheduled')
 
             # Sync only visible windows or full lists depending on heuristics
             self._sync_column('unscheduled', unsched_slice, self.left_col, compact=True, has_more=unsched_has_more)
             self._sync_column('scheduled', sched_slice, self.right_col, compact=False, has_more=sched_has_more)
 
-            # Save visible window for debugging or future refinements
-            self._visible_window['unscheduled'] = unsched_range
-            self._visible_window['scheduled'] = sched_range
         except Exception:
             try:
                 # fallback conservative full sync
@@ -5018,7 +4236,7 @@ class WorkflowGUI:
         except Exception:
             self.refresh_blocks()
 
-    def _passes_filters(self, person: Dict[str, Any], scheduled: bool = False) -> bool:
+    def _passes_filters(self, person: Dict[str, Any]) -> bool:
         """Check if person passes current filter criteria."""
         # Branch filter
         if self.filter_branch != 'All':
@@ -5054,7 +4272,6 @@ class WorkflowGUI:
         if not (self.people_data or []):
             show_info(self.root, 'Export CSV', 'No people found to export.')
             return
-        choice = 'filtered'
 
         def person_to_row(p):
             # Base fields from config
@@ -5065,49 +4282,40 @@ class WorkflowGUI:
             row['DOD Clearance'] = 'Yes' if p.get('DOD Clearance') else 'No'
             return row
 
-        rows = []
-        if choice == 'filtered':
-            # Build rows using current filters with list comprehensions (mirrors refresh_blocks logic)
-            scheduled = [p for p in self.people_data if (p.get('NEO Scheduled Date', '') or '').strip()]
-            unscheduled = [p for p in self.people_data if not (p.get('NEO Scheduled Date', '') or '').strip()]
+        # Build rows using current filters with list comprehensions (mirrors refresh_blocks logic)
+        scheduled = [p for p in self.people_data if (p.get('NEO Scheduled Date', '') or '').strip()]
+        unscheduled = [p for p in self.people_data if not (p.get('NEO Scheduled Date', '') or '').strip()]
 
-            def get_scheduled_key(p):
-                date_str = (p.get('NEO Scheduled Date', '') or '').strip()
-                try:
-                    date_obj = datetime.strptime(date_str, '%m/%d/%Y')
-                except Exception:
-                    date_obj = datetime(9999, 12, 31)
-                return (date_obj, (p.get('Name', '') or '').strip().lower())
+        def get_scheduled_key(p):
+            date_str = (p.get('NEO Scheduled Date', '') or '').strip()
+            try:
+                date_obj = datetime.strptime(date_str, '%m/%d/%Y')
+            except Exception:
+                date_obj = datetime(9999, 12, 31)
+            return (date_obj, (p.get('Name', '') or '').strip().lower())
 
-            scheduled.sort(key=get_scheduled_key)
-            unscheduled.sort(key=lambda p: (p.get('Name', '') or '').strip().lower())
+        scheduled.sort(key=get_scheduled_key)
+        unscheduled.sort(key=lambda p: (p.get('Name', '') or '').strip().lower())
 
-            if self.filter_show_scheduled:
-                scheduled = [p for p in scheduled if self._passes_filters(p, scheduled=True)]
-            else:
-                scheduled = []
-            if self.filter_show_unscheduled:
-                unscheduled = [p for p in unscheduled if self._passes_filters(p, scheduled=False)]
-            else:
-                unscheduled = []
-
-            # Use list comprehension to build rows from both lists
-            rows = [person_to_row(p) for p in unscheduled] + [person_to_row(p) for p in scheduled]
+        if self.filter_show_scheduled:
+            scheduled = [p for p in scheduled if self._passes_filters(p)]
         else:
-            # Export all people, ignore filters
-            rows = [person_to_row(p) for p in (self.people_data or [])]
+            scheduled = []
+        if self.filter_show_unscheduled:
+            unscheduled = [p for p in unscheduled if self._passes_filters(p)]
+        else:
+            unscheduled = []
+
+        rows = [person_to_row(p) for p in unscheduled] + [person_to_row(p) for p in scheduled]
 
         if not rows:
             show_info(self.root, 'Export CSV', 'No rows to export for current view.')
             return
 
         ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-        suffix = 'filtered' if choice == 'filtered' else 'all'
+        suffix = 'filtered'
         # Ensure exports folder exists
-        try:
-            os.makedirs(self.exports_dir, exist_ok=True)
-        except Exception:
-            pass
+        ensure_dirs(self.exports_dir)
         out_path = os.path.join(self.exports_dir, f'export_{suffix}_{ts}.csv')
         try:
             with open(out_path, 'w', newline='', encoding='utf-8') as f:
@@ -5147,10 +4355,7 @@ class WorkflowGUI:
     def list_snapshots(self) -> List[Dict[str, Any]]:
         """Return snapshot metadata sorted by newest first."""
         snapshots_dir = self._get_snapshots_dir()
-        try:
-            os.makedirs(snapshots_dir, exist_ok=True)
-        except Exception:
-            pass
+        ensure_dirs(snapshots_dir)
         try:
             files = [f for f in os.listdir(snapshots_dir) if f.endswith('.enc')]
         except Exception:
@@ -5184,10 +4389,7 @@ class WorkflowGUI:
             show_error(self.root, "Snapshot", "No encrypted database found to snapshot.")
             return None
         snapshots_dir = self._get_snapshots_dir()
-        try:
-            os.makedirs(snapshots_dir, exist_ok=True)
-        except Exception:
-            pass
+        ensure_dirs(snapshots_dir)
         ts = datetime.now().strftime('%Y%m%d_%H%M%S')
         clean_label = (label or "").strip()
         if clean_label:
@@ -5249,10 +4451,7 @@ class WorkflowGUI:
             pass
         # Rolling backups: keep last 10 encrypted snapshots in data/Backups
         backups_dir = os.path.join(self.data_dir, 'Backups')
-        try:
-            os.makedirs(backups_dir, exist_ok=True)
-        except Exception:
-            pass
+        ensure_dirs(backups_dir)
         # Copy encrypted file with timestamp if it exists
         if os.path.exists(self.enc_file):
             ts = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -5295,20 +4494,9 @@ class WorkflowGUI:
         except Exception:
             show_info(self.root, 'Open Location', f'Open this folder manually:\n{path}')
 
-    def open_exports_folder(self):
-        """Open the exports folder in the system file manager."""
-        try:
-            os.makedirs(self.exports_dir, exist_ok=True)
-        except Exception:
-            pass
-        self._open_path_in_file_manager(self.exports_dir)
-
     def open_csv_viewer_dialog(self):
         """Show a picker to open CSV files in the in-app viewer."""
-        try:
-            os.makedirs(self.exports_dir, exist_ok=True)
-        except Exception:
-            pass
+        ensure_dirs(self.exports_dir)
         try:
             files = [f for f in os.listdir(self.exports_dir) if f.lower().endswith('.csv')]
         except Exception:
@@ -5670,45 +4858,6 @@ class WorkflowGUI:
         """Launches the archive browser without prompting; password is asked on access."""
         ArchiveViewer(self.root, self.archive_dir, owner_gui=self)
 
-    def _ensure_pyzipper_on_startup(self) -> None:
-        """First-run dependency check for pyzipper (silent)."""
-        try:
-            marker = os.path.join(self.data_dir, "deps.json")
-            if os.path.exists(marker):
-                return
-            try:
-                import pyzipper  # type: ignore
-                _ = pyzipper.__version__
-                try:
-                    with open(marker, "w", encoding="utf-8") as f:
-                        json.dump({"pyzipper": True}, f)
-                except Exception:
-                    pass
-                return
-            except Exception:
-                pass
-            try:
-                thread = threading.Thread(target=self._install_pyzipper_silent, args=(marker,), daemon=True)
-                thread.start()
-            except Exception:
-                pass
-        except Exception:
-            pass
-
-    def _install_pyzipper_silent(self, marker_path: str) -> None:
-        """Install pyzipper quietly in the background and write marker on success."""
-        try:
-            cmd = [sys.executable, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "pyzipper"]
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-            if result.returncode == 0:
-                try:
-                    with open(marker_path, "w", encoding="utf-8") as f:
-                        json.dump({"pyzipper": True}, f)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
     def _ensure_pyzipper(self) -> bool:
         """Ensure pyzipper is installed (synchronous)."""
         try:
@@ -5910,7 +5059,7 @@ class WorkflowGUI:
             month_folder = month_str
             
             # Create password-protected ZIP file
-            os.makedirs(self.archive_dir, exist_ok=True)
+            ensure_dirs(self.archive_dir)
 
             readme_name = "README.txt"
             temp_archive = None
@@ -6062,34 +5211,10 @@ class WorkflowGUI:
         entries = {}
         checkbox_vars = {}
         branch_var = tk.StringVar(value=person.get("Branch", BRANCH_OPTIONS[1]) if person else BRANCH_OPTIONS[1])
-        
-        # Robust combobox setter to match saved values (case/space-insensitive)
-        def _set_combo_value(combo, var, value):
-            try:
-                vals = list(combo['values'])
-                target = (value or '').strip()
-                idx = None
-                for i, v in enumerate(vals):
-                    if str(v).strip().lower() == target.lower():
-                        idx = i
-                        break
-                if idx is not None:
-                    combo.current(idx)
-                else:
-                    # Fallback: set text directly
-                    var.set(target)
-                    combo.set(target)
-            except Exception:
-                try:
-                    var.set(value or '')
-                    combo.set(value or '')
-                except Exception:
-                    pass
 
         # Canonicalize saved/edit values to allowed options per field
         def _canonicalize(field, val):
             t = (val or '').strip()
-            t_low = t.lower()
             def norm(s):
                 return ''.join(ch for ch in s.lower() if ch.isalnum())
             n = norm(t)
@@ -6123,13 +5248,6 @@ class WorkflowGUI:
 
         # --- Invisible index codes for robust persistence ---
         code_maps = CODE_MAPS
-        # Helper to get display from code map
-        def _display_from_code(field, code):
-            pairs = code_maps.get(field, [])
-            for disp, c in pairs:
-                if (code or '').strip().upper() == c.upper():
-                    return disp
-            return None
         def _code_from_display(field, display):
             pairs = code_maps.get(field, [])
             for disp, c in pairs:
@@ -6328,22 +5446,13 @@ class WorkflowGUI:
 
         # Apply stylesheet-driven palette to the dialog using the current theme
         try:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            dark_path = os.path.join(base_dir, 'dark_mode.json')
-            light_path = os.path.join(base_dir, 'light_theme.json')
             refs = {
                 'container': content_frame,
                 'scrollable_frame': main_form,
                 'left_col': left_col,
                 'right_col': right_col,
             }
-            pal = None
-            if getattr(self, '_current_theme', 'light') == 'dark' and os.path.exists(dark_path):
-                pal = apply_stylesheet(dialog, dark_path, refs)
-            elif getattr(self, '_current_theme', 'light') == 'light' and os.path.exists(light_path):
-                pal = apply_stylesheet(dialog, light_path, refs)
-            if not pal:
-                pal = get_palette(getattr(self, '_current_theme', 'light'))
+            pal = get_palette(getattr(self, '_current_theme', 'light'))
             apply_palette(dialog, pal, refs)
             # Set lighter sky-blue header color for early-created label frames
             try:
@@ -6933,104 +6042,18 @@ class WorkflowGUI:
             pass
 
 
-def _show_startup_loader(root: tk.Tk) -> tk.Toplevel:
-    """Show a simple startup loader with an indeterminate progress bar."""
-    splash = tk.Toplevel(root)
-    splash.title("Starting...")
-    splash.geometry("420x140")
-    splash.resizable(False, False)
-    bg = CURRENT_PALETTE.get("bg_color", "#e2e6e9")
-    fg = CURRENT_PALETTE.get("fg_color", "#2c3e50")
-    splash.configure(bg=bg)
-    frame = tk.Frame(splash, bg=bg, padx=20, pady=20)
-    frame.pack(fill=tk.BOTH, expand=True)
-    tk.Label(
-        frame,
-        text="Loading required libraries...",
-        bg=bg,
-        fg=fg,
-        font=FONTS["body"],
-    ).pack(anchor="w")
-    bar = ttk.Progressbar(frame, mode="indeterminate")
-    bar.pack(fill=tk.X, pady=(12, 0))
-    bar.start(10)
-    try:
-        splash.transient(root)
-        splash.grab_set()
-    except Exception:
-        pass
-    try:
-        center_window(splash, root)
-    except Exception:
-        pass
-    return splash
-
-def _startup_dependency_setup(marker_path: str) -> None:
-    """Install pyzipper silently and write a marker for first-run setup."""
-    try:
-        try:
-            import pyzipper  # type: ignore
-            _ = pyzipper.__version__
-            try:
-                with open(marker_path, "w", encoding="utf-8") as f:
-                    json.dump({"pyzipper": True}, f)
-            except Exception:
-                pass
-            return
-        except Exception:
-            pass
-
-        cmd = [sys.executable, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "pyzipper"]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode == 0:
-            try:
-                with open(marker_path, "w", encoding="utf-8") as f:
-                    json.dump({"pyzipper": True}, f)
-            except Exception:
-                pass
-    except Exception:
-        pass
-
 def main():
     root = tk.Tk()
     root.withdraw()
-    try:
-        os.makedirs(APP_DATA_DIR, exist_ok=True)
-        os.makedirs(os.path.join(APP_DATA_DIR, "Archive"), exist_ok=True)
-        os.makedirs(os.path.join(APP_DATA_DIR, "exports"), exist_ok=True)
-        os.makedirs(os.path.join(APP_DATA_DIR, "Backups"), exist_ok=True)
-    except Exception:
-        pass
+    ensure_dirs(
+        APP_DATA_DIR,
+        os.path.join(APP_DATA_DIR, "Archive"),
+        os.path.join(APP_DATA_DIR, "exports"),
+        os.path.join(APP_DATA_DIR, "Backups"),
+    )
 
-    marker = os.path.join(APP_DATA_DIR, "deps.json")
-    if os.path.exists(marker):
-        root.deiconify()
-        WorkflowGUI(root)
-        root.mainloop()
-        return
-
-    splash = _show_startup_loader(root)
-
-    def _finish_startup():
-        try:
-            splash.destroy()
-        except Exception:
-            pass
-        root.deiconify()
-        WorkflowGUI(root)
-
-    def _worker():
-        _startup_dependency_setup(marker)
-        try:
-            root.after(0, _finish_startup)
-        except Exception:
-            pass
-
-    try:
-        threading.Thread(target=_worker, daemon=True).start()
-    except Exception:
-        _finish_startup()
-
+    root.deiconify()
+    WorkflowGUI(root)
     root.mainloop()
 
 if __name__ == "__main__":
