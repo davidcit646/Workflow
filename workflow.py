@@ -2,6 +2,7 @@
 """
 Workflow Tracker GUI
 Track employee onboarding progress with blocks of tea :).
+Builders: David Citarelli, GitHub Copilot
 """
 
 import sys
