@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Workflow Web</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/overrides.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="sidebar__brand">
+          <button id="sidebar-toggle" class="icon-button" aria-label="Toggle sidebar">☰</button>
+          <div class="brand__logo">W</div>
+          <div>
+            <div class="brand__title">Workflow</div>
+            <div class="brand__subtitle">Tracker</div>
+          </div>
+        </div>
+        <nav class="sidebar__nav">
+          <button class="nav-item nav-item--active" data-page="dashboard">🏠 Onboarding Dashboard</button>
+          <button class="nav-item" data-page="removed">🗑️ Removed Candidates</button>
+          <button class="nav-item" data-page="exports">📦 Exports</button>
+          <button class="nav-item" data-page="archives">🗄️ Archives</button>
+        </nav>
+
+        <div class="sidebar__mini" aria-hidden="true">
+          <button class="nav-item nav-item--mini" data-page="dashboard" title="Onboarding Dashboard">🏠</button>
+          <button class="nav-item nav-item--mini" data-page="removed" title="Removed Candidates">🗑️</button>
+          <button class="nav-item nav-item--mini" data-page="exports" title="Exports">📦</button>
+          <button class="nav-item nav-item--mini" data-page="archives" title="Archives">🗄️</button>
+          <button class="nav-item nav-item--mini" data-page="settings" title="Settings">⚙️</button>
+        </div>
+        <div class="sidebar__spacer"></div>
+        <div class="sidebar__footer">
+          <button id="settings-button" class="nav-item" data-page="settings">⚙️ Settings</button>
+        </div>
+      </aside>
+
+      <main class="main">
+        <section id="page-dashboard" class="page page--active">
+          <header class="topbar">
+            <div>
+              <div class="topbar__title">Onboarding Dashboard</div>
+              <div class="topbar__subtitle">Keep the team moving with live status cards.</div>
+            </div>
+            <div class="topbar__actions">
+              <div class="search">
+                <span class="search__icon">⌕</span>
+                <input id="search-input" type="text" placeholder="Search" />
+              </div>
+              <select id="branch-filter" class="select">
+                <option value="">All branches</option>
+              </select>
+              <button class="button button--ghost">Filters</button>
+              <button id="weekly-tracker" class="button button--ghost">Weekly Tracker</button>
+              <button id="add-candidate" class="button button--primary">Add Candidate</button>
+            </div>
+          </header>
+
+          <section class="stats">
+            <div class="stat-card">
+              <div class="stat-card__label">Not Scheduled</div>
+              <div id="stat-not-scheduled" class="stat-card__value">0</div>
+              <div class="stat-card__trend">Live count</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-card__label">NEO Scheduled</div>
+              <div id="stat-neo-scheduled" class="stat-card__value">0</div>
+              <div class="stat-card__trend">Live count</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-card__label">In Progress</div>
+              <div id="stat-in-progress" class="stat-card__value">0</div>
+              <div class="stat-card__trend">Live count</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-card__label">Completed</div>
+              <div id="stat-total" class="stat-card__value">0</div>
+              <div class="stat-card__trend">All candidates</div>
+            </div>
+          </section>
+
+          <section class="board">
+            <div class="board__column" data-column="not-scheduled">
+              <div class="column__header">
+                <div>
+                  <div class="column__title">Not Scheduled</div>
+                  <div class="column__subtitle">High priority candidates with open items.</div>
+                </div>
+              </div>
+              <div class="column__list" id="not-scheduled"></div>
+            </div>
+
+            <div class="board__column" data-column="neo-scheduled">
+              <div class="column__header">
+                <div>
+                  <div class="column__title">NEO Scheduled</div>
+                  <div class="column__subtitle">Orientation scheduled but pending clearance.</div>
+                </div>
+              </div>
+              <div class="column__list" id="neo-scheduled"></div>
+            </div>
+
+            <div class="board__column" data-column="in-progress">
+              <div class="column__header">
+                <div>
+                  <div class="column__title">Onboarding · In Progress</div>
+                  <div class="column__subtitle">Action items are underway.</div>
+                </div>
+              </div>
+              <div class="column__list" id="in-progress"></div>
+            </div>
+          </section>
+        </section>
+
+        <section id="page-exports" class="page">
+          <header class="topbar">
+            <div>
+              <div class="topbar__title">CSV Exports</div>
+              <div class="topbar__subtitle">Download your exported CSV files.</div>
+            </div>
+            <div class="topbar__actions">
+              <button id="download-selected" class="button button--success">
+                <span class="button__icon">⬇</span>
+                Download
+              </button>
+              <button id="export-csv" class="button button--primary">Export CSV</button>
+              <button id="exports-delete" class="button button--danger" disabled>
+                <span class="button__icon">🗑</span>
+                Delete Selected
+              </button>
+              <button id="exports-refresh" class="button button--circle" aria-label="Refresh">↻</button>
+            </div>
+          </header>
+          <div class="exports-grid">
+            <div class="exports-card">
+              <h3>Export Files</h3>
+              <ul id="exports-list"></ul>
+            </div>
+            <div class="exports-card">
+              <h3>Preview</h3>
+              <div id="exports-preview" class="exports-preview">Select a CSV to preview.</div>
+            </div>
+          </div>
+        </section>
+
+        <section id="page-archives" class="page">
+          <header class="topbar">
+            <div>
+              <div class="topbar__title">Archives</div>
+              <div class="topbar__subtitle">Browse password-protected archives.</div>
+            </div>
+          </header>
+          <div class="archives__body">
+            <div class="archives__column">
+              <h3>Archive Files</h3>
+              <ul id="archives-list"></ul>
+            </div>
+            <div class="archives__column">
+              <div class="archives__toolbar">
+                <input id="archives-password" type="password" placeholder="Archive password" />
+                <button id="archives-load" class="button button--ghost">Load</button>
+              </div>
+              <ul id="archives-contents"></ul>
+              <div id="archive-preview" class="archive-preview">Select a file to view.</div>
+            </div>
+          </div>
+        </section>
+
+        <section id="page-removed" class="page">
+          <header class="topbar">
+            <div>
+              <div class="topbar__title">Removed Candidates</div>
+              <div class="topbar__subtitle">Candidates moved to trash.</div>
+            </div>
+          </header>
+          <div class="removed__body">
+            <ul id="removed-list" class="removed-list"></ul>
+          </div>
+        </section>
+
+        <section id="page-settings" class="page">
+          <header class="topbar">
+            <div>
+              <div class="topbar__title">Settings</div>
+              <div class="topbar__subtitle">Application settings and preferences.</div>
+            </div>
+          </header>
+          <div class="page__body">
+            <div class="card">
+              <h3>Settings</h3>
+              <p>Settings content goes here.</p>
+            </div>
+          </div>
+        </section>
+
+        <!--
+        <section id="page-edit" class="page">
+          <header class="topbar">
+            <div>
+              <div id="edit-title" class="topbar__title">Edit Candidate</div>
+              <div class="topbar__subtitle">Update candidate details and onboarding status.</div>
+            </div>
+            <div class="topbar__actions">
+              <button id="edit-cancel" class="button button--ghost" type="button">Back</button>
+              <button id="save-candidate" class="button button--primary" type="submit" form="candidate-form">Save</button>
+            </div>
+          </header>
+          <form id="candidate-form" class="page__body"></form>
+        </section>
+        -->
+
+        <section id="page-edit" class="page">
+          <header class="topbar">
+            <div class="edit-header">
+              <input id="edit-name" form="candidate-form" name="Name" placeholder="Candidate name" class="input input--header" />
+              <input id="edit-icims" form="candidate-form" name="ICIMS ID" placeholder="ICIMS ID" class="input input--header input--narrow" />
+              <input id="edit-employee-id" form="candidate-form" name="Employee ID" placeholder="Employee #" class="input input--header input--narrow" />
+              <input id="edit-neo-date" form="candidate-form" name="NEO Scheduled Date" type="date" class="input input--header input--date" />
+            </div>
+            <div class="topbar__actions">
+              <button id="edit-cancel" class="button button--ghost" type="button">Back</button>
+              <button id="save-candidate" class="button button--primary" type="submit" form="candidate-form">Save</button>
+            </div>
+          </header>
+          <form id="candidate-form" class="page__body">
+            <div class="edit-cards">
+              <article class="edit-card" id="card-basics">
+                <div class="edit-card__header">Candidate Details</div>
+                <div class="edit-card__body" id="edit-card-basics"></div>
+              </article>
+              <article class="edit-card" id="card-job">
+                <div class="edit-card__header">Job Details</div>
+                <div class="edit-card__body" id="edit-card-job"></div>
+              </article>
+              <article class="edit-card" id="card-background">
+                <div class="edit-card__header">Background and Licensing</div>
+                <div class="edit-card__body" id="edit-card-background"></div>
+              </article>
+
+            </div>
+          </form>
+        </section>
+      </main>
+
+      <aside class="details details--hidden" id="details-panel">
+        <div class="details__card">
+          <div class="details__header">
+            <div>
+              <div class="details__title" id="details-title">Candidate Details</div>
+              <div class="details__subtitle" id="details-subtitle"></div>
+            </div>
+            <span id="details-status" class="badge badge--warning"></span>
+          </div>
+          <div class="details__body" id="details-body"></div>
+          <div class="details__notes" id="details-notes"></div>
+          <div class="details__actions">
+            <button id="details-archive" class="button button--ghost">Archive Candidate</button>
+            <button id="details-remove" class="button button--danger">Remove Candidate</button>
+          </div>
+          <button id="details-edit" class="button button--primary button--full">Edit candidate details</button>
+        </div>
+      </aside>
+    </div>
+
+    <div id="weekly-modal" class="modal hidden">
+      <div class="modal__card">
+        <div class="modal__header">
+          <h2>Weekly Tracker</h2>
+          <button id="weekly-close" class="icon-button">✕</button>
+        </div>
+        <div class="weekly__meta">
+          <span id="weekly-range"></span>
+        </div>
+        <form id="weekly-form" class="weekly__body"></form>
+        <div class="modal__footer">
+          <button id="weekly-export" class="button button--ghost" type="button">Export Summary</button>
+          <div class="modal__actions">
+            <button id="weekly-cancel" class="button button--ghost" type="button">Close</button>
+            <button id="weekly-save" class="button button--primary" type="submit" form="weekly-form">Save Week</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="archive-modal" class="modal hidden">
+      <div class="modal__card modal__card--small">
+        <div class="modal__header">
+          <h2>Archive Candidate</h2>
+          <button id="archive-close" class="icon-button">✕</button>
+        </div>
+        <form id="archive-form" class="modal__body modal__body--single">
+          <div class="field">
+            <label>Archive Password</label>
+            <input id="archive-password" type="password" required />
+          </div>
+          <div class="field">
+            <label>NEO Start Time</label>
+            <input id="archive-start" type="text" placeholder="08:00" />
+          </div>
+          <div class="field">
+            <label>NEO End Time</label>
+            <input id="archive-end" type="text" placeholder="17:00" />
+          </div>
+        </form>
+        <div class="modal__footer">
+          <button id="archive-cancel" class="button button--ghost" type="button">Cancel</button>
+          <button id="archive-confirm" class="button button--primary" type="submit" form="archive-form">Archive</button>
+        </div>
+      </div>
+    </div>
+    <div id="auth-modal" class="modal hidden">
+      <div class="modal__card modal__card--small">
+        <div class="modal__header">
+          <h2 id="auth-title">Sign In</h2>
+        </div>
+        <form id="auth-form" class="modal__body modal__body--single">
+          <div class="field">
+            <label>Program Password</label>
+            <input id="auth-password" type="password" required />
+          </div>
+        </form>
+        <div class="modal__footer">
+          <button id="auth-submit" class="button button--primary" type="submit" form="auth-form">Continue</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- NEO action modal -->
+    <div id="neo-modal" class="modal hidden">
+      <div class="modal__card modal__card--small">
+        <div class="modal__header">
+          <h2>NEO Actions</h2>
+          <button id="neo-close" class="icon-button">✕</button>
+        </div>
+        <div class="modal__body modal__body--single">
+          <p>Candidate: <strong class="neo-name" id="neo-name">Name</strong></p>
+          <p>NEO Date: <span id="neo-date">—</span></p>
+          <p>Choose an action:</p>
+          <div style="display:flex; gap:8px; margin-top:8px;">
+            <button id="neo-move" class="button button--primary">Move to Onboarding in Progress</button>
+            <button id="neo-remove" class="button button--danger">Remove Candidate</button>
+            <button id="neo-cancel" class="button button--ghost">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
