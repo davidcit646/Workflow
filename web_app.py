@@ -54,7 +54,15 @@ def index():
 
 
 def _normalize_text(value: object) -> str:
+    """Normalize values for display.
+
+    - None -> empty string
+    - Boolean values are treated as empty (avoid displaying 'False' or 'True')
+    - Otherwise convert to str and strip whitespace
+    """
     if value is None:
+        return ""
+    if isinstance(value, bool):
         return ""
     return str(value).strip()
 
@@ -394,6 +402,7 @@ def _build_columns(people: list) -> dict:
                 "uid": uid,
                 "name": name,
                 "status": status,
+                "job": _normalize_text(person.get("Job Name") or person.get("Job Location")),
                 "manager": _pick_manager(person),
                 "date": _pick_date(person),
                 "badge": _status_badge(status),

@@ -5,14 +5,18 @@
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
+  min-width: 0; /* allow children to shrink without causing overflow */
+  overflow: hidden; /* ensure spilled content is clipped */
 }
 .details__body {
   overflow-y: auto;
   flex: 1 1 auto;
   min-height: 0;
-  padding: 12px 16px;
+  min-width: 0; /* important for flex children */
+  padding: 12px 16px 12px 16px;
   font-size: 13px;
   scrollbar-width: thin;
+  padding-right: 24px; /* ensure space so right-aligned values don't touch edge */
 }
 .details__body::-webkit-scrollbar {
   width: 10px;
@@ -22,26 +26,60 @@
   border-radius: 999px;
 }
 
-.details__kv {
-  display: flex;
-  justify-content: space-between;
+..details__kv {
+  /* Use grid so label can take remaining space and value stays a limited width on the right */
+  display: grid;
+  grid-template-columns: 1fr minmax(80px, 260px);
+  align-items: center;
   gap: 12px;
   padding: 6px 0;
+  column-gap: 12px;
+  min-width: 0; /* allow value column to shrink */
 }
 .details__kv-label {
   color: var(--muted);
   font-size: 11px;
+  overflow-wrap: anywhere;
 }
 .details__kv-value {
   font-weight: 600;
   text-align: right;
   font-size: 13px;
+  /* Constrain width so values can't push the panel; allow wrapping if needed */
+  max-width: 320px;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  white-space: normal;
 }
-.details__sep {
+..details__sep {
   border: none;
   border-top: 1px solid rgba(255,255,255,0.06);
   margin: 12px 0;
 }
+
+/* Add subtle separators between sections inside the details panel */
+.details__body { position: relative; }
+.details__body > * + * {
+  /* visual spacing only; separator drawn with pseudo-element for a clean continuous line */
+  padding-top: 12px;
+  margin-top: 6px; /* slight spacing above the separator */
+  position: relative;
+}
+.details__body > * + *::before {
+  content: "";
+  position: absolute;
+  left: -18px;
+  right: -18px;
+  top: 0;
+  height: 1.5px;
+  background: linear-gradient(90deg, rgba(120,130,150,0.10) 0%, rgba(120,130,150,0.18) 50%, rgba(120,130,150,0.10) 100%);
+  pointer-events: none;
+  border-radius: 1px;
+  opacity: 0.85;
+}
+
+/* So section titles sit nicely above the separator */
+.details__section-title { margin-top: 8px; margin-bottom: 6px; }
 .details__ids {
   display: flex;
   gap: 20px;

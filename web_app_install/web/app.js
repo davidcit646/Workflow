@@ -555,6 +555,8 @@ const renderCard = (item) => {
   const card = document.createElement("div");
   card.className = "card";
   card.dataset.uid = item.uid || "";
+  // DEV: show payload for debugging missing job names
+  console.debug('renderCard', { uid: item.uid, name: item.name, job: item.job, manager: item.manager, raw: item });
 
   const title = document.createElement("div");
   title.className = "card__title";
@@ -572,8 +574,36 @@ const renderCard = (item) => {
 
   const meta = document.createElement("div");
   meta.className = "card__meta";
-  meta.innerHTML = `<span>${item.manager}</span><span>•</span><span>${item.date}</span>`;
 
+  // Left: job name + manager. Right: NEO date (kept visible)
+  const left = document.createElement("div");
+  left.className = "card__meta-left";
+  const jobSpan = document.createElement("span");
+  jobSpan.className = "card__job";
+  // fallback to raw person data if server didn't include job
+  let jobText = item.job || "";
+  if (!jobText && state.people && state.people.length) {
+    const p = state.people.find((x) => (x.uid || x.id) === item.uid);
+    jobText = (p && (p["Job Name"] || p["Job Location"])) || jobText;
+  }
+  jobSpan.textContent = jobText || "";
+
+  const managerSpan = document.createElement("span");
+  managerSpan.className = "card__manager";
+  managerSpan.textContent = item.manager || "";
+
+  // Only show separator when both job and manager are present
+  if (jobText && managerSpan.textContent) {
+    const sep = document.createElement("span");
+    sep.className = "card__sep";
+    sep.textContent = " • ";
+    left.append(jobSpan, sep, managerSpan);
+  } else {
+    left.append(jobSpan || managerSpan);
+  }
+
+  // no separate date on the subtitle — the status badge shows NEO date
+  meta.append(left);
   card.append(meta);
   return card;
 };
