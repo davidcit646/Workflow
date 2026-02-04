@@ -356,6 +356,12 @@ def _build_week_summary(week_start: datetime.date, week_end: datetime.date, entr
         day_details.append(f"--- {day_name} ---")
         if start and end:
             day_details.append(f"Time: {start} to {end} ({day_hours:.2f} hours)")
+            if day_hours == 0.0:
+                day_details.append(f"WARNING: Unable to compute hours for this day (start={start!r} end={end!r}).")
+                try:
+                    print(f"[weekly-debug] {day_name}: start={start!r} end={end!r} parsed_start={_parse_time_to_minutes(start)} parsed_end={_parse_time_to_minutes(end)} day_hours={day_hours}")
+                except Exception:
+                    pass
         else:
             day_details.append("Time: (Not specified)")
 

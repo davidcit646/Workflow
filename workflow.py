@@ -1849,7 +1849,10 @@ class WeeklyTrackerGUI(tk.Toplevel):
 
                 day_details.append(f"--- {day_name} ---")
                 if start and end:
-                day_details.append(f"Time: {start} to {end} ({day_hours:.2f} hours)")
+                    day_details.append(f"Time: {start} to {end} ({day_hours:.2f} hours)")
+                    if day_hours == 0.0:
+                        day_details.append(f"WARNING: Unable to compute hours for this day (start={start!r} end={end!r}).")
+                else:
                     day_details.append("Time: (Not specified)")
 
                 day_details.append("Activities:")
