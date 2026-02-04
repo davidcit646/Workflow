@@ -355,7 +355,7 @@ def _build_week_summary(week_start: datetime.date, week_end: datetime.date, entr
 
         day_details.append(f"--- {day_name} ---")
         if start and end:
-            day_details.append(f"Time: {start} to {end} ({day_hours} hours)")
+            day_details.append(f"Time: {start} to {end} ({day_hours:.2f} hours)")
         else:
             day_details.append("Time: (Not specified)")
 
