@@ -57,6 +57,79 @@ const initTheme = () => {
   }
 };
 
+/* Minimal i18n: load simple JSON locales from /static/locales/<lang>.json */
+const I18N = { locale: 'en', messages: {} };
+const t = (key, fallback) => {
+  const locale = I18N.locale || 'en';
+  const parts = key.split('.');
+  let cur = I18N.messages[locale] || I18N.messages['en'] || {};
+  for (const p of parts) {
+    if (cur && Object.prototype.hasOwnProperty.call(cur, p)) {
+      cur = cur[p];
+    } else {
+      return fallback !== undefined ? fallback : key;
+    }
+  }
+  return cur;
+};
+
+async function initI18n() {
+  try {
+    const response = await fetch(`/static/locales/${I18N.locale}.json`);
+    if (response.ok) {
+      I18N.messages[I18N.locale] = await response.json();
+    } else {
+      I18N.messages[I18N.locale] = {};
+    }
+  } catch (e) {
+    I18N.messages[I18N.locale] = {};
+  }
+}
+
+// Initialize i18n after I18N is defined to avoid temporal-dead-zone errors
+initI18n();
+
+// Add show/hide toggles to all password fields (including dynamically inserted ones)
+const initPasswordToggles = () => {
+  document.querySelectorAll('input[type="password"]').forEach((input) => {
+    if (input.dataset.pwToggle) return;
+    input.dataset.pwToggle = "1";
+    const wrapper = document.createElement('div');
+    wrapper.className = 'password-wrapper';
+    // Replace input with wrapper -> input inside wrapper
+    input.parentNode.insertBefore(wrapper, input);
+    wrapper.appendChild(input);
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'password-toggle';
+    btn.title = 'Show password';
+    btn.setAttribute('aria-pressed', 'false');
+    btn.innerHTML = '👁️';
+    btn.addEventListener('click', () => {
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      btn.innerHTML = show ? '🙈' : '👁️';
+      btn.title = show ? 'Hide password' : 'Show password';
+      btn.setAttribute('aria-pressed', show ? 'true' : 'false');
+    });
+
+    wrapper.appendChild(btn);
+  });
+};
+
+const observeNewPasswordFields = () => {
+  const mo = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      if (m.addedNodes && m.addedNodes.length) {
+        initPasswordToggles();
+        break;
+      }
+    }
+  });
+  mo.observe(document.body, { childList: true, subtree: true });
+};
+
 const badgeClass = (type) => {
   switch (type) {
     case "success":
@@ -209,8 +282,22 @@ const updateDetailsPanel = () => {
   if (body) {
     body.innerHTML = "";
 
+    const _sanitizeValue = (v) => {
+      // Accept numbers and non-empty strings, and truthy booleans.
+      if (v === null || v === undefined) return null;
+      if (typeof v === 'boolean') return v ? t('details.yes', 'Yes') : null;
+      const s = String(v).trim();
+      if (!s) return null;
+      const lower = s.toLowerCase();
+      // Treat common placeholders as empty
+      const emptyValues = new Set(['none', 'n/a', 'na', 'false', 'no', 'no date', '—', '-']);
+      if (emptyValues.has(lower)) return null;
+      return s;
+    };
+
     const makeKV = (label, value) => {
-      if (!value && value !== 0) return null;
+      const sanitized = _sanitizeValue(value);
+      if (sanitized === null && sanitized !== 0) return null;
       const row = document.createElement("div");
       row.className = "details__kv";
       const labelEl = document.createElement("div");
@@ -221,13 +308,13 @@ const updateDetailsPanel = () => {
       // If email, render as mailto link
       if (label.toLowerCase().includes("email")) {
         const a = document.createElement("a");
-        a.href = `mailto:${value}`;
-        a.textContent = value;
+        a.href = `mailto:${sanitized}`;
+        a.textContent = sanitized;
         a.style.color = "inherit";
         a.style.textDecoration = "underline";
         valEl.appendChild(a);
       } else {
-        valEl.textContent = value;
+        valEl.textContent = sanitized;
       }
       row.appendChild(labelEl);
       row.appendChild(valEl);
@@ -254,31 +341,62 @@ const updateDetailsPanel = () => {
       return "";
     };
 
-    // Candidate IDs (ICIMS, EID)
+    // Candidate IDs (ICIMS, EID) — always show both; Employee ID is editable inline
     const icims = getVal("ICIMS ID", "ICIMS", "ICIMS ID Number");
     const eid = getVal("Employee ID", "EID");
-    if (icims || eid) {
-      const idRow = document.createElement("div");
-      idRow.className = "details__ids";
-      if (icims) {
-        const left = document.createElement("div");
-        left.className = "details__id";
-        left.innerHTML = `<strong>ICIMS</strong> <span>${icims}</span>`;
-        idRow.appendChild(left);
+
+    const idRow = document.createElement("div");
+    idRow.className = "details__ids";
+
+    const left = document.createElement("div");
+    left.className = "details__id";
+    left.innerHTML = `<strong>${t('details.icims')}</strong> <span>${icims || ''}</span>`;
+    idRow.appendChild(left);
+
+    const right = document.createElement("div");
+    right.className = "details__id";
+    const label = document.createElement("strong");
+    label.textContent = t('details.eid');
+    const eidInput = document.createElement("input");
+    eidInput.type = "text";
+    eidInput.id = "details-employee-id";
+    eidInput.className = "input input--header input--narrow input--inline";
+    eidInput.value = eid || "";
+    eidInput.placeholder = "";
+    right.appendChild(label);
+    right.appendChild(document.createTextNode(' '));
+    right.appendChild(eidInput);
+    idRow.appendChild(right);
+
+    body.appendChild(idRow);
+    addSep();
+
+    // Save Employee ID on blur (silent save; reload data on success)
+    eidInput.addEventListener('blur', async (ev) => {
+      if (!state.activeUid) return;
+      const newVal = ev.target.value.trim();
+      const current = person["Employee ID"] || "";
+      if (newVal === current) return;
+      const response = await apiFetch(`/api/people/${state.activeUid}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ "Employee ID": newVal }),
+      });
+      if (!response.ok) {
+        await showMessageModal('Error', 'Unable to save Employee ID.');
+        eidInput.value = current;
+        return;
       }
-      if (eid) {
-        const right = document.createElement("div");
-        right.className = "details__id";
-        right.innerHTML = `<strong>EID</strong> <span>${eid}</span>`;
-        idRow.appendChild(right);
-      }
-      body.appendChild(idRow);
-      addSep();
-    }
+      // reflect change locally
+      person["Employee ID"] = newVal;
+      loadData();
+      updateDetailsPanel();
+    });
+
 
     // Contact (Phone, Email) - each on its own row
-    const phoneRow = makeKV("Phone", getVal("Candidate Phone Number", "Candidate Phone"));
-    const emailRow = makeKV("Email", getVal("Candidate Email", "Email"));
+    const phoneRow = makeKV(t('details.phone'), getVal("Candidate Phone Number", "Candidate Phone"));
+    const emailRow = makeKV(t('details.email'), getVal("Candidate Email", "Email"));
     if (appendIfExists(body, phoneRow) || appendIfExists(body, emailRow)) {
       addSep();
     }
@@ -286,10 +404,10 @@ const updateDetailsPanel = () => {
     // Job details: Job Name, Job Location, Manager, Branch
     const jobWrap = document.createElement("div");
     jobWrap.className = "details__job";
-    appendIfExists(jobWrap, makeKV("Job Name", getVal("Job Name", "Job Name/ID")));
-    appendIfExists(jobWrap, makeKV("Job Location", getVal("Job Location")));
-    appendIfExists(jobWrap, makeKV("Manager", getVal("Manager Name", "Manager")));
-    appendIfExists(jobWrap, makeKV("Branch", getVal("Branch")));
+    appendIfExists(jobWrap, makeKV(t('details.job_name'), getVal("Job Name", "Job Name/ID")));
+    appendIfExists(jobWrap, makeKV(t('details.job_location'), getVal("Job Location")));
+    appendIfExists(jobWrap, makeKV(t('details.manager'), getVal("Manager Name", "Manager")));
+    appendIfExists(jobWrap, makeKV(t('details.branch'), getVal("Branch")));
     if (jobWrap.children.length) {
       body.appendChild(jobWrap);
       addSep();
@@ -298,13 +416,13 @@ const updateDetailsPanel = () => {
     // ID / Licenses (ID Type, State, ID No., Exp., DOB, Social, DOD)
     const idSection = document.createElement("div");
     idSection.className = "details__licenses";
-    appendIfExists(idSection, makeKV("ID Type", getVal("ID Type", "Other ID")));
-    appendIfExists(idSection, makeKV("State", getVal("State", "State Abbreviation")));
-    appendIfExists(idSection, makeKV("ID #", getVal("ID No.", "License Number")));
-    appendIfExists(idSection, makeKV("Expiration", getVal("Exp.", "Expiration Date")));
-    appendIfExists(idSection, makeKV("DOB", getVal("DOB", "Date of Birth", "DOB")));
-    appendIfExists(idSection, makeKV("SSN", getVal("Social", "Social Security Number")));
-    appendIfExists(idSection, makeKV("DOD Clearance", getVal("DOD Clearance")));
+    appendIfExists(idSection, makeKV(t('details.id_type'), getVal("ID Type", "Other ID")));
+    appendIfExists(idSection, makeKV(t('details.state'), getVal("State", "State Abbreviation")));
+    appendIfExists(idSection, makeKV(t('details.id_number'), getVal("ID No.", "License Number")));
+    appendIfExists(idSection, makeKV(t('details.expiration'), getVal("Exp.", "Expiration Date")));
+    appendIfExists(idSection, makeKV(t('details.dob'), getVal("DOB", "Date of Birth", "DOB")));
+    appendIfExists(idSection, makeKV(t('details.ssn'), getVal("Social", "Social Security Number")));
+    appendIfExists(idSection, makeKV(t('details.dod_clearance'), getVal("DOD Clearance")));
     if (idSection.children.length) {
       body.appendChild(idSection);
       addSep();
@@ -318,20 +436,20 @@ const updateDetailsPanel = () => {
     const licenses = document.createElement("div");
     licenses.className = "details__state-licenses";
     if (showStatus("NH GC Status", "NHGC Status", "NH GC Expiration Date", "NHGC Expiration Date", "NH GC ID Number", "NHGC ID Number")) {
-      appendIfExists(licenses, makeKV("NH GC Status", getVal("NH GC Status", "NHGC Status")));
-      appendIfExists(licenses, makeKV("NH GC Exp", getVal("NH GC Expiration Date", "NHGC Expiration Date")));
-      appendIfExists(licenses, makeKV("NH GC ID", getVal("NH GC ID Number", "NHGC ID Number")));
+      appendIfExists(licenses, makeKV(t('details.nh_gc_status'), getVal("NH GC Status", "NHGC Status")));
+      appendIfExists(licenses, makeKV(t('details.nh_gc_status') + ' Exp', getVal("NH GC Expiration Date", "NHGC Expiration Date")));
+      appendIfExists(licenses, makeKV(t('details.nh_gc_status') + ' ID', getVal("NH GC ID Number", "NHGC ID Number")));
     }
     if (showStatus("CORI Status", "CORI Submit Date", "CORI Date", "CORI Cleared Date")) {
-      appendIfExists(licenses, makeKV("CORI Status", getVal("CORI Status")));
-      appendIfExists(licenses, makeKV("CORI Date", getVal("CORI Submit Date", "CORI Date")));
-      appendIfExists(licenses, makeKV("CORI Cleared", getVal("CORI Cleared Date")));
+      appendIfExists(licenses, makeKV(t('details.cori_status'), getVal("CORI Status")));
+      appendIfExists(licenses, makeKV(t('details.cori_status') + ' Date', getVal("CORI Submit Date", "CORI Date")));
+      appendIfExists(licenses, makeKV(t('details.cori_status') + ' Cleared', getVal("CORI Cleared Date")));
     }
     if (showStatus("ME GC Status", "Maine GC Status", "ME GC Sent Date", "ME GC Date")) {
-      appendIfExists(licenses, makeKV("ME GC Status", getVal("ME GC Status", "Maine GC Status")));
-      appendIfExists(licenses, makeKV("ME GC Sent", getVal("ME GC Sent Date", "ME GC Date")));
+      appendIfExists(licenses, makeKV(t('details.me_gc_status'), getVal("ME GC Status", "Maine GC Status")));
+      appendIfExists(licenses, makeKV(t('details.me_gc_status') + ' Sent', getVal("ME GC Sent Date", "ME GC Date")));
     }
-    appendIfExists(licenses, makeKV("MVR", getVal("MVR")));
+    appendIfExists(licenses, makeKV(t('details.mvr'), getVal("MVR")));
     if (licenses.children.length) {
       body.appendChild(licenses);
       addSep();
@@ -611,7 +729,7 @@ const buildEditCardForm = (person) => {
   background.innerHTML = "";
 
   const fields = [
-    { name: "Employee ID", label: "Employee Number" },
+    // Employee ID removed per design; leave space for future fields
   ];
 
   const contactFields = [
@@ -680,9 +798,12 @@ const buildEditCardForm = (person) => {
     basics.appendChild(fieldEl);
   });
 
-  const basicsDivider = document.createElement("div");
-  basicsDivider.className = "edit-card__divider";
-  basics.appendChild(basicsDivider);
+  // Only show divider if there were any basic fields (avoids empty separator when fields are removed)
+  if (fields.length) {
+    const basicsDivider = document.createElement("div");
+    basicsDivider.className = "edit-card__divider";
+    basics.appendChild(basicsDivider);
+  }
 
   const contactTitle = document.createElement("div");
   contactTitle.className = "edit-card__section";
@@ -972,47 +1093,139 @@ const deleteCandidate = async () => {
 const showAuthModal = async () => {
   const modal = document.getElementById("auth-modal");
   const title = document.getElementById("auth-title");
-  if (!modal || !title) return;
-  const response = await fetch("/api/auth/status");
-  if (!response.ok) return;
-  const status = await response.json();
-  state.auth = status;
-  title.textContent = status.configured ? "Sign In" : "Create Program Password";
-  modal.classList.remove("hidden");
+  if (!modal || !title) return false;
+  try {
+    const response = await fetch("/api/auth/status");
+    if (!response.ok) return false;
+    const status = await response.json();
+    state.auth = status;
+    title.textContent = status.configured ? "Sign In" : "Create Program Password";
+    // If already authenticated, resolve immediately
+    if (status.authenticated) return true;
+    modal.classList.remove("hidden");
+    return await new Promise((resolve) => {
+      const onSuccess = () => {
+        window.removeEventListener('workflow:auth-success', onSuccess);
+        window.removeEventListener('workflow:auth-cancel', onCancel);
+        modal.classList.add('hidden');
+        resolve(true);
+      };
+      const onCancel = () => {
+        window.removeEventListener('workflow:auth-success', onSuccess);
+        window.removeEventListener('workflow:auth-cancel', onCancel);
+        modal.classList.add('hidden');
+        resolve(false);
+      };
+      window.addEventListener('workflow:auth-success', onSuccess);
+      window.addEventListener('workflow:auth-cancel', onCancel);
+    });
+  } catch (err) {
+    console.error('showAuthModal error', err);
+    return false;
+  }
 };
 
 const hideAuthModal = () => {
   const modal = document.getElementById("auth-modal");
   if (modal) modal.classList.add("hidden");
+  // If modal closed without authentication, notify waiters
+  if (!state.auth || !state.auth.authenticated) {
+    window.dispatchEvent(new Event('workflow:auth-cancel'));
+  }
+};
+
+const showChangePasswordModal = () => {
+  const modal = document.getElementById('change-password-modal');
+  if (!modal) return;
+  // clear fields
+  const cur = document.getElementById('change-current');
+  const nw = document.getElementById('change-new');
+  const conf = document.getElementById('change-confirm');
+  if (cur) cur.value = '';
+  if (nw) nw.value = '';
+  if (conf) conf.value = '';
+  // ensure password eye toggles are initialized
+  initPasswordToggles();
+  modal.classList.remove('hidden');
+};
+
+const hideChangePasswordModal = () => {
+  const modal = document.getElementById('change-password-modal');
+  if (modal) modal.classList.add('hidden');
+};
+
+const handleChangePasswordSubmit = async (event) => {
+  event.preventDefault();
+  const current = document.getElementById('change-current').value;
+  const nw = document.getElementById('change-new').value;
+  const confirm = document.getElementById('change-confirm').value;
+  if (!current || !nw) {
+    alert('Please enter current and new password.');
+    return;
+  }
+  if (nw !== confirm) {
+    alert('New password and confirmation do not match.');
+    return;
+  }
+  const response = await fetch('/api/auth/change', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ current, new: nw }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    const msg = body && body.detail ? body.detail : 'Unable to change password.';
+    alert(msg);
+    return;
+  }
+  alert('Password changed successfully.');
+  hideChangePasswordModal();
 };
 
 const handleAuthSubmit = async (event) => {
   event.preventDefault();
-  const password = document.getElementById("auth-password").value;
+  const submitBtn = document.getElementById('auth-submit');
+  if (submitBtn && submitBtn.dataset.submitting) return; // prevent double submits
+  const passwordEl = document.getElementById("auth-password");
+  const password = passwordEl ? passwordEl.value : '';
   const endpoint = state.auth.configured ? "/api/auth/login" : "/api/auth/setup";
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password }),
-  });
-  if (!response.ok) {
-    alert("Authentication failed.");
-    return;
-  }
-  if (!state.auth.configured) {
-    state.auth.configured = true;
-  }
-  if (endpoint === "/api/auth/setup") {
-    await fetch("/api/auth/login", {
+  try {
+    if (submitBtn) {
+      submitBtn.dataset.submitting = '1';
+      submitBtn.disabled = true;
+    }
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password }),
     });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      const msg = body && body.detail ? body.detail : 'Authentication failed.';
+      alert(msg);
+      return;
+    }
+    // Mark authenticated and notify waiters
+    if (!state.auth) state.auth = {};
+    state.auth.authenticated = true;
+    if (!state.auth.configured) {
+      state.auth.configured = true;
+    }
+    window.dispatchEvent(new Event('workflow:auth-success'));
+    hideAuthModal();
+    // Re-fetch status and data
+    await fetchSchema();
+    await loadData();
+  } catch (err) {
+    console.error('Auth submit error', err);
+    alert('Unable to contact server. Try again.');
+  } finally {
+    if (submitBtn) {
+      submitBtn.dataset.submitting = '';
+      submitBtn.disabled = false;
+    }
   }
-  hideAuthModal();
-  await fetchSchema();
-  await loadData();
-};
+  };
 
 const openArchiveModal = () => {
   if (!state.activeUid) return;
@@ -1031,21 +1244,40 @@ const submitArchive = async (event) => {
   const archivePassword = document.getElementById("archive-password").value;
   const startTime = document.getElementById("archive-start").value;
   const endTime = document.getElementById("archive-end").value;
-  const response = await apiFetch(`/api/archive/${state.activeUid}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      archive_password: archivePassword,
-      start_time: startTime,
-      end_time: endTime,
-    }),
-  });
-  if (!response.ok) {
-    alert("Archive failed.");
+  if (!archivePassword) {
+    await showMessageModal('Missing password', 'Please enter an archive password before archiving.');
     return;
   }
-  closeArchiveModal();
-  loadData();
+  // Ensure person has required fields
+  const person = state.people.find((p) => p.uid === state.activeUid) || {};
+  const name = (person.Name || '').trim();
+  const neo = (person['NEO Scheduled Date'] || '').trim();
+  if (!name || !neo) {
+    await showMessageModal('Missing information', 'Name and NEO Scheduled Date must be set before archiving.');
+    return;
+  }
+  try {
+    const response = await apiFetch(`/api/archive/${state.activeUid}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        archive_password: archivePassword,
+        start_time: startTime,
+        end_time: endTime,
+      }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      const msg = (body && body.detail) ? body.detail : 'Archive failed.';
+      await showMessageModal('Archive failed', msg);
+      return;
+    }
+    closeArchiveModal();
+    loadData();
+  } catch (err) {
+    console.error('submitArchive error', err);
+    await showMessageModal('Archive failed', 'Network or server error. Check logs.');
+  }
 };
 
 const loadArchivesList = async () => {
@@ -1072,10 +1304,27 @@ const renderArchiveList = () => {
     item.textContent = archive;
     item.addEventListener("click", () => {
       state.archives.selected = archive;
+      state.archives.selectedFile = null;
       renderArchiveList();
+      // Clear current preview and contents
+      renderArchiveContents([]);
+      const preview = document.getElementById('archive-preview');
+      if (preview) preview.innerHTML = '<div class="muted">Select a file to view.</div>';
+      updateArchiveButtons();
     });
     list.appendChild(item);
   });
+  updateArchiveButtons();
+};
+
+const updateArchiveButtons = () => {
+  const unlock = document.getElementById('archive-unlock');
+  const del = document.getElementById('archive-delete');
+  const dl = document.getElementById('archive-download');
+  const has = !!state.archives.selected;
+  if (unlock) unlock.disabled = !has;
+  if (del) del.disabled = !has;
+  if (dl) dl.disabled = !has;
 };
 
 const renderArchiveContents = (files) => {
@@ -1097,21 +1346,8 @@ const renderArchiveContents = (files) => {
     name.style.cursor = "pointer";
     name.addEventListener("click", () => { state.archives.selectedFile = file; viewArchiveFile(file); renderArchiveContents(files); });
 
-    const actions = document.createElement("div");
-    actions.className = "archive-actions";
-
-    const viewBtn = document.createElement("button");
-    viewBtn.className = "button button--ghost";
-    viewBtn.textContent = "View";
-    viewBtn.addEventListener("click", (e) => { e.stopPropagation(); state.archives.selectedFile = file; renderArchiveContents(files); viewArchiveFile(file); });
-
-    const dlBtn = document.createElement("button");
-    dlBtn.className = "button button--ghost";
-    dlBtn.textContent = "Download";
-    dlBtn.addEventListener("click", (e) => { e.stopPropagation(); downloadArchiveFile(file); });
-
-    actions.append(viewBtn, dlBtn);
-    row.append(name, actions);
+    // Clicking the file name will select and open it (prompts for password if needed)
+    row.append(name);
     item.appendChild(row);
     list.appendChild(item);
   });
@@ -1120,15 +1356,169 @@ const renderArchiveContents = (files) => {
   if (preview) preview.innerHTML = '<div class="muted">Select a file to view.</div>';
 };
 
+const ARCHIVE_PW_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+// Cache structure: { <archiveName>: { pw: string, expiresAt: number } }
+state.archives.passwordCache = {};
+
+const cacheArchivePassword = (archiveName, pw) => {
+  if (!archiveName || !pw) return;
+  state.archives.passwordCache[archiveName] = { pw, expiresAt: Date.now() + ARCHIVE_PW_TTL_MS };
+};
+
+// Unlock archive explicitly (prompts and caches password for TTL)
+const unlockArchive = async () => {
+  if (!state.archives.selected) { await showMessageModal('No archive selected', 'Select an archive to unlock.'); return; }
+  const name = state.archives.selected;
+  const unlockBtn = document.getElementById('archive-unlock');
+  if (unlockBtn) unlockBtn.disabled = true;
+  try {
+    const pw = await getArchivePassword(name);
+    if (!pw) return;
+    await showMessageModal('Unlocked', `${name} unlocked for 10 minutes.`);
+    // After unlocking, load the archive contents into the list
+    await loadArchiveContents();
+  } catch (err) {
+    console.error('unlockArchive error', err);
+    await showMessageModal('Error', 'Unable to unlock archive. Try again.');
+  } finally {
+    if (unlockBtn) unlockBtn.disabled = false;
+  }
+};
+
+const getCachedArchivePassword = (archiveName) => {
+  const entry = state.archives.passwordCache[archiveName];
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    delete state.archives.passwordCache[archiveName];
+    return null;
+  }
+  return entry.pw;
+};
+
+const showArchivePasswordPrompt = async (archiveName) => {
+  // Ensure authenticated first
+  const authOk = await showAuthModal();
+  if (!authOk) return null;
+  return new Promise((resolve) => {
+    const modal = document.getElementById('archive-password-modal');
+    const form = document.getElementById('archive-password-form');
+    const input = document.getElementById('archive-prompt-password');
+    const close = document.getElementById('archive-password-close');
+    const cancel = document.getElementById('archive-password-cancel');
+    if (!modal || !form || !input) return resolve(null);
+    input.value = '';
+    initPasswordToggles();
+    modal.classList.remove('hidden');
+    input.focus();
+    const cleanup = () => {
+      modal.classList.add('hidden');
+      form.removeEventListener('submit', onSubmit);
+      if (close) close.removeEventListener('click', onCancel);
+      if (cancel) cancel.removeEventListener('click', onCancel);
+    };
+    const onSubmit = (e) => {
+      e.preventDefault();
+      const val = input.value;
+      cleanup();
+      resolve(val);
+    };
+    const onCancel = (e) => {
+      e && e.preventDefault();
+      cleanup();
+      resolve(null);
+    };
+    form.addEventListener('submit', onSubmit);
+    if (close) close.addEventListener('click', onCancel);
+    if (cancel) cancel.addEventListener('click', onCancel);
+  });
+};
+
+// Get archive password, checking cache first and caching after prompt
+const getArchivePassword = async (archiveName) => {
+  if (!archiveName) return null;
+  const cached = getCachedArchivePassword(archiveName);
+  if (cached) return cached;
+  const pw = await showArchivePasswordPrompt(archiveName);
+  if (pw) cacheArchivePassword(archiveName, pw);
+  return pw;
+};
+
+// Confirm delete modal: asks for program password and returns it, or null on cancel
+const showDeleteArchiveModal = (archiveName) => {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('archive-delete-modal');
+    const form = document.getElementById('archive-delete-form');
+    const input = document.getElementById('archive-delete-password');
+    const close = document.getElementById('archive-delete-close');
+    const cancel = document.getElementById('archive-delete-cancel');
+    const message = document.getElementById('archive-delete-message');
+    if (!modal || !form || !input || !message) return resolve(null);
+    message.textContent = `Delete '${archiveName}' — this action cannot be undone.`;
+    input.value = '';
+    initPasswordToggles();
+    modal.classList.remove('hidden');
+    input.focus();
+    const cleanup = () => {
+      modal.classList.add('hidden');
+      form.removeEventListener('submit', onSubmit);
+      if (close) close.removeEventListener('click', onCancel);
+      if (cancel) cancel.removeEventListener('click', onCancel);
+    };
+    const onSubmit = (e) => {
+      e.preventDefault();
+      const val = input.value;
+      cleanup();
+      resolve(val);
+    };
+    const onCancel = (e) => {
+      e && e.preventDefault();
+      cleanup();
+      resolve(null);
+    };
+    form.addEventListener('submit', onSubmit);
+    if (close) close.addEventListener('click', onCancel);
+    if (cancel) cancel.addEventListener('click', onCancel);
+  });
+};
+
+// Small modal to show result messages
+const showMessageModal = (title, message) => {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('action-result-modal');
+    if (!modal) return resolve();
+    const t = document.getElementById('action-result-title');
+    const m = document.getElementById('action-result-message');
+    const ok = document.getElementById('action-result-ok');
+    const close = document.getElementById('action-result-close');
+    t.textContent = title || '';
+    m.textContent = message || '';
+    modal.classList.remove('hidden');
+    const cleanup = () => {
+      modal.classList.add('hidden');
+      ok.removeEventListener('click', onClose);
+      if (close) close.removeEventListener('click', onClose);
+    };
+    const onClose = (e) => {
+      e && e.preventDefault();
+      cleanup();
+      resolve();
+    };
+    ok.addEventListener('click', onClose);
+    if (close) close.addEventListener('click', onClose);
+  });
+};
+
 const viewArchiveFile = async (internalPath) => {
-  const password = document.getElementById("archives-password").value;
+  const password = await getArchivePassword(state.archives.selected);
+  if (!password) return;
   const response = await apiFetch(`/api/archive/${state.archives.selected}/file`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ archive_password: password, internal_path: internalPath }),
   });
   if (!response.ok) {
-    alert("Unable to load file.");
+    await showMessageModal('Error', 'Unable to load file.');
     return;
   }
   const text = await response.text();
@@ -1218,17 +1608,18 @@ const renderArchivePreview = (internalPath, text) => {
 
 const loadArchiveContents = async () => {
   if (!state.archives.selected) {
-    alert("Select an archive first.");
+    await showMessageModal('No archive selected', 'Select an archive first.');
     return;
   }
-  const password = document.getElementById("archives-password").value;
+  const password = await getArchivePassword(state.archives.selected);
+  if (!password) return;
   const response = await apiFetch(`/api/archive/${state.archives.selected}/contents`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ archive_password: password }),
   });
   if (!response.ok) {
-    alert("Unable to load archive contents.");
+    await showMessageModal('Error', 'Unable to load archive contents.');
     return;
   }
   const payload = await response.json();
@@ -1237,14 +1628,15 @@ const loadArchiveContents = async () => {
 };
 
 const downloadArchiveFile = async (internalPath) => {
-  const password = document.getElementById("archives-password").value;
+  const password = await getArchivePassword(state.archives.selected);
+  if (!password) return;
   const response = await apiFetch(`/api/archive/${state.archives.selected}/file`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ archive_password: password, internal_path: internalPath }),
   });
   if (!response.ok) {
-    alert("Unable to download file.");
+    await showMessageModal('Error', 'Unable to download file.');
     return;
   }
   const blob = await response.blob();
@@ -1256,6 +1648,54 @@ const downloadArchiveFile = async (internalPath) => {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+};
+
+const downloadArchive = async () => {
+  if (!state.archives.selected) { await showMessageModal('No archive selected', 'Select an archive to download.'); return; }
+  const authOk = await showAuthModal();
+  if (!authOk) return;
+  window.location.href = `/api/archive/${encodeURIComponent(state.archives.selected)}/download`;
+};
+
+const deleteArchive = async () => {
+  if (!state.archives.selected) {
+    await showMessageModal('No archive selected', 'Select an archive to delete.');
+    return;
+  }
+  const name = state.archives.selected;
+  // Ask for program password via our confirm modal
+  const confirmBtn = document.getElementById('archive-delete-confirm');
+  const pw = await showDeleteArchiveModal(name);
+  if (!pw) return; // cancelled
+  if (confirmBtn) confirmBtn.disabled = true;
+  try {
+    // Attempt program login with provided password
+    const loginResp = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pw }),
+    });
+    if (!loginResp.ok) {
+      const body = await loginResp.json().catch(() => ({}));
+      await showMessageModal('Authentication failed', (body && body.detail) || 'Incorrect program password.');
+      return;
+    }
+
+    // Now call delete endpoint
+    const response = await apiFetch(`/api/archive/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      await showMessageModal('Delete failed', (body && body.detail) || 'Unable to delete archive.');
+      return;
+    }
+    await showMessageModal('Deleted', `${name} was deleted. This action cannot be undone.`);
+    loadArchivesList();
+  } catch (err) {
+    console.error('Delete error', err);
+    await showMessageModal('Error', 'Unable to delete archive. Try again.');
+  } finally {
+    if (confirmBtn) confirmBtn.disabled = false;
+  }
 };
 
 const loadExportsList = async () => {
@@ -1281,14 +1721,8 @@ const loadExportsList = async () => {
     row.className = "exports-file";
     const name = document.createElement("span");
     name.textContent = file;
-    const download = document.createElement("button");
-    download.className = "button button--ghost";
-    download.textContent = "Download";
-    download.addEventListener("click", (event) => {
-      event.stopPropagation();
-      window.location.href = `/api/exports/file?name=${encodeURIComponent(file)}`;
-    });
-    row.append(name, download);
+    // Per-row download button removed — use the preview's Download or the topbar Download button
+    row.append(name);
     item.appendChild(row);
     item.addEventListener("click", () => {
       document.querySelectorAll("#exports-list .archive-item").forEach((el) => {
@@ -1455,7 +1889,11 @@ const setupEventListeners = () => {
   const archiveModalCancel = document.getElementById("archive-cancel");
   const archiveForm = document.getElementById("archive-form");
   const archivesLoad = document.getElementById("archives-load");
+  const archiveUnlock = document.getElementById("archive-unlock");
+  const archiveDeleteBtn = document.getElementById("archive-delete");
+  const archiveDownloadBtn = document.getElementById("archive-download");
   const authForm = document.getElementById("auth-form");
+  const authClose = document.getElementById('auth-close');
   const exportsRefresh = document.getElementById("exports-refresh");
   const exportsDelete = document.getElementById("exports-delete");
   const exportsDownload = document.getElementById("download-selected");
@@ -1471,7 +1909,19 @@ const setupEventListeners = () => {
   if (addButton) addButton.addEventListener("click", () => openEditPage().catch(err => { console.error('openEditPage error', err); alert('Unable to open editor. Check console for details.'); }));
   if (cancelButton) cancelButton.addEventListener("click", closeEditPage);
   if (detailsEdit) detailsEdit.addEventListener("click", () => openEditPage(state.activeUid));
-  if (sidebarToggle) sidebarToggle.addEventListener('click', () => document.querySelector('.app').classList.toggle('app--sidebar-collapsed'));
+  if (sidebarToggle) sidebarToggle.addEventListener('click', () => {
+    const appEl = document.querySelector('.app');
+    const mini = document.querySelector('.sidebar__mini');
+    const isCollapsed = appEl.classList.toggle('app--sidebar-collapsed');
+    if (mini) {
+      // When collapsed show the mini, otherwise hide it
+      mini.setAttribute('aria-hidden', isCollapsed ? 'false' : 'true');
+      // Manage focusability of children to avoid aria-hidden focused element warnings
+      mini.querySelectorAll('.nav-item--mini').forEach((btn) => {
+        if (isCollapsed) btn.removeAttribute('tabindex'); else btn.setAttribute('tabindex', '-1');
+      });
+    }
+  });
   if (detailsArchive) detailsArchive.addEventListener("click", openArchiveModal);
   if (detailsRemove) detailsRemove.addEventListener("click", removeCandidate);
   if (form) form.addEventListener("submit", saveCandidate);
@@ -1494,6 +1944,8 @@ const setupEventListeners = () => {
     });
   }
   if (weeklyButton) weeklyButton.addEventListener("click", openWeeklyTracker);
+  const weeklyMini = document.getElementById('weekly-tracker-mini');
+  if (weeklyMini) weeklyMini.addEventListener('click', openWeeklyTracker);
   if (weeklyClose) weeklyClose.addEventListener("click", closeWeeklyTracker);
   if (weeklyCancel) weeklyCancel.addEventListener("click", closeWeeklyTracker);
   if (weeklyForm) weeklyForm.addEventListener("submit", saveWeeklyTracker);
@@ -1506,7 +1958,17 @@ const setupEventListeners = () => {
   if (archiveModalCancel) archiveModalCancel.addEventListener("click", closeArchiveModal);
   if (archiveForm) archiveForm.addEventListener("submit", submitArchive);
   if (archivesLoad) archivesLoad.addEventListener("click", loadArchiveContents);
+  if (archiveUnlock) archiveUnlock.addEventListener('click', unlockArchive);
+  if (archiveDeleteBtn) archiveDeleteBtn.addEventListener('click', deleteArchive);
+  if (archiveDownloadBtn) archiveDownloadBtn.addEventListener('click', downloadArchive);
   if (authForm) authForm.addEventListener("submit", handleAuthSubmit);
+  if (authClose) authClose.addEventListener('click', hideAuthModal);
+  const changeBtn = document.getElementById('change-password-button');
+  const changeModalClose = document.getElementById('change-password-close');
+  const changeForm = document.getElementById('change-password-form');
+  if (changeBtn) changeBtn.addEventListener('click', showChangePasswordModal);
+  if (changeModalClose) changeModalClose.addEventListener('click', hideChangePasswordModal);
+  if (changeForm) changeForm.addEventListener('submit', handleChangePasswordSubmit);
   if (exportsRefresh) exportsRefresh.addEventListener("click", loadExportsList);
   if (exportsDelete) exportsDelete.addEventListener("click", deleteSelectedExport);
   if (exportsDownload) exportsDownload.addEventListener("click", downloadSelectedExport);
@@ -1547,7 +2009,13 @@ const openWeeklyTracker = async () => {
   if (range) {
     range.textContent = `Week of ${data.week_start} to ${data.week_end}`;
   }
-  Object.entries(data.entries || {}).forEach(([day, info]) => {
+  // Render days in a fixed Monday->Sunday order inside a 7-column grid
+  const days = ["Friday","Saturday","Sunday","Monday","Tuesday","Wednesday","Thursday"];
+  const grid = document.createElement('div');
+  grid.className = 'weekly__grid';
+  days.forEach((day) => {
+    const info = (data.entries && data.entries[day]) ? data.entries[day] : { start: '', end: '', content: '' };
+
     const container = document.createElement("div");
     container.className = "weekly__day";
 
@@ -1556,6 +2024,7 @@ const openWeeklyTracker = async () => {
     const title = document.createElement("div");
     title.className = "weekly__day-title";
     title.textContent = day;
+
     const timeWrap = document.createElement("div");
     timeWrap.className = "weekly__time";
     const startInput = document.createElement("input");
@@ -1573,12 +2042,13 @@ const openWeeklyTracker = async () => {
 
     const textarea = document.createElement("textarea");
     textarea.name = `${day}__content`;
-    textarea.placeholder = "Activities";
+    textarea.placeholder = ""; // open text area
     textarea.value = info.content || "";
 
     container.append(header, textarea);
-    form.appendChild(container);
+    grid.appendChild(container);
   });
+  form.appendChild(grid);
   modal.classList.remove("hidden");
 };
 
@@ -1612,6 +2082,8 @@ const saveWeeklyTracker = async (event) => {
 
 initTheme();
 setupEventListeners();
+initPasswordToggles();
+observeNewPasswordFields();
 fetch("/api/auth/status")
   .then((response) => response.json())
   .then((status) => {

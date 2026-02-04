@@ -275,16 +275,36 @@ const showAuthModal = async () => {
   const title = document.getElementById("auth-title");
   if (!modal || !title) return;
   const response = await fetch("/api/auth/status");
-  if (!response.ok) return;
+  if (!response.ok) return false;
   const status = await response.json();
   state.auth = status;
   title.textContent = status.configured ? "Sign In" : "Create Program Password";
+  if (status.authenticated) return true;
   modal.classList.remove("hidden");
+  return await new Promise((resolve) => {
+    const onSuccess = () => {
+      window.removeEventListener('workflow:auth-success', onSuccess);
+      window.removeEventListener('workflow:auth-cancel', onCancel);
+      modal.classList.add('hidden');
+      resolve(true);
+    };
+    const onCancel = () => {
+      window.removeEventListener('workflow:auth-success', onSuccess);
+      window.removeEventListener('workflow:auth-cancel', onCancel);
+      modal.classList.add('hidden');
+      resolve(false);
+    };
+    window.addEventListener('workflow:auth-success', onSuccess);
+    window.addEventListener('workflow:auth-cancel', onCancel);
+  });
 };
 
 const hideAuthModal = () => {
   const modal = document.getElementById("auth-modal");
   if (modal) modal.classList.add("hidden");
+  if (!state.auth || !state.auth.authenticated) {
+    window.dispatchEvent(new Event('workflow:auth-cancel'));
+  }
 };
 
 const handleAuthSubmit = async (event) => {
@@ -300,6 +320,8 @@ const handleAuthSubmit = async (event) => {
     alert("Authentication failed.");
     return;
   }
+  if (!state.auth) state.auth = {};
+  state.auth.authenticated = true;
   if (!state.auth.configured) {
     state.auth.configured = true;
   }
@@ -310,6 +332,7 @@ const handleAuthSubmit = async (event) => {
       body: JSON.stringify({ password }),
     });
   }
+  window.dispatchEvent(new Event('workflow:auth-success'));
   hideAuthModal();
   await fetchSchema();
   await loadData();
@@ -332,28 +355,47 @@ const submitArchive = async (event) => {
   const archivePassword = document.getElementById("archive-password").value;
   const startTime = document.getElementById("archive-start").value;
   const endTime = document.getElementById("archive-end").value;
-  const response = await apiFetch(`/api/archive/${state.activeUid}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      archive_password: archivePassword,
-      start_time: startTime,
-      end_time: endTime,
-    }),
-  });
-  if (!response.ok) {
-    alert("Archive failed.");
+  if (!archivePassword) {
+    await showMessageModal('Missing password', 'Please enter an archive password before archiving.');
     return;
   }
-  closeArchiveModal();
-  closeModal();
-  loadData();
+  // Ensure person has required fields
+  const person = state.people.find((p) => p.uid === state.activeUid) || {};
+  const name = (person.Name || '').trim();
+  const neo = (person['NEO Scheduled Date'] || '').trim();
+  if (!name || !neo) {
+    await showMessageModal('Missing information', 'Name and NEO Scheduled Date must be set before archiving.');
+    return;
+  }
+  try {
+    const response = await apiFetch(`/api/archive/${state.activeUid}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        archive_password: archivePassword,
+        start_time: startTime,
+        end_time: endTime,
+      }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      const msg = (body && body.detail) ? body.detail : 'Archive failed.';
+      await showMessageModal('Archive failed', msg);
+      return;
+    }
+    closeArchiveModal();
+    closeModal();
+    loadData();
+  } catch (err) {
+    console.error('submitArchive error', err);
+    await showMessageModal('Archive failed', 'Network or server error. Check logs.');
+  }
 };
 
 const loadArchivesList = async () => {
   const response = await apiFetch("/api/archive/list");
   if (!response.ok) {
-    alert("Unable to load archives.");
+    await showMessageModal('Error', 'Unable to load archives.');
     return;
   }
   const payload = await response.json();
@@ -380,6 +422,110 @@ const renderArchiveList = () => {
   });
 };
 
+// Prompt modal for archive password (returns string or null when cancelled)
+const showArchivePasswordPrompt = async (archiveName) => {
+  // Ensure authenticated first
+  const authOk = await showAuthModal();
+  if (!authOk) return null;
+  return new Promise((resolve) => {
+    const modal = document.getElementById('archive-password-modal');
+    const form = document.getElementById('archive-password-form');
+    const input = document.getElementById('archive-prompt-password');
+    const close = document.getElementById('archive-password-close');
+    const cancel = document.getElementById('archive-password-cancel');
+    if (!modal || !form || !input) return resolve(null);
+    input.value = '';
+    initPasswordToggles();
+    modal.classList.remove('hidden');
+    input.focus();
+    const cleanup = () => {
+      modal.classList.add('hidden');
+      form.removeEventListener('submit', onSubmit);
+      if (close) close.removeEventListener('click', onCancel);
+      if (cancel) cancel.removeEventListener('click', onCancel);
+    };
+    const onSubmit = (e) => {
+      e.preventDefault();
+      const val = input.value;
+      cleanup();
+      resolve(val);
+    };
+    const onCancel = (e) => {
+      e && e.preventDefault();
+      cleanup();
+      resolve(null);
+    };
+    form.addEventListener('submit', onSubmit);
+    if (close) close.addEventListener('click', onCancel);
+    if (cancel) cancel.addEventListener('click', onCancel);
+  });
+};
+
+// Confirm delete modal: asks for program password and returns it, or null on cancel
+const showDeleteArchiveModal = (archiveName) => {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('archive-delete-modal');
+    const form = document.getElementById('archive-delete-form');
+    const input = document.getElementById('archive-delete-password');
+    const close = document.getElementById('archive-delete-close');
+    const cancel = document.getElementById('archive-delete-cancel');
+    const message = document.getElementById('archive-delete-message');
+    if (!modal || !form || !input || !message) return resolve(null);
+    message.textContent = `Delete '${archiveName}' — this action cannot be undone.`;
+    input.value = '';
+    initPasswordToggles();
+    modal.classList.remove('hidden');
+    input.focus();
+    const cleanup = () => {
+      modal.classList.add('hidden');
+      form.removeEventListener('submit', onSubmit);
+      if (close) close.removeEventListener('click', onCancel);
+      if (cancel) cancel.removeEventListener('click', onCancel);
+    };
+    const onSubmit = (e) => {
+      e.preventDefault();
+      const val = input.value;
+      cleanup();
+      resolve(val);
+    };
+    const onCancel = (e) => {
+      e && e.preventDefault();
+      cleanup();
+      resolve(null);
+    };
+    form.addEventListener('submit', onSubmit);
+    if (close) close.addEventListener('click', onCancel);
+    if (cancel) cancel.addEventListener('click', onCancel);
+  });
+};
+
+// Small modal to show result messages
+const showMessageModal = (title, message) => {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('action-result-modal');
+    if (!modal) return resolve();
+    const t = document.getElementById('action-result-title');
+    const m = document.getElementById('action-result-message');
+    const ok = document.getElementById('action-result-ok');
+    const close = document.getElementById('action-result-close');
+    t.textContent = title || '';
+    m.textContent = message || '';
+    modal.classList.remove('hidden');
+    const cleanup = () => {
+      modal.classList.add('hidden');
+      ok.removeEventListener('click', onClose);
+      if (close) close.removeEventListener('click', onClose);
+    };
+    const onClose = (e) => {
+      e && e.preventDefault();
+      cleanup();
+      resolve();
+    };
+    ok.addEventListener('click', onClose);
+    if (close) close.addEventListener('click', onClose);
+  });
+};
+
 const renderArchiveContents = (files) => {
   const list = document.getElementById("archives-contents");
   if (!list) return;
@@ -387,25 +533,65 @@ const renderArchiveContents = (files) => {
   files.forEach((file) => {
     const item = document.createElement("li");
     item.className = "archive-item";
-    item.textContent = file;
-    item.addEventListener("click", () => downloadArchiveFile(file));
+
+    const row = document.createElement('div');
+    row.className = 'archive-row';
+
+    const name = document.createElement('span');
+    name.className = 'archive-file-name';
+    name.textContent = file.split('/').pop();
+    name.title = file;
+    name.style.cursor = 'pointer';
+    name.addEventListener('click', () => { state.archives.selectedFile = file; viewArchiveFile(file); });
+
+    row.append(name);
+    item.appendChild(row);
     list.appendChild(item);
   });
 };
 
+const ARCHIVE_PW_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+state.archives.passwordCache = {};
+
+const cacheArchivePassword = (archiveName, pw) => {
+  if (!archiveName || !pw) return;
+  state.archives.passwordCache[archiveName] = { pw, expiresAt: Date.now() + ARCHIVE_PW_TTL_MS };
+};
+
+const getCachedArchivePassword = (archiveName) => {
+  const entry = state.archives.passwordCache[archiveName];
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    delete state.archives.passwordCache[archiveName];
+    return null;
+  }
+  return entry.pw;
+};
+
+const getArchivePassword = async (archiveName) => {
+  if (!archiveName) return null;
+  const cached = getCachedArchivePassword(archiveName);
+  if (cached) return cached;
+  const pw = await showArchivePasswordPrompt(archiveName);
+  if (pw) cacheArchivePassword(archiveName, pw);
+  return pw;
+};
+
 const loadArchiveContents = async () => {
   if (!state.archives.selected) {
-    alert("Select an archive first.");
+    await showMessageModal('No archive selected', 'Select an archive first.');
     return;
   }
-  const password = document.getElementById("archives-password").value;
+  const password = await getArchivePassword(state.archives.selected);
+  if (!password) return;
   const response = await apiFetch(`/api/archive/${state.archives.selected}/contents`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ archive_password: password }),
   });
   if (!response.ok) {
-    alert("Unable to load archive contents.");
+    await showMessageModal('Error', 'Unable to load archive contents.');
     return;
   }
   const payload = await response.json();
@@ -414,14 +600,15 @@ const loadArchiveContents = async () => {
 };
 
 const downloadArchiveFile = async (internalPath) => {
-  const password = document.getElementById("archives-password").value;
+  const password = await getArchivePassword(state.archives.selected);
+  if (!password) return;
   const response = await apiFetch(`/api/archive/${state.archives.selected}/file`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ archive_password: password, internal_path: internalPath }),
   });
   if (!response.ok) {
-    alert("Unable to download file.");
+    await showMessageModal('Error', 'Unable to download file.');
     return;
   }
   const blob = await response.blob();
@@ -458,14 +645,8 @@ const loadExportsList = async () => {
     row.className = "exports-file";
     const name = document.createElement("span");
     name.textContent = file;
-    const download = document.createElement("button");
-    download.className = "button button--ghost";
-    download.textContent = "Download";
-    download.addEventListener("click", (event) => {
-      event.stopPropagation();
-      window.location.href = `/api/exports/file?name=${encodeURIComponent(file)}`;
-    });
-    row.append(name, download);
+    // Per-row download button removed — use the preview's Download or the topbar Download button
+    row.append(name);
     item.appendChild(row);
     item.addEventListener("click", () => {
       document.querySelectorAll("#exports-list .archive-item").forEach((el) => {
@@ -625,6 +806,7 @@ const setupEventListeners = () => {
   if (archiveForm) archiveForm.addEventListener("submit", submitArchive);
   if (archivesLoad) archivesLoad.addEventListener("click", loadArchiveContents);
   if (authForm) authForm.addEventListener("submit", handleAuthSubmit);
+  if (authClose) authClose.addEventListener('click', hideAuthModal);
   if (exportsRefresh) exportsRefresh.addEventListener("click", loadExportsList);
   if (exportsDelete) exportsDelete.addEventListener("click", deleteSelectedExport);
   if (exportsDownload) exportsDownload.addEventListener("click", downloadSelectedExport);

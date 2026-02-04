@@ -25,12 +25,14 @@
         </div>
         <nav class="sidebar__nav">
           <button class="nav-item nav-item--active" data-page="dashboard">🏠 Onboarding Dashboard</button>
+          <button id="weekly-tracker" class="nav-item" data-page="weekly">📅 Weekly Tracker</button>
           <button class="nav-item" data-page="removed">🗑️ Removed Candidates</button>
           <button class="nav-item" data-page="exports">📦 Exports</button>
           <button class="nav-item" data-page="archives">🗄️ Archives</button>
         </nav>
         <div class="sidebar__mini" aria-hidden="true">
           <button class="nav-item nav-item--mini" data-page="dashboard" title="Onboarding Dashboard">🏠</button>
+          <button id="weekly-tracker-mini" class="nav-item nav-item--mini" data-page="weekly" title="Weekly Tracker">📅</button>
           <button class="nav-item nav-item--mini" data-page="removed" title="Removed Candidates">🗑️</button>
           <button class="nav-item nav-item--mini" data-page="exports" title="Exports">📦</button>
           <button class="nav-item nav-item--mini" data-page="archives" title="Archives">🗄️</button>
@@ -62,7 +64,6 @@
                 <option value="">All branches</option>
               </select>
               <button class="button button--ghost">Filters</button>
-              <button id="weekly-tracker" class="button button--ghost">Weekly Tracker</button>
               <button id="add-candidate" class="button button--primary">Add Candidate</button>
             </div>
           </header>
@@ -167,10 +168,7 @@
               <ul id="archives-list"></ul>
             </div>
             <div class="archives__column">
-              <div class="archives__toolbar">
-                <input id="archives-password" type="password" placeholder="Archive password" />
-                <button id="archives-load" class="button button--ghost">Load</button>
-              </div>
+              <!-- archive actions now prompt for password via modal -->
               <ul id="archives-contents"></ul>
             </div>
           </div>
@@ -274,10 +272,96 @@
         </div>
       </div>
     </div>
+
+    <!-- Archive Password Prompt (used when loading or viewing archive files) -->
+    <div id="archive-password-modal" class="modal hidden">
+      <div class="modal__card modal__card--small">
+        <div class="modal__header">
+          <h2>Archive Password</h2>
+          <button id="archive-password-close" class="icon-button">✕</button>
+        </div>
+        <form id="archive-password-form" class="modal__body modal__body--single" autocomplete="off">
+          <div class="field">
+            <label>Archive password</label>
+            <input id="archive-prompt-password" type="password" required />
+          </div>
+          <div class="muted" id="archive-password-note">Password will be cached for 10 minutes after entry.</div>
+        </form>
+        <div class="modal__footer">
+          <div class="modal__actions">
+            <button id="archive-password-cancel" class="button button--ghost" type="button">Cancel</button>
+            <button id="archive-password-submit" class="button button--primary" type="submit" form="archive-password-form">Continue</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Archive Delete Confirm (asks for program password before deleting) -->
+    <div id="archive-delete-modal" class="modal hidden">
+      <div class="modal__card modal__card--small">
+        <div class="modal__header">
+          <h2>Delete Archive</h2>
+          <button id="archive-delete-close" class="icon-button">✕</button>
+        </div>
+        <form id="archive-delete-form" class="modal__body modal__body--single" autocomplete="off">
+          <div class="field">
+            <p id="archive-delete-message">This will permanently delete the selected archive. This action cannot be undone.</p>
+          </div>
+          <div class="field">
+            <label>Enter your program password to confirm</label>
+            <input id="archive-delete-password" type="password" required />
+          </div>
+        </form>
+        <div class="modal__footer">
+          <div class="modal__actions">
+            <button id="archive-delete-cancel" class="button button--ghost" type="button">Cancel</button>
+            <button id="archive-delete-confirm" class="button button--danger" type="submit" form="archive-delete-form">Delete</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Action Result Modal -->
+    <div id="action-result-modal" class="modal hidden">
+      <div class="modal__card modal__card--small">
+        <div class="modal__header">
+          <h2 id="action-result-title"></h2>
+          <button id="action-result-close" class="icon-button">✕</button>
+        </div>
+        <div class="modal__body modal__body--single">
+          <p id="action-result-message"></p>
+        </div>
+        <div class="modal__footer">
+          <button id="action-result-ok" class="button button--primary" type="button">OK</button>
+        </div>
+      </div>
+    </div>
+    <!-- Archive Password Prompt (used when loading or viewing archive files) -->
+    <div id="archive-password-modal" class="modal hidden">
+      <div class="modal__card modal__card--small">
+        <div class="modal__header">
+          <h2>Archive Password</h2>
+          <button id="archive-password-close" class="icon-button">✕</button>
+        </div>
+        <form id="archive-password-form" class="modal__body modal__body--single">
+          <div class="field">
+            <label>Archive password</label>
+            <input id="archive-prompt-password" type="password" required />
+          </div>
+        </form>
+        <div class="modal__footer">
+          <div class="modal__actions">
+            <button id="archive-password-cancel" class="button button--ghost" type="button">Cancel</button>
+            <button id="archive-password-submit" class="button button--primary" type="submit" form="archive-password-form">Continue</button>
+          </div>
+        </div>
+      </div>
+    </div>
     <div id="auth-modal" class="modal hidden">
       <div class="modal__card modal__card--small">
         <div class="modal__header">
           <h2 id="auth-title">Sign In</h2>
+          <button id="auth-close" class="icon-button">✕</button>
         </div>
         <form id="auth-form" class="modal__body modal__body--single">
           <div class="field">

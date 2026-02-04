@@ -687,7 +687,7 @@ body {
 
 .archives__body {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 240px 1fr;
   gap: 16px;
   padding: 16px 24px 24px;
   overflow-y: auto;
@@ -722,18 +722,19 @@ body {
   overflow-y: auto;
 }
 
-.archive-item {
-  background: var(--panel-strong);
-  padding: 6px 8px;
-  border-radius: 10px;
-  cursor: pointer;
-  color: var(--text);
-}
+..archive-item { padding: 0; border-radius: 12px; background: transparent; }
+.archive-row { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 12px; border-radius:12px; background:var(--panel-strong); }
+.archive-item--active .archive-row { background: rgba(76, 125, 255, 0.12); }
+.archive-file-name { display:inline-block; padding:6px 12px; border-radius:999px; background:var(--panel); font-weight:600; font-size:13px; }
+
+
 
 .archive-item--active {
-  box-shadow: 0 0 0 2px rgba(110, 168, 254, 0.6);
-  background: rgba(110, 168, 254, 0.08);
+  /* Use filled soft highlight instead of outline to avoid clipping */
+  box-shadow: none;
+  background: rgba(76, 125, 255, 0.12);
 }
+.archive-item:focus { outline: none; background: rgba(76,125,255,0.12); }
 
 @media (max-width: 900px) {
   .modal__body {

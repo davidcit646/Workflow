@@ -5231,7 +5231,7 @@ class WorkflowGUI:
         req_neo = person.get("NEO Scheduled Date", "").strip()
 
         if not all([req_name, req_eid, req_neo]):
-            show_error(self.root, "Error", "Cannot archive! Make sure Name, Employee ID, and NEO Scheduled Date are filled.")
+            show_error(self.root, "Error", "Cannot archive! Make sure Name and NEO Scheduled Date are filled.")
             return
 
         if not ask_yes_no(self.root, "Confirm Archive", f"Archive {req_name} and remove from active list?"):

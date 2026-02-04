@@ -346,7 +346,7 @@ def _build_week_summary(week_start: datetime.date, week_end: datetime.date, entr
             day_details.append(NO_ACTIVITIES_TEXT)
         day_details.append("")
 
-    lines.append(f"TOTAL WEEKLY HOURS: {total_week_hours}")
+    lines.append(f"TOTAL WEEKLY HOURS: {total_week_hours:.2f}")
     lines.append("-" * 60)
     lines.append("")
     lines.extend(day_details)
@@ -446,9 +446,11 @@ def _build_archive_text(person: dict, start_time: str, end_time: str, total_hour
         "",
         f"== {ARCHIVE_SECTIONS['candidate_info']} ==",
         f"Name: {req_name}",
+        f"ICIMS ID: {person.get('ICIMS ID', 'N/A')}",
         f"Employee ID: {req_eid}",
         f"Hire Date (NEO): {req_neo}",
         f"Job Name: {person.get('Job Name', 'N/A')}",
+
         f"Job Location: {person.get('Job Location', 'N/A')}",
         f"Branch: {person.get('Branch', 'N/A')}",
         "",
@@ -483,10 +485,9 @@ def _archive_candidate(person: dict, archive_password: str, start_time: str, end
         raise HTTPException(status_code=500, detail="pyzipper is required for archives.") from exc
 
     req_name = person.get("Name", "").strip()
-    req_eid = person.get("Employee ID", "").strip()
     req_neo = person.get("NEO Scheduled Date", "").strip()
-    if not all([req_name, req_eid, req_neo]):
-        raise HTTPException(status_code=400, detail="Name, Employee ID, and NEO Scheduled Date are required.")
+    if not all([req_name, req_neo]):
+        raise HTTPException(status_code=400, detail="Name and NEO Scheduled Date are required.")
 
     try:
         year, month = _parse_archive_date(req_neo)
@@ -952,6 +953,48 @@ def auth_logout():
     return response
 
 
+@app.post("/api/auth/change")
+def auth_change(payload: dict):
+    """Change the program password.
+    Required payload: { "current": "current_password", "new": "new_password" }
+    User must provide the current password and it must match the stored credential.
+    """
+    if os.getenv("WORKFLOW_PASSWORD", "").strip():
+        raise HTTPException(status_code=400, detail="Cannot change password when WORKFLOW_PASSWORD is set.")
+    if not _auth_configured():
+        raise HTTPException(status_code=400, detail="Not configured.")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid payload.")
+    current = (payload or {}).get("current")
+    new = (payload or {}).get("new")
+    if not current or not new:
+        raise HTTPException(status_code=400, detail="Current and new passwords are required.")
+    stored = _load_auth()
+    salt = stored.get("salt")
+    iters = int(stored.get("iterations", 200000))
+    key = stored.get("key")
+    if not _verify_password(current, salt, iters, key):
+        raise HTTPException(status_code=401, detail="Invalid current password.")
+    # Hash and write the new password
+    cred = _hash_password(new)
+    try:
+        with open(AUTH_FILE, "w", encoding="utf-8") as handle:
+            json.dump(cred, handle)
+        try:
+            os.chmod(AUTH_FILE, 0o600)
+        except Exception:
+            pass
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to write auth file.") from exc
+    # Update runtime session
+    global ACTIVE_PASSWORD, AUTH_TOKEN
+    ACTIVE_PASSWORD = new
+    AUTH_TOKEN = uuid.uuid4().hex
+    response = JSONResponse({"status": "ok"})
+    response.set_cookie("workflow_session", AUTH_TOKEN, httponly=True, samesite="lax")
+    return response
+
+
 @app.get("/api/archive/list")
 def list_archives(request: Request):
     _get_password(request)
@@ -1037,3 +1080,21 @@ def archive_file(request: Request, archive_name: str, payload: dict):
     filename = Path(internal_path).name
     headers = {"Content-Disposition": f"attachment; filename={filename}"}
     return Response(content=data, media_type="text/plain", headers=headers)
+
+
+@app.delete("/api/archive/{archive_name}")
+def archive_delete(request: Request, archive_name: str):
+    _get_password(request)
+    archive_path = _validate_archive_name(archive_name)
+    try:
+        archive_path.unlink()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to delete archive.") from exc
+    return {"status": "ok"}
+
+
+@app.get("/api/archive/{archive_name}/download")
+def archive_download(request: Request, archive_name: str):
+    _get_password(request)
+    archive_path = _validate_archive_name(archive_name)
+    return FileResponse(str(archive_path), media_type="application/zip", filename=archive_path.name)

@@ -33,3 +33,36 @@ Thumbs.db
 
 # App data (local/sensitive)
 data/
+
+# Logs
+*.log
+uvicorn.log
+nohup.out
+
+# Node
+node_modules/
+
+# Environment/config
+.env
+.env.*
+
+# IDEs
+.idea/
+*.sublime-workspace
+
+# Coverage
+.coverage
+htmlcov/
+
+# Databases
+*.sqlite3
+*.sqlite
+
+# TLS / keys / certs
+*.pem
+*.key
+*.crt
+
+# Misc
+npm-debug.log*
+yarn-error.log*

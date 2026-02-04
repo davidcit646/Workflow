@@ -346,7 +346,7 @@ def _build_week_summary(week_start: datetime.date, week_end: datetime.date, entr
             day_details.append(NO_ACTIVITIES_TEXT)
         day_details.append("")
 
-    lines.append(f"TOTAL WEEKLY HOURS: {total_week_hours}")
+    lines.append(f"TOTAL WEEKLY HOURS: {total_week_hours:.2f}")
     lines.append("-" * 60)
     lines.append("")
     lines.extend(day_details)
@@ -446,9 +446,11 @@ def _build_archive_text(person: dict, start_time: str, end_time: str, total_hour
         "",
         f"== {ARCHIVE_SECTIONS['candidate_info']} ==",
         f"Name: {req_name}",
+        f"ICIMS ID: {person.get('ICIMS ID', 'N/A')}",
         f"Employee ID: {req_eid}",
         f"Hire Date (NEO): {req_neo}",
         f"Job Name: {person.get('Job Name', 'N/A')}",
+
         f"Job Location: {person.get('Job Location', 'N/A')}",
         f"Branch: {person.get('Branch', 'N/A')}",
         "",
@@ -483,10 +485,9 @@ def _archive_candidate(person: dict, archive_password: str, start_time: str, end
         raise HTTPException(status_code=500, detail="pyzipper is required for archives.") from exc
 
     req_name = person.get("Name", "").strip()
-    req_eid = person.get("Employee ID", "").strip()
     req_neo = person.get("NEO Scheduled Date", "").strip()
-    if not all([req_name, req_eid, req_neo]):
-        raise HTTPException(status_code=400, detail="Name, Employee ID, and NEO Scheduled Date are required.")
+    if not all([req_name, req_neo]):
+        raise HTTPException(status_code=400, detail="Name and NEO Scheduled Date are required.")
 
     try:
         year, month = _parse_archive_date(req_neo)

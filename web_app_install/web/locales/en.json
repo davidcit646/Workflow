@@ -1,0 +1,28 @@
+{
+  "details": {
+    "yes": "Yes",
+    "no_details": "No details available",
+    "job_name": "Job Name",
+    "job_location": "Job Location",
+    "manager": "Manager",
+    "branch": "Branch",
+    "phone": "Phone",
+    "email": "Email",
+    "icims": "ICIMS",
+    "eid": "EID",
+    "emergency_contact": "Emergency Contact",
+    "relationship": "Relationship",
+    "deposit_account": "Deposit Account",
+    "id_type": "ID Type",
+    "state": "State",
+    "id_number": "ID #",
+    "expiration": "Expiration",
+    "dob": "DOB",
+    "ssn": "SSN",
+    "dod_clearance": "DOD Clearance",
+    "cori_status": "CORI Status",
+    "nh_gc_status": "NH GC Status",
+    "me_gc_status": "ME GC Status",
+    "mvr": "MVR"
+  }
+}
