@@ -287,18 +287,38 @@ def _save_week_data(week_start: datetime.date, week_end: datetime.date, entries:
 
 
 def _parse_time_to_minutes(time_str: str) -> int | None:
-    value = time_str.strip()
+    value = (time_str or "").strip()
     if not value:
         return None
-    match = None
-    try:
-        match = datetime.strptime(value, "%I:%M%p")
-    except ValueError:
+    # Try common time formats first (e.g., 8:00AM, 08:00, 20:00)
+    for fmt in ("%I:%M%p", "%I%M%p", "%H:%M", "%H%M"):
         try:
-            match = datetime.strptime(value, "%H:%M")
+            match = datetime.strptime(value, fmt)
+            return match.hour * 60 + match.minute
         except ValueError:
-            return None
-    return match.hour * 60 + match.minute
+            continue
+    # Fallback: accept numeric HHMM or HMM or H formats (e.g., 0800, 800, 8)
+    digits = re.sub(r"\D", "", value)
+    if not digits:
+        return None
+    if len(digits) == 1:
+        digits = f"0{digits}00"
+    elif len(digits) == 2:
+        digits = f"{digits}00"
+    elif len(digits) == 3:
+        digits = f"0{digits}"
+    elif len(digits) == 4:
+        pass
+    else:
+        return None
+    try:
+        hours = int(digits[:2])
+        minutes = int(digits[2:])
+    except ValueError:
+        return None
+    if hours > 23 or minutes > 59:
+        return None
+    return hours * 60 + minutes
 
 
 def _calculate_day_hours(start_str: str, end_str: str) -> float:
