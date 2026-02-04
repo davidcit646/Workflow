@@ -157,7 +157,7 @@ const DETAILS_FIELDS = [
 
 const FORM_LAYOUT = [
   {
-    title: "Candidate Details",
+    title: "Candidate Details 👤",
     fields: [
       "Name",
       "ICIMS ID",
@@ -168,13 +168,13 @@ const FORM_LAYOUT = [
       "Branch",
       "Scheduled",
       "NEO Scheduled Date",
-      { type: "title", text: "Candidate Contact Info" },
+      { type: "title", text: "Candidate Contact Info 📞" },
       "Candidate Phone Number",
       "Candidate Email",
     ],
   },
   {
-    title: "Background & Clearance",
+    title: "Background & Clearance 🛡️",
     fields: [
       "Background Completion Date",
       "CORI Status",
@@ -190,7 +190,7 @@ const FORM_LAYOUT = [
     ],
   },
   {
-    title: "Uniforms & Emergency Contact",
+    title: "Uniforms & Emergency Contact 🦺",
     fields: [
       "Shirt Size",
       "Pants Size",
@@ -206,11 +206,11 @@ const FORM_LAYOUT = [
     ],
   },
   {
-    title: "Personal ID",
+    title: "Personal ID 🆔",
     fields: ["Other ID", "State", "ID No.", "Exp.", "DOB", "Social"],
   },
   {
-    title: "Additional Notes",
+    title: "Additional Notes 📝",
     fields: ["Notes"],
   },
 ];
@@ -237,46 +237,74 @@ const updateDetailsPanel = () => {
   const body = document.getElementById("details-body");
   const notes = document.getElementById("details-notes");
 
-  const person = state.people.find((item) => item.uid === state.activeUid) || null;
+  // Determine if we should show the panel
+  // We only rely on state.activeUid being present.
+  const person = state.activeUid ? (state.people.find((item) => item.uid === state.activeUid) || null) : null;
   const cardInfo = findCardInfo(state.activeUid);
-  const showPanel = state.page === "dashboard" && person;
+  const showPanel = state.page === "dashboard" && !!person;
 
   if (panel) {
+    // If we are hiding, we do NOT clear the content immediately, so it can animate out.
+    // If we are showing, we make sure the class is removed.
     panel.classList.toggle("details--hidden", !showPanel);
+    panel.setAttribute("aria-hidden", !showPanel);
   }
   if (app) {
     app.classList.toggle("app--details-hidden", !showPanel);
   }
+
+  // If we are hiding the panel, return early to preserve DOM for animation
   if (!showPanel) {
-    if (body) body.innerHTML = "";
-    if (notes) notes.textContent = "";
-    if (status) status.textContent = "";
     return;
   }
 
-  if (title) title.textContent = person.Name || cardInfo?.name || "Candidate Details";
-  if (subtitle) {
-    const subtitleParts = [cardInfo?.manager, cardInfo?.date, person["Job Location"]].filter(Boolean);
-    subtitle.textContent = subtitleParts.join(" • ");
-  }
-  if (status) {
-    status.textContent = cardInfo?.status || "";
-    status.className = badgeClass(cardInfo?.badge || "warning");
-    status.style.display = cardInfo?.status ? "inline-flex" : "none";
+  if (title) {
+    title.textContent = person.Name || cardInfo?.name || "Candidate Details";
+    // Check for existing status element in title area or create it
+    let statusEl = document.getElementById('details-status-inline');
+    if (!statusEl) {
+      statusEl = document.createElement('div');
+      statusEl.id = 'details-status-inline';
+      statusEl.className = 'details__status-inline';
+      // Insert after title
+      title.parentNode.insertBefore(statusEl, title.nextSibling);
+    }
 
-    // If the status is a scheduled NEO, make the badge clickable so user can take manual actions
-    if (cardInfo?.status && cardInfo.status.toLowerCase().startsWith("neo:")) {
-      status.style.cursor = "pointer";
-      status.title = "Click for NEO actions";
-      status.onclick = (e) => {
+    // Status logic
+    const statusText = cardInfo?.status || "";
+    // Only show if scheduled (starts with NEO:)
+    const isNeo = statusText.toLowerCase().startsWith("neo:");
+
+    if (isNeo) {
+      statusEl.textContent = statusText;
+      statusEl.className = `details__status-inline ${badgeClass(cardInfo?.badge || "warning")}`;
+      statusEl.style.display = "inline-flex";
+
+      // Clickable NEO actions
+      statusEl.style.cursor = "pointer";
+      statusEl.title = "Click for NEO actions";
+      statusEl.onclick = (e) => {
         e.stopPropagation();
         showNeoModal(person?.uid);
       };
     } else {
-      status.style.cursor = "";
-      status.title = "";
-      status.onclick = null;
+      statusEl.style.display = "none";
     }
+  }
+
+  if (subtitle) {
+    // Moved metadata logic to Body construction to ensure proper state access if needed,
+    // or we can simply clear it here if it's being repurposed.
+    // We will update it in the main body flow logic above or just keep it here.
+    // Actually, let's keep it but just empty for now, as we set it below in the main flow?
+    // The previous code had it here.
+    // The request implies it's a fixed header part.
+    // "Location Manager Branch"
+  }
+
+  // Remove the old independent status element if it exists in DOM
+  if (status) {
+    status.style.display = "none";
   }
 
   if (body) {
@@ -299,12 +327,17 @@ const updateDetailsPanel = () => {
       const sanitized = _sanitizeValue(value);
       if (sanitized === null && sanitized !== 0) return null;
       const row = document.createElement("div");
-      row.className = "details__kv";
+      // Create a slug for the label to allow specific targeting (e.g. "phone", "email")
+      const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      row.className = `details__kv details__kv--${slug}`;
+
       const labelEl = document.createElement("div");
       labelEl.className = "details__kv-label";
       labelEl.textContent = label;
+
       const valEl = document.createElement("div");
       valEl.className = "details__kv-value";
+
       // If email, render as mailto link
       if (label.toLowerCase().includes("email")) {
         const a = document.createElement("a");
@@ -321,11 +354,7 @@ const updateDetailsPanel = () => {
       return row;
     };
 
-    const addSep = () => {
-      const hr = document.createElement("hr");
-      hr.className = "details__sep";
-      body.appendChild(hr);
-    };
+
 
     const appendIfExists = (container, el) => {
       if (!el) return false;
@@ -341,147 +370,177 @@ const updateDetailsPanel = () => {
       return "";
     };
 
-    // Candidate IDs (ICIMS, EID) — always show both; Employee ID is editable inline
-    const icims = getVal("ICIMS ID", "ICIMS", "ICIMS ID Number");
-    const eid = getVal("Employee ID", "EID");
+    // Clear the subtitle logic from the top, we will use it differently or hide it
+    // The request said:
+    // NAME
+    // NEO Scheduled
+    // Location Manager Branch
 
-    const idRow = document.createElement("div");
-    idRow.className = "details__ids";
-
-    const left = document.createElement("div");
-    left.className = "details__id";
-    left.innerHTML = `<strong>${t('details.icims')}</strong> <span>${icims || ''}</span>`;
-    idRow.appendChild(left);
-
-    const right = document.createElement("div");
-    right.className = "details__id";
-    const label = document.createElement("strong");
-    label.textContent = t('details.eid');
-    const eidInput = document.createElement("input");
-    eidInput.type = "text";
-    eidInput.id = "details-employee-id";
-    eidInput.className = "input input--header input--narrow input--inline";
-    eidInput.value = eid || "";
-    eidInput.placeholder = "";
-    right.appendChild(label);
-    right.appendChild(document.createTextNode(' '));
-    right.appendChild(eidInput);
-    idRow.appendChild(right);
-
-    body.appendChild(idRow);
-    addSep();
-
-    // Save Employee ID on blur (silent save; reload data on success)
-    eidInput.addEventListener('blur', async (ev) => {
-      if (!state.activeUid) return;
-      const newVal = ev.target.value.trim();
-      const current = person["Employee ID"] || "";
-      if (newVal === current) return;
-      const response = await apiFetch(`/api/people/${state.activeUid}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ "Employee ID": newVal }),
-      });
-      if (!response.ok) {
-        await showMessageModal('Error', 'Unable to save Employee ID.');
-        eidInput.value = current;
-        return;
-      }
-      // reflect change locally
-      person["Employee ID"] = newVal;
-      loadData();
-      updateDetailsPanel();
-    });
-
-
-    // Contact (Phone, Email) - each on its own row
-    const phoneRow = makeKV(t('details.phone'), getVal("Candidate Phone Number", "Candidate Phone"));
-    const emailRow = makeKV(t('details.email'), getVal("Candidate Email", "Email"));
-    if (appendIfExists(body, phoneRow) || appendIfExists(body, emailRow)) {
-      addSep();
+    // So 'subtitle' element acts as the Metadata row now.
+    if (subtitle) {
+      const metaParts = [person["Job Location"], cardInfo?.manager, cardInfo?.branch].filter(Boolean);
+      subtitle.textContent = metaParts.join(" • ");
+      subtitle.className = "details__meta"; // New class for styling
     }
 
-    // Job details: Job Name, Job Location, Manager, Branch
-    const jobWrap = document.createElement("div");
-    jobWrap.className = "details__job";
-    appendIfExists(jobWrap, makeKV(t('details.job_name'), getVal("Job Name", "Job Name/ID")));
-    appendIfExists(jobWrap, makeKV(t('details.job_location'), getVal("Job Location")));
-    appendIfExists(jobWrap, makeKV(t('details.manager'), getVal("Manager Name", "Manager")));
-    appendIfExists(jobWrap, makeKV(t('details.branch'), getVal("Branch")));
-    if (jobWrap.children.length) {
-      body.appendChild(jobWrap);
-      addSep();
-    }
-
-    // ID / Licenses (ID Type, State, ID No., Exp., DOB, Social, DOD)
-    const idSection = document.createElement("div");
-    idSection.className = "details__licenses";
-    appendIfExists(idSection, makeKV(t('details.id_type'), getVal("ID Type", "Other ID")));
-    appendIfExists(idSection, makeKV(t('details.state'), getVal("State", "State Abbreviation")));
-    appendIfExists(idSection, makeKV(t('details.id_number'), getVal("ID No.", "License Number")));
-    appendIfExists(idSection, makeKV(t('details.expiration'), getVal("Exp.", "Expiration Date")));
-    appendIfExists(idSection, makeKV(t('details.dob'), getVal("DOB", "Date of Birth", "DOB")));
-    appendIfExists(idSection, makeKV(t('details.ssn'), getVal("Social", "Social Security Number")));
-    appendIfExists(idSection, makeKV(t('details.dod_clearance'), getVal("DOD Clearance")));
-    if (idSection.children.length) {
-      body.appendChild(idSection);
-      addSep();
-    }
-
-    // State licensing: show if any related data present (status or date/id fields)
-    const showStatus = (...keys) => {
-      return keys.some((k) => !!getVal(k));
+    // Helper to add a separator line between sections
+    const addSep = (container) => {
+      const sep = document.createElement("div");
+      sep.className = "details__section-sep";
+      container.appendChild(sep);
     };
 
-    const licenses = document.createElement("div");
-    licenses.className = "details__state-licenses";
-    if (showStatus("NH GC Status", "NHGC Status", "NH GC Expiration Date", "NHGC Expiration Date", "NH GC ID Number", "NHGC ID Number")) {
-      appendIfExists(licenses, makeKV(t('details.nh_gc_status'), getVal("NH GC Status", "NHGC Status")));
-      appendIfExists(licenses, makeKV(t('details.nh_gc_status') + ' Exp', getVal("NH GC Expiration Date", "NHGC Expiration Date")));
-      appendIfExists(licenses, makeKV(t('details.nh_gc_status') + ' ID', getVal("NH GC ID Number", "NHGC ID Number")));
-    }
-    if (showStatus("CORI Status", "CORI Submit Date", "CORI Date", "CORI Cleared Date")) {
-      appendIfExists(licenses, makeKV(t('details.cori_status'), getVal("CORI Status")));
-      appendIfExists(licenses, makeKV(t('details.cori_status') + ' Date', getVal("CORI Submit Date", "CORI Date")));
-      appendIfExists(licenses, makeKV(t('details.cori_status') + ' Cleared', getVal("CORI Cleared Date")));
-    }
-    if (showStatus("ME GC Status", "Maine GC Status", "ME GC Sent Date", "ME GC Date")) {
-      appendIfExists(licenses, makeKV(t('details.me_gc_status'), getVal("ME GC Status", "Maine GC Status")));
-      appendIfExists(licenses, makeKV(t('details.me_gc_status') + ' Sent', getVal("ME GC Sent Date", "ME GC Date")));
-    }
-    appendIfExists(licenses, makeKV(t('details.mvr'), getVal("MVR")));
-    if (licenses.children.length) {
-      body.appendChild(licenses);
-      addSep();
+    // SECTION 1: Contact Details
+    // Phone, Email
+    const phoneRow = makeKV(t('details.phone', 'Phone'), getVal("Candidate Phone Number", "Candidate Phone"));
+    const emailRow = makeKV(t('details.email', 'Email'), getVal("Candidate Email", "Email"));
+
+    if (phoneRow || emailRow) {
+      const contactHeader = document.createElement("div");
+      contactHeader.className = "details__section-title";
+      contactHeader.textContent = "Contact 📞";
+      body.appendChild(contactHeader);
+
+      appendIfExists(body, phoneRow);
+      appendIfExists(body, emailRow);
+
+      addSep(body);
     }
 
-    // Emergency Contact
+    // SECTION 2: Background Details
+    // Status, Date, Extras
+    const bgStatus = makeKV("Background Status", getVal("BG Check Status", "Background Check Status"));
+    const bgDate = makeKV("Background Date", getVal("Background Completion Date"));
+    const bgExtras = makeKV("Background Extras", getVal("Extras"));
+
+    if (bgStatus || bgDate || bgExtras) {
+      const bgHeader = document.createElement("div");
+      bgHeader.className = "details__section-title";
+      bgHeader.textContent = "Background Details";
+      body.appendChild(bgHeader);
+
+      appendIfExists(body, bgStatus);
+      appendIfExists(body, bgDate);
+      appendIfExists(body, bgExtras);
+
+      addSep(body);
+    }
+
+    // SECTION 3: State Licensing
+    // NHGC, CORI, MEGC
+    const licensingHeader = document.createElement("div");
+    licensingHeader.className = "details__section-title";
+    licensingHeader.textContent = "State Licensing";
+
+    let hasLicensing = false;
+    const licWrapper = document.createDocumentFragment();
+
+    // NHGC
+    if (showStatus("NH GC Status", "NHGC Status")) {
+      hasLicensing = true;
+      appendIfExists(licWrapper, makeKV("NHGC Status", getVal("NH GC Status", "NHGC Status")));
+      appendIfExists(licWrapper, makeKV("NH GC ID Number", getVal("NH GC ID Number", "NHGC ID Number")));
+      appendIfExists(licWrapper, makeKV("NH GC Expiration Date", getVal("NH GC Expiration Date", "NHGC Expiration Date")));
+      // Spacer row if needed? The request shows spacing between blocks. 
+      // We can add a margin to the last item of a block via CSS or an empty div styling.
+      const gap = document.createElement("div");
+      gap.style.height = "12px";
+      licWrapper.appendChild(gap);
+    }
+
+    // CORI
+    if (showStatus("CORI Status")) {
+      hasLicensing = true;
+      appendIfExists(licWrapper, makeKV("CORI Status", getVal("CORI Status")));
+      appendIfExists(licWrapper, makeKV("CORI Date", getVal("CORI Submit Date", "CORI Date")));
+      const gap = document.createElement("div");
+      gap.style.height = "12px";
+      licWrapper.appendChild(gap);
+    }
+
+    // MEGC
+    if (showStatus("ME GC Status", "Maine GC Status")) {
+      hasLicensing = true;
+      appendIfExists(licWrapper, makeKV("MEGC Status", getVal("ME GC Status", "Maine GC Status")));
+      appendIfExists(licWrapper, makeKV("ME GC Date", getVal("ME GC Sent Date", "ME GC Date")));
+    }
+
+    if (hasLicensing) {
+      body.appendChild(licensingHeader);
+      body.appendChild(licWrapper);
+      addSep(body);
+    }
+
+    // SECTION 4: Emergency Contact
     const ecName = `${person["EC First Name"] || ""} ${person["EC Last Name"] || ""}`.trim();
-    const ecWrap = document.createElement("div");
-    ecWrap.className = "details__emergency";
-    appendIfExists(ecWrap, makeKV("Emergency Contact", ecName));
-    appendIfExists(ecWrap, makeKV("Relationship", person["EC Relationship"]));
-    appendIfExists(ecWrap, makeKV("EC Phone", person["EC Phone Number"]));
-    if (ecWrap.children.length) {
-      body.appendChild(ecWrap);
-      addSep();
+    const ecRel = person["EC Relationship"];
+    const ecPh = person["EC Phone Number"];
+
+    if (ecName || ecRel || ecPh) {
+      const ecHeader = document.createElement("div");
+      ecHeader.className = "details__section-title";
+      ecHeader.textContent = "Emergency Contact";
+      body.appendChild(ecHeader);
+
+      if (ecName) appendIfExists(body, makeKV("Name", ecName));
+      appendIfExists(body, makeKV("Relationship", ecRel));
+      appendIfExists(body, makeKV("Phone", ecPh));
+
+      addSep(body);
     }
 
-    // Uniforms / Accounts
-    const uni = document.createElement("div");
-    uni.className = "details__uniforms";
-    appendIfExists(uni, makeKV("Shirt", getVal("Shirt Size")));
-    appendIfExists(uni, makeKV("Pants", getVal("Pants Size")));
-    appendIfExists(uni, makeKV("Boots", getVal("Boots")));
-    appendIfExists(uni, makeKV("Deposit Account", getVal("Deposit Account Type")));
-    appendIfExists(uni, makeKV("Bank", getVal("Bank Name")));
-    appendIfExists(uni, makeKV("Routing #", getVal("Routing Number")));
-    appendIfExists(uni, makeKV("Account #", getVal("Account Number")));
-    if (uni.children.length) body.appendChild(uni);
+
+
+    // SECTION 6: Bank Info
+    const bankName = getVal("Bank Name");
+    const routing = getVal("Routing Number", "Routing");
+    const account = getVal("Account Number", "Account");
+    const acctType = getVal("Account Type");
+
+    // We can group Uniforms and Bank Info or separate them.
+    // User request:
+    // Uniforms
+    // ...
+    // ________
+    // Bank Info
+    // ...
+
+    // SECTION 5: Uniforms restoration
+    const uShirt = getVal("Shirt Size", "Shirt");
+    const uPants = getVal("Pant Size", "Pants");
+    const uBoots = getVal("Boot Size", "Boots");
+
+    if (uShirt || uPants || uBoots) {
+      const uHeader = document.createElement("div");
+      uHeader.className = "details__section-title";
+      uHeader.textContent = "Uniforms";
+      body.appendChild(uHeader);
+
+      appendIfExists(body, makeKV("Shirt", uShirt));
+      appendIfExists(body, makeKV("Pants", uPants));
+      appendIfExists(body, makeKV("Boots", uBoots));
+
+      addSep(body);
+    }
+
+    // SECTION 6: Bank Info restoration
+    if (bankName || routing || account || acctType) {
+      const bankHeader = document.createElement("div");
+      bankHeader.className = "details__section-title";
+      bankHeader.textContent = "Bank Info";
+      body.appendChild(bankHeader);
+
+      appendIfExists(body, makeKV("Bank Name", bankName));
+      appendIfExists(body, makeKV("Routing", routing));
+      appendIfExists(body, makeKV("Account", account));
+      appendIfExists(body, makeKV("Account Type", acctType));
+      // No separator after last item usually, unless specified
+    }
+
   }
 
   if (notes) {
-    const noteValue = person.Notes || "";
+    const noteValue = (person.Notes || "").trim();
     notes.textContent = noteValue;
     notes.style.display = noteValue ? "block" : "none";
   }
@@ -712,6 +771,120 @@ const buildField = (field, person) => {
   const codeMap = state.schema?.code_maps?.[name];
   if (name === "Notes") {
     input = document.createElement("textarea");
+    input.name = name;
+    input.value = fieldValue(name, person);
+    if (placeholder) input.placeholder = placeholder;
+    wrapper.append(label, input);
+  } else if (field.type === "multiselect") {
+    // Hidden select to hold the actual values for form submission
+    input = document.createElement("select");
+    input.multiple = true;
+    input.style.display = "none";
+    input.name = name;
+
+    // Custom UI container
+    const customContainer = document.createElement("div");
+    customContainer.className = "multi-select";
+
+    // Trigger (display box)
+    const trigger = document.createElement("div");
+    trigger.className = "multi-select__trigger";
+    // input styling match
+    trigger.className += " input";
+
+    // Dropdown menu
+    const menu = document.createElement("div");
+    menu.className = "multi-select__menu";
+    menu.style.display = "none";
+
+    const selectedValues = new Set((fieldValue(name, person) || "").split(", ").filter(Boolean));
+
+    const updateTriggerText = () => {
+      if (selectedValues.size === 0) {
+        trigger.textContent = "Select options...";
+        trigger.style.color = "var(--muted)";
+      } else {
+        trigger.textContent = Array.from(selectedValues).join(", ");
+        trigger.style.color = "var(--text)";
+      }
+    };
+
+    // Toggle menu
+    trigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const isVisible = menu.style.display === "block";
+      // Close all other instances first (optional, but good practice)
+      document.querySelectorAll('.multi-select__menu').forEach(el => el.style.display = 'none');
+      menu.style.display = isVisible ? "none" : "block";
+    });
+
+    // Close on click outside
+    const closeMenu = (e) => {
+      if (!customContainer.contains(e.target)) {
+        menu.style.display = "none";
+      }
+    };
+    document.addEventListener("click", closeMenu);
+
+    // Populate options
+    (field.options || []).forEach((optVal) => {
+      // 1. Option for hidden select
+      const option = document.createElement("option");
+      option.value = optVal;
+      option.textContent = optVal;
+      if (selectedValues.has(optVal)) {
+        option.selected = true;
+      }
+      input.appendChild(option);
+
+      // 2. Option for custom UI
+      const item = document.createElement("div");
+      item.className = "multi-select__option";
+
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = selectedValues.has(optVal);
+
+      const itemLabel = document.createElement("span");
+      itemLabel.textContent = optVal;
+
+      item.addEventListener("click", (e) => {
+        e.stopPropagation();
+        cb.checked = !cb.checked;
+        if (cb.checked) {
+          selectedValues.add(optVal);
+          option.selected = true;
+        } else {
+          selectedValues.delete(optVal);
+          option.selected = false;
+        }
+        updateTriggerText();
+      });
+
+      // Prevent check click from bubbling twice if clicking checkbox directly
+      cb.addEventListener("click", (e) => e.stopPropagation());
+      cb.addEventListener("change", () => {
+        if (cb.checked) {
+          selectedValues.add(optVal);
+          option.selected = true;
+        } else {
+          selectedValues.delete(optVal);
+          option.selected = false;
+        }
+        updateTriggerText();
+      });
+
+      item.append(cb, itemLabel);
+      menu.appendChild(item);
+    });
+
+    updateTriggerText();
+    customContainer.append(trigger, menu);
+    wrapper.append(label, input, customContainer);
+    // Be careful with event listeners leaking on extensive re-renders, 
+    // but complexity is low here.
+    return wrapper;
+
   } else if (codeMap) {
     input = document.createElement("select");
     codeMap.forEach(([labelText, value]) => {
@@ -724,6 +897,8 @@ const buildField = (field, person) => {
       }
       input.appendChild(option);
     });
+    input.name = name;
+    wrapper.append(label, input);
   } else if (name === "Branch" && state.schema?.branches?.length) {
     input = document.createElement("select");
     state.schema.branches.forEach((branch) => {
@@ -735,16 +910,17 @@ const buildField = (field, person) => {
       }
       input.appendChild(option);
     });
+    input.name = name;
+    wrapper.append(label, input);
   } else {
     input = document.createElement("input");
     input.type = "text";
+    input.name = name;
+    input.value = fieldValue(name, person);
+    if (placeholder) input.placeholder = placeholder;
+    wrapper.append(label, input);
   }
 
-  input.name = name;
-  input.value = fieldValue(name, person);
-  if (placeholder) input.placeholder = placeholder;
-
-  wrapper.append(label, input);
   return wrapper;
 };
 
@@ -786,6 +962,7 @@ const buildEditCardForm = (person) => {
 
   const bgFields = [
     { name: "Background Completion Date", label: "Background Completion Date", placeholder: "MM/DD/YYYY" },
+    { name: "Extras", label: "Extras", type: "multiselect", options: ["MVR", "Amazon", "DOD Clearance"] },
     { name: "BG Check Status", label: "Background Check Status" },
   ];
 
@@ -859,60 +1036,30 @@ const buildEditCardForm = (person) => {
   let stateWrapper = null;
   let licenseWrapper = null;
 
-  const syncIdTypeVisibility = () => {
-    const value = idTypeSelect?.value || "";
-    const showLicense = value === "Driver's License" || value === "State ID";
-    if (stateWrapper) stateWrapper.style.display = showLicense ? "grid" : "none";
-    if (licenseWrapper) licenseWrapper.style.display = showLicense ? "grid" : "none";
-    if (otherWrapper) otherWrapper.style.display = value === "Other" ? "grid" : "none";
-  };
-
   licensingFields.forEach((field) => {
     const fieldEl = buildField(field, person);
     if (field.name === "ID Type") {
       fieldEl.classList.add("field--half");
       basics.appendChild(fieldEl);
-
-      const stateAbbrev = document.createElement("div");
-      stateAbbrev.className = "field field--half";
-
-      const stateLabel = document.createElement("label");
-      stateLabel.textContent = "State Abbreviation";
-
-      const stateInput = document.createElement("input");
-      stateInput.type = "text";
-      stateInput.name = "State Abbreviation";
-      stateInput.value = fieldValue("State Abbreviation", person);
-
-      stateAbbrev.append(stateLabel, stateInput);
-      stateAbbrev.style.display = "none";
-      basics.appendChild(stateAbbrev);
-      stateWrapper = stateAbbrev;
-
-      const otherField = document.createElement("div");
-      otherField.className = "field";
-
-      const otherLabel = document.createElement("label");
-      otherLabel.textContent = "Other ID Type";
-
-      const otherInput = document.createElement("input");
-      otherInput.type = "text";
-      otherInput.name = "ID Type Other";
-      otherInput.value = fieldValue("ID Type Other", person);
-
-      otherField.append(otherLabel, otherInput);
-      otherField.style.display = "none";
-      basics.appendChild(otherField);
-      otherWrapper = otherField;
-
       idTypeSelect = fieldEl.querySelector("select");
-      if (idTypeSelect) {
-        idTypeSelect.addEventListener("change", syncIdTypeVisibility);
-      }
       return;
     }
 
-    if (field.name === "License Number") {
+    if (field.name === "State") {
+      fieldEl.classList.add("field--half");
+      basics.appendChild(fieldEl);
+      stateWrapper = fieldEl;
+      return;
+    }
+
+    if (field.name === "Other ID") {
+      fieldEl.classList.add("field--half");
+      basics.appendChild(fieldEl);
+      otherWrapper = fieldEl;
+      return;
+    }
+
+    if (field.name === "ID No.") {
       fieldEl.classList.add("field--half");
       basics.appendChild(fieldEl);
       licenseWrapper = fieldEl;
@@ -922,7 +1069,25 @@ const buildEditCardForm = (person) => {
     basics.appendChild(fieldEl);
   });
 
-  syncIdTypeVisibility();
+  // Conditional Logic for ID Type
+  if (idTypeSelect && stateWrapper && otherWrapper && licenseWrapper) {
+    const updateVisibility = () => {
+      const val = idTypeSelect.value;
+      // Show State and ID No. for Driver's License or State ID
+      const showLicenseOrStateID = val.includes("License") || val.includes("State ID");
+      const showOther = val.toLowerCase().includes("other");
+
+      stateWrapper.style.display = showLicenseOrStateID ? "grid" : "none";
+      licenseWrapper.style.display = showLicenseOrStateID ? "grid" : "none";
+      otherWrapper.style.display = showOther ? "grid" : "none";
+    };
+
+    // Run once on load
+    updateVisibility();
+
+    // Run on change
+    idTypeSelect.addEventListener("change", updateVisibility);
+  }
 
   jobFields.forEach((field) => {
     const fieldEl = buildField(field, person);
@@ -1071,7 +1236,12 @@ const collectFormData = () => {
   const data = {};
   Array.from(form.elements).forEach((element) => {
     if (!element.name) return;
-    data[element.name] = element.value;
+    if (element.tagName === "SELECT" && element.multiple) {
+      const values = Array.from(element.selectedOptions).map(opt => opt.value);
+      data[element.name] = values.join(", ");
+    } else {
+      data[element.name] = element.value;
+    }
   });
   // Normalize NEO date: convert YYYY-MM-DD -> MM/DD/YYYY for compatibility
   if (data["NEO Scheduled Date"] && data["NEO Scheduled Date"].includes("-")) {
@@ -1255,7 +1425,7 @@ const handleAuthSubmit = async (event) => {
       submitBtn.disabled = false;
     }
   }
-  };
+};
 
 const openArchiveModal = () => {
   if (!state.activeUid) return;
@@ -2040,7 +2210,7 @@ const openWeeklyTracker = async () => {
     range.textContent = `Week of ${data.week_start} to ${data.week_end}`;
   }
   // Render days in a fixed Monday->Sunday order inside a 7-column grid
-  const days = ["Friday","Saturday","Sunday","Monday","Tuesday","Wednesday","Thursday"];
+  const days = ["Friday", "Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"];
   const grid = document.createElement('div');
   grid.className = 'weekly__grid';
   days.forEach((day) => {
