@@ -1860,7 +1860,7 @@ class WeeklyTrackerGUI(tk.Toplevel):
                     day_details.append(NO_ACTIVITIES_TEXT)
                 day_details.append("")
 
-            lines.append(f"TOTAL WEEKLY HOURS: {total_week_hours}")
+            lines.append(f"TOTAL WEEKLY HOURS: {total_week_hours:.2f}")
             lines.append("-" * 60)
             lines.append("")
             lines.extend(day_details)
