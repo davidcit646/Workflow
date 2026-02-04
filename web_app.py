@@ -290,8 +290,8 @@ def _parse_time_to_minutes(time_str: str) -> int | None:
     value = (time_str or "").strip()
     if not value:
         return None
-    # Try common time formats first (e.g., 8:00AM, 08:00, 20:00)
-    for fmt in ("%I:%M%p", "%I%M%p", "%H:%M", "%H%M"):
+    # Try common time formats with explicit separators or AM/PM (avoid ambiguous short-digit parsing)
+    for fmt in ("%I:%M%p", "%I%M%p", "%H:%M"):
         try:
             match = datetime.strptime(value, fmt)
             return match.hour * 60 + match.minute
