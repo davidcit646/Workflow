@@ -24,6 +24,66 @@ const state = {
   removed: {
     list: [],
   },
+  flyoutPanel: null,
+  weeklyData: null, // Store weekly data for todo integration
+  todos: [], // Todo list items
+};
+
+/** Flyout panel IDs mapping - all flyout panels including details */
+const FLYOUT_PANELS = {
+  details: 'details-panel',
+  todo: 'todo-panel',
+  weekly: 'weekly-panel',
+};
+
+/** Show a flyout panel with transition */
+const _showFlyoutPanel = (panelEl) => {
+  if (!panelEl) return;
+  panelEl.classList.remove('details--hidden');
+};
+
+/** Hide a flyout panel element */
+const _hideFlyoutPanel = (panelEl) => {
+  if (!panelEl) return;
+  panelEl.classList.add('details--hidden');
+};
+
+/** Toggle flyout panels with smart switching logic
+ * - If clicking same panel: close it
+ * - If clicking different panel: switch to it
+ * - If candidate details is open and switching to weekly/todo: close details first
+ */
+const toggleFlyoutPanel = (panelName) => {
+  const currentPanel = state.flyoutPanel;
+  const targetPanelEl = document.getElementById(FLYOUT_PANELS[panelName]);
+
+  if (!targetPanelEl) return;
+
+  // If clicking the same panel that's currently open, close it
+  if (currentPanel === panelName) {
+    _hideFlyoutPanel(targetPanelEl);
+    state.flyoutPanel = null;
+    return;
+  }
+
+  // If there's a current panel open, close it first
+  if (currentPanel) {
+    const currentEl = document.getElementById(FLYOUT_PANELS[currentPanel]);
+    if (currentEl) _hideFlyoutPanel(currentEl);
+  }
+
+  // Open the target panel
+  _showFlyoutPanel(targetPanelEl);
+  state.flyoutPanel = panelName;
+};
+
+/** Close all flyout panels */
+const closeAllFlyoutPanels = () => {
+  Object.values(FLYOUT_PANELS).forEach((panelId) => {
+    const panelEl = document.getElementById(panelId);
+    if (panelEl) _hideFlyoutPanel(panelEl);
+  });
+  state.flyoutPanel = null;
 };
 
 /** Route API calls through Electron IPC to Python backend (no HTTP server when loading from file://) */
@@ -512,7 +572,21 @@ const updateDetailsPanel = () => {
 };
 
 const selectCandidate = (uid) => {
-  state.activeUid = state.activeUid === uid ? null : uid;
+  // Toggle selection
+  if (state.activeUid === uid) {
+    // Deselecting - close everything
+    state.activeUid = null;
+    closeAllFlyoutPanels();
+  } else {
+    // Selecting new candidate
+    state.activeUid = uid;
+    // Close any other flyout panels when showing candidate details
+    if (state.flyoutPanel && state.flyoutPanel !== 'details') {
+      const currentEl = document.getElementById(FLYOUT_PANELS[state.flyoutPanel]);
+      if (currentEl) _hideFlyoutPanel(currentEl);
+      state.flyoutPanel = null;
+    }
+  }
   updateCardSelection();
   updateDetailsPanel();
 };
@@ -694,6 +768,32 @@ const normalizeField = (field) => {
   };
 };
 
+const formatDateInput = (input) => {
+  input.addEventListener('input', (e) => {
+    let value = e.target.value.replace(/\D/g, ''); // Remove non-digits
+    if (value.length >= 2) {
+      value = value.slice(0, 2) + '/' + value.slice(2);
+    }
+    if (value.length >= 5) {
+      value = value.slice(0, 5) + '/' + value.slice(5, 9);
+    }
+    e.target.value = value;
+  });
+};
+
+const formatSsnInput = (input) => {
+  input.addEventListener('input', (e) => {
+    let value = e.target.value.replace(/\D/g, ''); // Remove non-digits
+    if (value.length >= 3) {
+      value = value.slice(0, 3) + '-' + value.slice(3);
+    }
+    if (value.length >= 6) {
+      value = value.slice(0, 6) + '-' + value.slice(6, 9);
+    }
+    e.target.value = value;
+  });
+};
+
 const buildField = (field, person) => {
   const wrapper = document.createElement("div");
   wrapper.className = "field";
@@ -732,6 +832,14 @@ const buildField = (field, person) => {
   } else {
     input = document.createElement("input");
     input.type = "text";
+    // Add auto-formatting for date fields
+    if (/date|exp|dob/i.test(name)) {
+      formatDateInput(input);
+    }
+    // Add auto-formatting for SSN fields
+    if (/ssn|social/i.test(name)) {
+      formatSsnInput(input);
+    }
   }
 
   input.name = name;
@@ -744,109 +852,99 @@ const buildField = (field, person) => {
 
 const buildEditCardForm = (person) => {
   const form = document.getElementById("candidate-form");
-  const basics = document.getElementById("edit-card-basics");
-  const job = document.getElementById("edit-card-job");
-  const background = document.getElementById("edit-card-background");
-  if (!form || !basics || !job || !background || !state.schema) return;
-  basics.innerHTML = "";
-  job.innerHTML = "";
-  background.innerHTML = "";
-
-  const fields = [
-    // Employee ID removed per design; leave space for future fields
-  ];
+  const cardContact = document.getElementById("card-contact");
+  const cardId = document.getElementById("card-id");
+  const cardJob = document.getElementById("card-job");
+  const cardEmergency = document.getElementById("card-emergency");
+  const cardUniforms = document.getElementById("card-uniforms");
+  const cardBackground = document.getElementById("card-background");
+  const cardCori = document.getElementById("card-cori");
+  const cardNhgc = document.getElementById("card-nhgc");
+  const cardMegc = document.getElementById("card-megc");
+  
+  if (!form || !cardContact || !cardId || !cardJob || !cardEmergency || !cardUniforms || 
+      !cardBackground || !cardCori || !cardNhgc || !cardMegc || !state.schema) return;
+  
+  // Clear all cards
+  cardContact.innerHTML = "";
+  cardId.innerHTML = "";
+  cardJob.innerHTML = "";
+  cardEmergency.innerHTML = "";
+  cardUniforms.innerHTML = "";
+  cardBackground.innerHTML = "";
+  cardCori.innerHTML = "";
+  cardNhgc.innerHTML = "";
+  cardMegc.innerHTML = "";
 
   const contactFields = [
-    { name: "Candidate Phone Number", label: "Phone Number" , placeholder: "e.g. ###-###-####" , tooltip: "Candidate's phone number. Please include area code, e.g. 603-555-1234."},
-    { name: "Candidate Email", label: "Email" , placeholder: "e.g. example@example.com" , tooltip: "Candidate's email address. Please enter a valid email address, e.g. example@example.com."},
+    { name: "Candidate Phone Number", label: "Phone Number", placeholder: "###-###-####", tooltip: "Candidate's phone number. Please include area code, e.g. 603-555-1234." },
+    { name: "Candidate Email", label: "Email", placeholder: "e.g. example@example.com", tooltip: "Candidate's email address. Please enter a valid email address, e.g. example@example.com." },
   ];
 
   const licensingFields = [
-    { name: "ID Type", label: "ID Type" , placeholder: "e.g. Driver's License, State ID, Passport, Other" , tooltip: "Primary form of identification for the candidate. Please specify the type of ID, such as Driver's License, State ID, Passport, or Other."},
-    { name: "Other ID", label: "Other ID" , placeholder: "Specify if ID Type is 'Other'" , tooltip: "Additional details about the candidate's primary form of identification, if needed. Only fill out if 'ID Type' is set to 'Other' or if you have additional relevant information about the ID."},
-    { name: "State", label: "State Abbreviation" , placeholder: "Only for Driver's License or State ID" , tooltip: "Two-letter state abbreviation for driver's license or state ID, e.g. NH, MA, ME. Leave blank if not applicable."},
-    { name: "ID No.", label: "ID #" , placeholder: "e.g. License Number" , tooltip: "ID number from the candidate's primary form of identification, such as driver's license or passport. Please enter the ID number exactly as it appears on the ID."},
-    { name: "Exp.", label: "Expiration", placeholder: "MM/DD/YYYY" , tooltip: "Expiration date of ID. Please enter in format MM/DD/YYYY."},
-    { name: "DOB", label: "DOB", placeholder: "MM/DD/YYYY" , tooltip: "Date of Birth. Please enter in format MM/DD/YYYY."},
-    { name: "Social", label: "SSN" , placeholder: "###-##-####" , tooltip: "Social Security Number. Please enter in format ###-##-####."},
+    { name: "ID Type", label: "ID Type", placeholder: "e.g. Driver's License, State ID, Passport, Other", tooltip: "Primary form of identification for the candidate." },
+    { name: "Other ID", label: "Other ID", placeholder: "Specify if ID Type is 'Other'", tooltip: "Additional details about the candidate's primary form of identification." },
+    { name: "State", label: "State Abbreviation", placeholder: "e.g. NH, MA, ME", tooltip: "Two-letter state abbreviation for driver's license or state ID." },
+    { name: "ID No.", label: "ID #", placeholder: "e.g. License Number", tooltip: "ID number from the candidate's primary form of identification." },
+    { name: "Exp.", label: "Expiration", placeholder: "MM/DD/YYYY", tooltip: "Expiration date of ID." },
+    { name: "DOB", label: "DOB", placeholder: "MM/DD/YYYY", tooltip: "Date of Birth." },
+    { name: "Social", label: "SSN", placeholder: "###-##-####", tooltip: "Social Security Number." },
   ];
 
   const jobFields = [
-    { name: "Job Name", label: "ID/Name" , placeholder: "e.g. 12345FX" , tooltip: "Job ID and name for the position this candidate is being hired for. Please select the job that corresponds to the hiring manager."},
-    { name: "Job Location", label: "Job Location" , placeholder: "e.g. Manchester, NH" , tooltip: "Location of the job this candidate is being hired for. Please select the location that corresponds to the hiring manager."},
-    { name: "Manager Name", label: "Manager Name" , placeholder: "Full name of hiring manager" , tooltip: "Hiring manager for this candidate. Please select the manager that corresponds to the job location."},
-    { name: "Branch", label: "Branch" , placeholder: "Select branch from dropdown" , tooltip: "Branch assignment for this candidate. Please select the branch that corresponds to the job location or hiring manager."},
+    { name: "Job Name", label: "ID/Name", placeholder: "e.g. 12345FX", tooltip: "Job ID and name for the position this candidate is being hired for." },
+    { name: "Job Location", label: "Job Location", placeholder: "e.g. Manchester, NH", tooltip: "Location of the job this candidate is being hired for." },
+    { name: "Manager Name", label: "Manager Name", placeholder: "Full name of hiring manager", tooltip: "Hiring manager for this candidate." },
+    { name: "Branch", label: "Branch", placeholder: "Select branch from dropdown", tooltip: "Branch assignment for this candidate." },
   ];
 
   const bgFields = [
-    { name: "Background Completion Date", label: "Background Completion Date", placeholder: "MM/DD/YYYY" , tooltip: "Date when background check was completed. Leave blank if not completed yet."},
-    { name: "BG Check Status", label: "Background Check Status" , placeholder: "e.g. Clear, Consider, etc." , tooltip: "Overall status of background check. Leave blank if not completed yet."},
+    { name: "Background Completion Date", label: "Background Completion Date", placeholder: "MM/DD/YYYY", tooltip: "Date when background check was completed." },
+    { name: "BG Check Status", label: "Background Check Status", placeholder: "e.g. Clear, Consider, etc.", tooltip: "Overall status of background check." },
+    { name: "MVR", label: "MVR", placeholder: "Motor Vehicle Record status", tooltip: "Motor Vehicle Record check status." },
+    { name: "DOD Clearance", label: "DOD Clearance", placeholder: "e.g. Yes/No or clearance level", tooltip: "Department of Defense clearance status." },
   ];
 
   const coriFields = [
-    { name: "CORI Status", label: "CORI Status" , placeholder: "e.g. Clear, Consider, etc." , tooltip: "CORI status. Only applicable for candidates in Massachusetts."},
-    { name: "CORI Submit Date", label: "CORI Submit Date", placeholder: "MM/DD/YYYY" , tooltip: "Date when CORI was submitted for processing. Leave blank if not submitted yet."},
-    { name: "CORI Cleared Date", label: "CORI Cleared Date", placeholder: "MM/DD/YYYY" , tooltip: "Date when CORI was cleared. Leave blank if not cleared yet."},
+    { name: "CORI Status", label: "CORI Status", placeholder: "e.g. Clear, Consider, etc.", tooltip: "CORI status. Only applicable for candidates in Massachusetts." },
+    { name: "CORI Submit Date", label: "CORI Submit Date", placeholder: "MM/DD/YYYY", tooltip: "Date when CORI was submitted for processing." },
+    { name: "CORI Cleared Date", label: "CORI Cleared Date", placeholder: "MM/DD/YYYY", tooltip: "Date when CORI was cleared." },
   ];
 
   const nhgcFields = [
-    { name: "NH GC Status", label: "NH GC Status" , placeholder: "e.g. Clear, Consider, etc." , tooltip: "NH GC status. Only applicable for candidates in New Hampshire."},
-    { name: "NH GC Expiration Date", label: "NH GC Expiration Date", placeholder: "MM/DD/YYYY"  , tooltip: "Expiration date of NH GC. Leave blank if not applicable or unknown."},
-    { name: "NH GC ID Number", label: "NH GC ID Number" , placeholder: "e.g. License or Certificate Number" , tooltip: "ID number associated with NH GC, if applicable."},
+    { name: "NH GC Status", label: "NH GC Status", placeholder: "e.g. Clear, Consider, etc.", tooltip: "NH GC status. Only applicable for candidates in New Hampshire." },
+    { name: "NH GC Expiration Date", label: "NH GC Expiration Date", placeholder: "MM/DD/YYYY", tooltip: "Expiration date of NH GC." },
+    { name: "NH GC ID Number", label: "NH GC ID Number", placeholder: "e.g. License or Certificate Number", tooltip: "ID number associated with NH GC." },
   ];
 
   const meGcFields = [
-    { name: "ME GC Status", label: "ME GC Status" , placeholder: "e.g. Clear, Consider, etc.", tooltip: "Maine GC status. Only applicable for candidates in Maine."},
-    { name: "ME GC Sent Date", label: "ME GC Sent Date", placeholder: "MM/DD/YYYY" , tooltip: "Date when Maine GC was sent for processing. Leave blank if not sent yet."},
+    { name: "ME GC Status", label: "ME GC Status", placeholder: "e.g. Clear, Consider, etc.", tooltip: "Maine GC status. Only applicable for candidates in Maine." },
+    { name: "ME GC Sent Date", label: "ME GC Sent Date", placeholder: "MM/DD/YYYY", tooltip: "Date when Maine GC was sent for processing." },
   ];
 
   const emergencyFields = [
-    { name: "EC Name", label: "Name" , placeholder: "Full name of emergency contact", tooltip: "Emergency contact information is required and recommended in case we need to reach someone on the candidate's behalf."},
-    { name: "EC Relationship", label: "Relationship" , placeholder: "Relationship to candidate, e.g. Spouse, Parent, Friend, etc." ,tooltip: "Relationship of emergency contact to candidate"},
-    { name: "EC Phone Number", label: "Phone Number", placeholder: "###-###-####" , tooltip: "Phone number of emergency contact. Please include area code."},
+    { name: "EC Name", label: "Name", placeholder: "Full name of emergency contact", tooltip: "Emergency contact information." },
+    { name: "EC Relationship", label: "Relationship", placeholder: "e.g. Spouse, Parent, Friend", tooltip: "Relationship of emergency contact to candidate." },
+    { name: "EC Phone Number", label: "Phone Number", placeholder: "###-###-####", tooltip: "Phone number of emergency contact." },
   ];
 
   const uniformsFields = [
-    { name: "Shirt Size", label: "Shirt Size" , placeholder: "e.g. Small, Medium, Large" , tooltip: "Shirt size for uniform. If unsure, select closest size or leave blank."},
-    { name: "Pants Size", label: "Pants Size" , placeholder: "Wasit/Inseem" , tooltip: "Pants size for uniform. If unsure, select closest size or leave blank."},
-    { name: "Boots", label: "Boots" , placeholder: "Boot size or Yes/No" , tooltip: "Boot size for uniform, or indicate if boots are needed. If unsure, select closest size or leave blank."},
-    { name: "Deposit Account Type", label: "Deposit Account Type" , tooltip: "Type of deposit account for payroll, e.g. Checking, Savings."},
-    { name: "Bank Name", label: "Bank Name" , placeholder: "Name of bank for payroll deposit" , tooltip: "Name of bank where payroll will be deposited."},
-    { name: "Routing Number", label: "Routing Number" , placeholder: "Bank routing number for payroll deposit" , tooltip: "Routing number for bank where payroll will be deposited."},
-    { name: "Account Number", label: "Account Number" , placeholder: "Bank account number for payroll deposit" , tooltip: "Account number for bank where payroll will be deposited."},
+    { name: "Shirt Size", label: "Shirt Size", placeholder: "e.g. Small, Medium, Large", tooltip: "Shirt size for uniform." },
+    { name: "Pants Size", label: "Pants Size", placeholder: "Waist/Inseam", tooltip: "Pants size for uniform." },
+    { name: "Boots", label: "Boots", placeholder: "Boot size or Yes/No", tooltip: "Boot size for uniform." },
+    { name: "Deposit Account Type", label: "Deposit Account Type", placeholder: "e.g. Checking, Savings", tooltip: "Type of deposit account for payroll." },
+    { name: "Bank Name", label: "Bank Name", placeholder: "Name of bank", tooltip: "Name of bank where payroll will be deposited." },
+    { name: "Routing Number", label: "Routing Number", placeholder: "9-digit routing number", tooltip: "Routing number for bank." },
+    { name: "Account Number", label: "Account Number", placeholder: "Account number", tooltip: "Account number for bank." },
   ];
 
-  fields.forEach((field) => {
-    const fieldEl = buildField(field, person);
-    basics.appendChild(fieldEl);
-  });
-
-  // Only show divider if there were any basic fields (avoids empty separator when fields are removed)
-  if (fields.length) {
-    const basicsDivider = document.createElement("div");
-    basicsDivider.className = "edit-card__divider";
-    basics.appendChild(basicsDivider);
-  }
-
-  const contactTitle = document.createElement("div");
-  contactTitle.className = "edit-card__section";
-  contactTitle.textContent = "Contact Info";
-  basics.appendChild(contactTitle);
-
+  // Populate Contact Info Card
   contactFields.forEach((field) => {
     const fieldEl = buildField(field, person);
-    basics.appendChild(fieldEl);
+    cardContact.appendChild(fieldEl);
   });
 
-  const licensingDivider = document.createElement("div");
-  licensingDivider.className = "edit-card__divider";
-  basics.appendChild(licensingDivider);
-
-  const licensingTitle = document.createElement("div");
-  licensingTitle.className = "edit-card__section";
-  licensingTitle.textContent = "Licensing Info";
-  basics.appendChild(licensingTitle);
-
+  // Populate ID/Licensing Card with conditional fields
   let idTypeSelect = null;
   let otherWrapper = null;
   let stateWrapper = null;
@@ -855,153 +953,89 @@ const buildEditCardForm = (person) => {
   const syncIdTypeVisibility = () => {
     const value = idTypeSelect?.value || "";
     const showLicense = value === "Driver's License" || value === "State ID";
-    if (stateWrapper) stateWrapper.style.display = showLicense ? "grid" : "none";
-    if (licenseWrapper) licenseWrapper.style.display = showLicense ? "grid" : "none";
-    if (otherWrapper) otherWrapper.style.display = value === "Other" ? "grid" : "none";
+    if (stateWrapper) stateWrapper.style.display = showLicense ? "flex" : "none";
+    if (licenseWrapper) licenseWrapper.style.display = showLicense ? "flex" : "none";
+    if (otherWrapper) otherWrapper.style.display = value === "Other" ? "flex" : "none";
   };
 
   licensingFields.forEach((field) => {
     const fieldEl = buildField(field, person);
+    
     if (field.name === "ID Type") {
-      fieldEl.classList.add("field--half");
-      basics.appendChild(fieldEl);
-
-      const stateAbbrev = document.createElement("div");
-      stateAbbrev.className = "field field--half";
-
-      const stateLabel = document.createElement("label");
-      stateLabel.textContent = "State Abbreviation";
-
-      const stateInput = document.createElement("input");
-      stateInput.type = "text";
-      stateInput.name = "State Abbreviation";
-      stateInput.value = fieldValue("State Abbreviation", person);
-
-      stateAbbrev.append(stateLabel, stateInput);
-      stateAbbrev.style.display = "none";
-      basics.appendChild(stateAbbrev);
-      stateWrapper = stateAbbrev;
-
-      const otherField = document.createElement("div");
-      otherField.className = "field";
-
-      const otherLabel = document.createElement("label");
-      otherLabel.textContent = "Other ID Type";
-
-      const otherInput = document.createElement("input");
-      otherInput.type = "text";
-      otherInput.name = "ID Type Other";
-      otherInput.value = fieldValue("ID Type Other", person);
-
-      otherField.append(otherLabel, otherInput);
-      otherField.style.display = "none";
-      basics.appendChild(otherField);
-      otherWrapper = otherField;
-
+      cardId.appendChild(fieldEl);
       idTypeSelect = fieldEl.querySelector("select");
       if (idTypeSelect) {
         idTypeSelect.addEventListener("change", syncIdTypeVisibility);
       }
       return;
     }
-
-    if (field.name === "License Number") {
-      fieldEl.classList.add("field--half");
-      basics.appendChild(fieldEl);
-      licenseWrapper = fieldEl;
+    
+    if (field.name === "Other ID") {
+      otherWrapper = fieldEl;
+      otherWrapper.style.display = "none";
+      cardId.appendChild(fieldEl);
       return;
     }
-
-    basics.appendChild(fieldEl);
+    
+    if (field.name === "State") {
+      stateWrapper = fieldEl;
+      stateWrapper.style.display = "none";
+      cardId.appendChild(fieldEl);
+      return;
+    }
+    
+    if (field.name === "ID No.") {
+      licenseWrapper = fieldEl;
+      licenseWrapper.style.display = "none";
+      cardId.appendChild(fieldEl);
+      return;
+    }
+    
+    cardId.appendChild(fieldEl);
   });
 
   syncIdTypeVisibility();
 
+  // Populate Job Info Card
   jobFields.forEach((field) => {
     const fieldEl = buildField(field, person);
-    job.appendChild(fieldEl);
+    cardJob.appendChild(fieldEl);
   });
 
-  const bgTitle = document.createElement("div");
-  bgTitle.className = "edit-card__section";
-  bgTitle.textContent = "Background Check";
-  background.appendChild(bgTitle);
-
-  bgFields.forEach((field) => {
-    const fieldEl = buildField(field, person);
-    fieldEl.classList.add("field--half");
-    background.appendChild(fieldEl);
-  });
-
-  const coriDivider = document.createElement("div");
-  coriDivider.className = "edit-card__divider";
-  background.appendChild(coriDivider);
-
-  const coriTitle = document.createElement("div");
-  coriTitle.className = "edit-card__section";
-  coriTitle.textContent = "Criminal Offender Record Information Request (CORI)";
-  background.appendChild(coriTitle);
-
-  coriFields.forEach((field) => {
-    const fieldEl = buildField(field, person);
-    fieldEl.classList.add("field--half");
-    background.appendChild(fieldEl);
-  });
-
-  const nhgcDivider = document.createElement("div");
-  nhgcDivider.className = "edit-card__divider";
-  background.appendChild(nhgcDivider);
-
-  const nhgcTitle = document.createElement("div");
-  nhgcTitle.className = "edit-card__section";
-  nhgcTitle.textContent = "New Hampshire Guard Licensing (NHGC)";
-  background.appendChild(nhgcTitle);
-
-  nhgcFields.forEach((field) => {
-    const fieldEl = buildField(field, person);
-    fieldEl.classList.add("field--half");
-    background.appendChild(fieldEl);
-  });
-
-  const meGcDivider = document.createElement("div");
-  meGcDivider.className = "edit-card__divider";
-  background.appendChild(meGcDivider);
-
-  const meGcTitle = document.createElement("div");
-  meGcTitle.className = "edit-card__section";
-  meGcTitle.textContent = "Maine Guard Licensing";
-  background.appendChild(meGcTitle);
-
-  meGcFields.forEach((field) => {
-    const fieldEl = buildField(field, person);
-    fieldEl.classList.add("field--half");
-    background.appendChild(fieldEl);
-  });
-
-  const emergencyTitle = document.createElement("div");
-  emergencyTitle.className = "edit-card__section";
-  emergencyTitle.textContent = "Emergency Contact";
-  job.appendChild(emergencyTitle);
-
+  // Populate Emergency Contact Card
   emergencyFields.forEach((field) => {
     const fieldEl = buildField(field, person);
-    fieldEl.classList.add("field--half");
-    job.appendChild(fieldEl);
+    cardEmergency.appendChild(fieldEl);
   });
 
-  const uniformsDivider = document.createElement("div");
-  uniformsDivider.className = "edit-card__divider";
-  job.appendChild(uniformsDivider);
-
-  const uniformsTitle = document.createElement("div");
-  uniformsTitle.className = "edit-card__section";
-  uniformsTitle.textContent = "Uniforms";
-  job.appendChild(uniformsTitle);
-
+  // Populate Uniforms Card
   uniformsFields.forEach((field) => {
     const fieldEl = buildField(field, person);
-    fieldEl.classList.add("field--half");
-    job.appendChild(fieldEl);
+    cardUniforms.appendChild(fieldEl);
+  });
+
+  // Populate Background Check Card
+  bgFields.forEach((field) => {
+    const fieldEl = buildField(field, person);
+    cardBackground.appendChild(fieldEl);
+  });
+
+  // Populate CORI Card
+  coriFields.forEach((field) => {
+    const fieldEl = buildField(field, person);
+    cardCori.appendChild(fieldEl);
+  });
+
+  // Populate NH GC Card
+  nhgcFields.forEach((field) => {
+    const fieldEl = buildField(field, person);
+    cardNhgc.appendChild(fieldEl);
+  });
+
+  // Populate ME GC Card
+  meGcFields.forEach((field) => {
+    const fieldEl = buildField(field, person);
+    cardMegc.appendChild(fieldEl);
   });
 };
 
@@ -1908,10 +1942,12 @@ const setupEventListeners = () => {
   const branchFilter = document.getElementById("branch-filter");
   const exportButton = document.getElementById("export-csv");
   const weeklyButton = document.getElementById("weekly-tracker");
-  const weeklyClose = document.getElementById("weekly-close");
-  const weeklyCancel = document.getElementById("weekly-cancel");
-  const weeklyForm = document.getElementById("weekly-form");
-  const weeklyExport = document.getElementById("weekly-export");
+  const weeklyPanelClose = document.getElementById("weekly-panel-close");
+  const weeklyPanelSave = document.getElementById("weekly-panel-save");
+  const weeklyPanelExport = document.getElementById("weekly-panel-export");
+  const todoButton = document.getElementById("todo-tracker");
+  const todoAddBtn = document.getElementById("todo-add");
+  const todoInput = document.getElementById("todo-input");
   const archiveModalClose = document.getElementById("archive-close");
   const archiveModalCancel = document.getElementById("archive-cancel");
   const archiveForm = document.getElementById("archive-form");
@@ -1977,12 +2013,21 @@ const setupEventListeners = () => {
   if (weeklyButton) weeklyButton.addEventListener("click", openWeeklyTracker);
   const weeklyMini = document.getElementById('weekly-tracker-mini');
   if (weeklyMini) weeklyMini.addEventListener('click', openWeeklyTracker);
-  if (weeklyClose) weeklyClose.addEventListener("click", closeWeeklyTracker);
-  if (weeklyCancel) weeklyCancel.addEventListener("click", closeWeeklyTracker);
-  if (weeklyForm) weeklyForm.addEventListener("submit", saveWeeklyTracker);
-  if (weeklyExport) {
-    weeklyExport.addEventListener("click", () => {
+  if (weeklyPanelClose) weeklyPanelClose.addEventListener("click", closeWeeklyTracker);
+  if (weeklyPanelSave) weeklyPanelSave.addEventListener("click", saveWeeklyTracker);
+  if (weeklyPanelExport) {
+    weeklyPanelExport.addEventListener("click", () => {
       window.location.href = "/api/weekly/summary";
+    });
+  }
+  // Todo panel event listeners
+  if (todoButton) todoButton.addEventListener("click", openTodoPanel);
+  const todoMini = document.getElementById('todo-tracker-mini');
+  if (todoMini) todoMini.addEventListener('click', openTodoPanel);
+  if (todoAddBtn) todoAddBtn.addEventListener("click", addTodo);
+  if (todoInput) {
+    todoInput.addEventListener("keypress", (e) => {
+      if (e.key === "Enter") addTodo();
     });
   }
   if (archiveModalClose) archiveModalClose.addEventListener("click", closeArchiveModal);
@@ -2014,12 +2059,8 @@ const setupEventListeners = () => {
   }
   if (board) {
     board.addEventListener("click", () => {
-      // Close any open flyout panels (todo/weekly) when clicking on board
-      if (state.flyoutPanel && state.flyoutPanel !== 'details') {
-        const currentEl = document.getElementById(FLYOUT_PANELS[state.flyoutPanel]);
-        if (currentEl) _hideFlyoutPanel(currentEl);
-        state.flyoutPanel = null;
-      }
+      // Close any open flyout panels when clicking on board
+      closeAllFlyoutPanels();
       if (!state.activeUid) return;
       state.activeUid = null;
       updateCardSelection();
@@ -2032,79 +2073,100 @@ const setupEventListeners = () => {
 };
 
 const openWeeklyTracker = async () => {
-  const modal = document.getElementById("weekly-modal");
-  const form = document.getElementById("weekly-form");
-  const range = document.getElementById("weekly-range");
-  if (!modal || !form) return;
+  const panel = document.getElementById("weekly-panel");
+  const body = document.getElementById("weekly-panel-body");
+  const rangeEl = document.getElementById("weekly-panel-range");
+  if (!panel || !body) return;
+
   const response = await apiFetch("/api/weekly/current");
   if (!response.ok) {
     alert("Unable to load weekly tracker.");
     return;
   }
   const data = await response.json();
-  form.innerHTML = "";
-  if (range) {
-    range.textContent = `Week of ${data.week_start} to ${data.week_end}`;
+  state.weeklyData = data; // Store for todo integration
+
+  body.innerHTML = "";
+  if (rangeEl) {
+    rangeEl.textContent = `Week of ${data.week_start} to ${data.week_end}`;
   }
-  // Render days in a fixed Monday->Sunday order inside a 7-column grid
+
+  // Render days in a scrollable list format matching details panel style
   const days = ["Friday","Saturday","Sunday","Monday","Tuesday","Wednesday","Thursday"];
-  const grid = document.createElement('div');
-  grid.className = 'weekly__grid';
+  const daysContainer = document.createElement('div');
+  daysContainer.className = 'weekly__days-list';
+
   days.forEach((day) => {
     const info = (data.entries && data.entries[day]) ? data.entries[day] : { start: '', end: '', content: '' };
 
-    const container = document.createElement("div");
-    container.className = "weekly__day";
+    const daySection = document.createElement("div");
+    daySection.className = "weekly__day-section";
+    daySection.dataset.day = day;
 
     const header = document.createElement("div");
-    header.className = "weekly__day-header";
+    header.className = "weekly__day-header-bar";
+
     const title = document.createElement("div");
-    title.className = "weekly__day-title";
+    title.className = "weekly__day-title-bar";
     title.textContent = day;
 
     const timeWrap = document.createElement("div");
-    timeWrap.className = "weekly__time";
+    timeWrap.className = "weekly__time-inline";
+
     const startInput = document.createElement("input");
     startInput.type = "text";
     startInput.name = `${day}__start`;
     startInput.placeholder = "Start";
     startInput.value = info.start || "";
+    startInput.className = "weekly__time-input";
+
     const endInput = document.createElement("input");
     endInput.type = "text";
     endInput.name = `${day}__end`;
     endInput.placeholder = "End";
     endInput.value = info.end || "";
-    timeWrap.append(startInput, endInput);
+    endInput.className = "weekly__time-input";
+
+    timeWrap.append(startInput, document.createTextNode(" - "), endInput);
     header.append(title, timeWrap);
 
     const textarea = document.createElement("textarea");
     textarea.name = `${day}__content`;
-    textarea.placeholder = ""; // open text area
+    textarea.placeholder = "What did you work on?";
     textarea.value = info.content || "";
+    textarea.className = "weekly__day-textarea";
 
-    container.append(header, textarea);
-    grid.appendChild(container);
+    daySection.append(header, textarea);
+    daysContainer.appendChild(daySection);
   });
-  form.appendChild(grid);
-  modal.classList.remove("hidden");
+
+  body.appendChild(daysContainer);
+
+  // Apply any pending todo entries to the weekly tracker
+  applyPendingTodosToWeeklyTracker();
+
+  // Use toggleFlyoutPanel to handle the flyout behavior
+  toggleFlyoutPanel('weekly');
 };
 
 const closeWeeklyTracker = () => {
-  const modal = document.getElementById("weekly-modal");
-  if (modal) modal.classList.add("hidden");
+  const panel = document.getElementById("weekly-panel");
+  if (panel) _hideFlyoutPanel(panel);
+  if (state.flyoutPanel === 'weekly') state.flyoutPanel = null;
 };
 
-const saveWeeklyTracker = async (event) => {
-  event.preventDefault();
-  const form = document.getElementById("weekly-form");
-  if (!form) return;
+const saveWeeklyTracker = async () => {
+  const body = document.getElementById("weekly-panel-body");
+  if (!body) return;
+
   const entries = {};
-  Array.from(form.elements).forEach((element) => {
+  body.querySelectorAll('input, textarea').forEach((element) => {
     const [day, field] = element.name.split("__");
     if (!day || !field) return;
     entries[day] = entries[day] || { content: "", start: "", end: "" };
     entries[day][field] = element.value;
   });
+
   const response = await apiFetch("/api/weekly/current", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -2117,15 +2179,193 @@ const saveWeeklyTracker = async (event) => {
   closeWeeklyTracker();
 };
 
+/* --- Todo List Panel Functions --- */
+
+const getTodayName = () => {
+  const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  return days[new Date().getDay()];
+};
+
+const openTodoPanel = () => {
+  renderTodoList();
+  toggleFlyoutPanel('todo');
+};
+
+const renderTodoList = () => {
+  const listEl = document.getElementById("todo-list");
+  if (!listEl) return;
+
+  listEl.innerHTML = "";
+
+  if (state.todos.length === 0) {
+    const emptyMsg = document.createElement("li");
+    emptyMsg.className = "todo__item todo__item--empty";
+    emptyMsg.textContent = "No tasks yet. Add one above!";
+    listEl.appendChild(emptyMsg);
+    return;
+  }
+
+  state.todos.forEach((todo, index) => {
+    const item = document.createElement("li");
+    item.className = `todo__item ${todo.completed ? 'todo__item--completed' : ''}`;
+    item.dataset.index = index;
+
+    const text = document.createElement("span");
+    text.className = "todo__item-text";
+    text.textContent = todo.text;
+
+    const actions = document.createElement("div");
+    actions.className = "todo__item-actions";
+
+    // Complete button (checkmark)
+    const completeBtn = document.createElement("button");
+    completeBtn.className = "todo__btn";
+    completeBtn.innerHTML = todo.completed ? "✅" : "⬜";
+    completeBtn.title = todo.completed ? "Mark incomplete" : "Mark complete";
+    completeBtn.addEventListener("click", () => toggleTodoComplete(index));
+
+    // Delete button (X)
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "todo__btn todo__btn--delete";
+    deleteBtn.innerHTML = "❌";
+    deleteBtn.title = "Delete task";
+    deleteBtn.addEventListener("click", () => deleteTodo(index));
+
+    actions.appendChild(completeBtn);
+    actions.appendChild(deleteBtn);
+    item.append(text, actions);
+    listEl.appendChild(item);
+  });
+};
+
+const addTodo = () => {
+  const input = document.getElementById("todo-input");
+  if (!input) return;
+
+  const text = input.value.trim();
+  if (!text) return;
+
+  state.todos.push({
+    text,
+    completed: false,
+    createdAt: new Date().toISOString(),
+  });
+
+  input.value = "";
+  renderTodoList();
+};
+
+const queueCompletedTodoForWeekly = (taskText) => {
+  const today = getTodayName();
+  if (!state.pendingWeeklyEntries) {
+    state.pendingWeeklyEntries = {};
+  }
+  if (!state.pendingWeeklyEntries[today]) {
+    state.pendingWeeklyEntries[today] = [];
+  }
+  const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  state.pendingWeeklyEntries[today].push(`[${timestamp}] Completed: ${taskText}`);
+};
+
+const applyPendingTodosToWeeklyTracker = () => {
+  const body = document.getElementById("weekly-panel-body");
+  if (!body || !state.pendingWeeklyEntries) return;
+
+  Object.entries(state.pendingWeeklyEntries).forEach(([day, entries]) => {
+    const daySection = body.querySelector(`[data-day="${day}"]`);
+    if (!daySection) return;
+    const textarea = daySection.querySelector('textarea');
+    if (!textarea) return;
+
+    const currentContent = textarea.value.trim();
+    const newContent = entries.join("\n");
+
+    if (currentContent) {
+      textarea.value = currentContent + "\n" + newContent;
+    } else {
+      textarea.value = newContent;
+    }
+  });
+
+  // Clear pending entries after applying
+  state.pendingWeeklyEntries = {};
+};
+
+const toggleTodoComplete = (index) => {
+  const todo = state.todos[index];
+  if (!todo) return;
+
+  const wasCompleted = todo.completed;
+  todo.completed = !todo.completed;
+
+  // If marking as complete (not uncompleting), queue it for weekly tracker
+  if (todo.completed && !wasCompleted) {
+    queueCompletedTodoForWeekly(todo.text);
+    // If weekly panel is open, apply immediately
+    const weeklyPanel = document.getElementById("weekly-panel");
+    if (weeklyPanel && !weeklyPanel.classList.contains("details--hidden")) {
+      applyPendingTodosToWeeklyTracker();
+    }
+  }
+
+  renderTodoList();
+};
+
+const deleteTodo = (index) => {
+  state.todos.splice(index, 1);
+  renderTodoList();
+};
+
+/** Add completed todo to today's weekly tracker entry */
+const addTodoToWeeklyTracker = (taskText) => {
+  const today = getTodayName();
+  const body = document.getElementById("weekly-panel-body");
+
+  if (!body) {
+    // Weekly panel not open, queue for later
+    queueCompletedTodoForWeekly(taskText);
+    return;
+  }
+
+  // Find today's section
+  const todaySection = body.querySelector(`[data-day="${today}"]`);
+  if (!todaySection) {
+    // Weekly panel open but today not found, queue for later
+    queueCompletedTodoForWeekly(taskText);
+    return;
+  }
+
+  // Find the textarea for today
+  const textarea = todaySection.querySelector('textarea');
+  if (!textarea) return;
+
+  // Append the completed task to today's content
+  const currentContent = textarea.value.trim();
+  const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const newEntry = `[${timestamp}] Completed: ${taskText}`;
+
+  if (currentContent) {
+    textarea.value = currentContent + "\n" + newEntry;
+  } else {
+    textarea.value = newEntry;
+  }
+};
+
 initTheme();
 setupEventListeners();
 initPasswordToggles();
 observeNewPasswordFields();
+console.log('Initializing app, checking auth status...');
 apiFetch("/api/auth/status")
-  .then((response) => response.json())
+  .then((response) => {
+    console.log('Auth status response:', response.ok, response.status);
+    return response.json();
+  })
   .then((status) => {
+    console.log('Auth status:', status);
     state.auth = status;
     if (!status.authenticated) {
+      console.log('Not authenticated, showing auth modal...');
       showAuthModal();
       return;
     }
@@ -2134,6 +2374,8 @@ apiFetch("/api/auth/status")
       return loadData();
     });
   })
-  .catch(() => {
+  .catch((err) => {
+    console.error('Auth check error:', err);
+    console.log('Showing auth modal due to error...');
     showAuthModal();
   });

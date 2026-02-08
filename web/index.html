@@ -233,7 +233,7 @@
         <!-- Edit Candidate Modal -->
         <div id="edit-modal" class="modal hidden">
           <div class="modal__overlay"></div>
-          <div class="modal__container">
+          <div class="modal__container modal__container--wide">
             <div class="modal__header">
               <div class="modal__title">
                 <h2 id="modal-title">Edit Candidate</h2>
@@ -244,29 +244,89 @@
             
             <div class="modal__body">
               <form id="candidate-form" class="modal__form">
+                <!-- Quick Info Banner -->
                 <div class="modal__quick-info">
-                  <input id="edit-name" form="candidate-form" name="Name" placeholder="Candidate name" class="modal__quick-input" />
+                  <input id="edit-name" form="candidate-form" name="Name" placeholder="Candidate name" class="modal__quick-input modal__quick-input--name" />
                   <input id="edit-icims" form="candidate-form" name="ICIMS ID" placeholder="ICIMS ID" class="modal__quick-input modal__quick-input--narrow" />
                   <input id="edit-neo-date" form="candidate-form" name="NEO Scheduled Date" type="date" class="modal__quick-input modal__quick-input--date" />
                   <input id="edit-employee-id" form="candidate-form" name="Employee ID" placeholder="Employee #" class="modal__quick-input modal__quick-input--narrow" />
                 </div>
                 
-                <div class="modal__content">
-                  <div class="edit-cards">
-                    <article class="edit-card" id="card-basics">
-                      <div class="edit-card__header">Pre NEO</div>
-                      <div class="edit-card__body" id="edit-card-basics"></div>
-                    </article>
-                    
-                    <article class="edit-card" id="card-job">
-                      <div class="edit-card__header">At NEO</div>
-                      <div class="edit-card__body" id="edit-card-job"></div>
-                    </article>
-                    
-                    <article class="edit-card" id="card-background">
-                      <div class="edit-card__header">Post NEO</div>
-                      <div class="edit-card__body" id="edit-card-background"></div>
-                    </article>
+                <!-- Dashboard-style 3 Column Board -->
+                <div class="modal__board">
+                  <!-- Column 1: Pre NEO -->
+                  <div class="modal__column" data-column="pre-neo">
+                    <div class="modal__column-header">
+                      <div class="modal__column-title">Pre NEO</div>
+                      <div class="modal__column-subtitle">Candidate basics & contact info</div>
+                    </div>
+                    <div class="modal__column-content" id="column-pre-neo">
+                      <!-- Job Info Card -->
+                      <div class="modal__card">
+                        <div class="modal__card-header">Job Information</div>
+                        <div class="modal__card-body" id="card-job"></div>
+                      </div>
+                      <!-- Contact Info Card -->
+                      <div class="modal__card">
+                        <div class="modal__card-header">Contact Information</div>
+                        <div class="modal__card-body" id="card-contact"></div>
+                      </div>
+                      <!-- ID/Licensing Card -->
+                      <div class="modal__card">
+                        <div class="modal__card-header">Identification</div>
+                        <div class="modal__card-body" id="card-id"></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Column 2: At NEO -->
+                  <div class="modal__column" data-column="at-neo">
+                    <div class="modal__column-header">
+                      <div class="modal__column-title">At NEO</div>
+                      <div class="modal__column-subtitle">Job details & emergency contact</div>
+                    </div>
+                    <div class="modal__column-content" id="column-at-neo">
+                      <!-- Emergency Contact Card -->
+                      <div class="modal__card">
+                        <div class="modal__card-header">Emergency Contact</div>
+                        <div class="modal__card-body" id="card-emergency"></div>
+                      </div>
+                      <!-- Uniforms Card -->
+                      <div class="modal__card">
+                        <div class="modal__card-header">Uniforms & Payroll</div>
+                        <div class="modal__card-body" id="card-uniforms"></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Column 3: Post NEO -->
+                  <div class="modal__column" data-column="post-neo">
+                    <div class="modal__column-header">
+                      <div class="modal__column-title">Post NEO</div>
+                      <div class="modal__column-subtitle">Background & licensing status</div>
+                    </div>
+                    <div class="modal__column-content" id="column-post-neo">
+                      <!-- Background Check Card -->
+                      <div class="modal__card">
+                        <div class="modal__card-header">Background Check</div>
+                        <div class="modal__card-body" id="card-background"></div>
+                      </div>
+                      <!-- CORI Card -->
+                      <div class="modal__card">
+                        <div class="modal__card-header">CORI (MA)</div>
+                        <div class="modal__card-body" id="card-cori"></div>
+                      </div>
+                      <!-- NH GC Card -->
+                      <div class="modal__card">
+                        <div class="modal__card-header">NH Guard Licensing</div>
+                        <div class="modal__card-body" id="card-nhgc"></div>
+                      </div>
+                      <!-- ME GC Card -->
+                      <div class="modal__card">
+                        <div class="modal__card-header">ME Guard Licensing</div>
+                        <div class="modal__card-body" id="card-megc"></div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </form>
@@ -306,9 +366,11 @@
               <div class="details__title">Weekly Tracker</div>
               <div class="details__subtitle" id="weekly-panel-range"></div>
             </div>
+            <button id="weekly-panel-close" class="icon-button" aria-label="Close weekly tracker">✕</button>
           </div>
           <div class="details__body" id="weekly-panel-body"></div>
           <div class="details__actions">
+            <button id="weekly-panel-export" class="button button--ghost button--full" type="button">Export Summary</button>
             <button id="weekly-panel-save" class="button button--primary button--full">Save Week</button>
           </div>
         </div>
@@ -333,25 +395,6 @@
       </aside>
     </div>
 
-    <div id="weekly-modal" class="modal hidden">
-      <div class="modal__card modal__card--wide">
-        <div class="modal__header">
-          <h2>Weekly Tracker</h2>
-          <button id="weekly-close" class="icon-button">✕</button>
-        </div>
-        <div class="weekly__meta">
-          <span id="weekly-range"></span>
-        </div>
-        <form id="weekly-form" class="weekly__body"></form>
-        <div class="modal__footer">
-          <button id="weekly-export" class="button button--ghost" type="button">Export Summary</button>
-          <div class="modal__actions">
-            <button id="weekly-cancel" class="button button--ghost" type="button">Close</button>
-            <button id="weekly-save" class="button button--primary" type="submit" form="weekly-form">Save Week</button>
-          </div>
-        </div>
-      </div>
-    </div>
     <div id="archive-modal" class="modal hidden">
       <div class="modal__card modal__card--small">
         <div class="modal__header">
