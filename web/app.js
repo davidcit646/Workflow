@@ -26,13 +26,37 @@ const state = {
   },
 };
 
+/** Route API calls through Electron IPC to Python backend (no HTTP server when loading from file://) */
 const apiFetch = async (url, options = {}) => {
-  const response = await fetch(url, options);
-  if (response.status === 401) {
+  const method = (options.method || "GET").toUpperCase();
+  let body = options.body ?? null;
+  if (typeof body === "string") {
+    try { body = JSON.parse(body); } catch { /* pass through */ }
+  }
+  const request = { method, url, body };
+  const result = await window.electronAPI.apiRequest(request);
+  if (result.status === 401) {
     await showAuthModal();
     throw new Error("Unauthorized");
   }
-  return response;
+  const data = result.data;
+  return {
+    ok: result.ok,
+    status: result.status,
+    json: () => Promise.resolve(data !== undefined ? data : (result.error ? { detail: result.error } : null)),
+    text: () => Promise.resolve(
+      typeof data === "string" ? data : (data?.content ?? (data ? JSON.stringify(data) : ""))
+    ),
+    blob: () => {
+      if (data?.base64) {
+        const bin = atob(data.base64);
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        return Promise.resolve(new Blob([arr]));
+      }
+      return Promise.resolve(new Blob([typeof data === "string" ? data : JSON.stringify(data ?? "")]));
+    },
+  };
 };
 
 const setTheme = (theme) => {
@@ -1025,10 +1049,14 @@ const openEditPage = async (uid = null) => {
     }
   }
 
+  const editModal = document.getElementById("edit-modal");
+  if (editModal) editModal.classList.remove("hidden");
   switchPage("edit");
 };
 
 const closeEditPage = () => {
+  const editModal = document.getElementById("edit-modal");
+  if (editModal) editModal.classList.add("hidden");
   switchPage("dashboard");
   updateCardSelection();
   updateDetailsPanel();
@@ -1094,7 +1122,7 @@ const showAuthModal = async () => {
   const title = document.getElementById("auth-title");
   if (!modal || !title) return false;
   try {
-    const response = await fetch("/api/auth/status");
+    const response = await apiFetch("/api/auth/status");
     if (!response.ok) return false;
     const status = await response.json();
     state.auth = status;
@@ -1166,7 +1194,7 @@ const handleChangePasswordSubmit = async (event) => {
     alert('New password and confirmation do not match.');
     return;
   }
-  const response = await fetch('/api/auth/change', {
+  const response = await apiFetch('/api/auth/change', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ current, new: nw }),
@@ -1193,7 +1221,7 @@ const handleAuthSubmit = async (event) => {
       submitBtn.dataset.submitting = '1';
       submitBtn.disabled = true;
     }
-    const response = await fetch(endpoint, {
+    const response = await apiFetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password }),
@@ -1907,6 +1935,10 @@ const setupEventListeners = () => {
   console.log('setupEventListeners: addButton present?', !!addButton);
   if (addButton) addButton.addEventListener("click", () => openEditPage().catch(err => { console.error('openEditPage error', err); alert('Unable to open editor. Check console for details.'); }));
   if (cancelButton) cancelButton.addEventListener("click", closeEditPage);
+  const modalClose = document.getElementById("modal-close");
+  const editModalOverlay = document.querySelector("#edit-modal .modal__overlay");
+  if (modalClose) modalClose.addEventListener("click", closeEditPage);
+  if (editModalOverlay) editModalOverlay.addEventListener("click", closeEditPage);
   if (detailsEdit) detailsEdit.addEventListener("click", () => openEditPage(state.activeUid));
   if (sidebarToggle) sidebarToggle.addEventListener('click', () => {
     const appEl = document.querySelector('.app');
@@ -2089,7 +2121,7 @@ initTheme();
 setupEventListeners();
 initPasswordToggles();
 observeNewPasswordFields();
-fetch("/api/auth/status")
+apiFetch("/api/auth/status")
   .then((response) => response.json())
   .then((status) => {
     state.auth = status;

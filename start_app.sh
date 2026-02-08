@@ -1,5 +1,7 @@
 #!/bin/bash
 
+unset ELECTRON_RUN_AS_NODE
+
 # Workflow App Launcher
 # Quick start script for debugging the Electron application
 
