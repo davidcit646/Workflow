@@ -934,7 +934,7 @@ body[data-theme="light"] .details__sep {
 }
 
 .modal__card {
-  width: min(880px, 92vw);
+/*  width: min(880px, 92vw); */
   max-height: 88vh;
   overflow: hidden;
   background: var(--panel);
