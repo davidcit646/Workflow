@@ -27,74 +27,12 @@ const state = {
 };
 
 const apiFetch = async (url, options = {}) => {
-  const method = (options.method || "GET").toUpperCase();
-  const headers = options.headers || {};
-  let body = options.body;
-
-  if (typeof body === "string" && headers && String(headers["Content-Type"] || headers["content-type"] || "").includes("application/json")) {
-    try {
-      body = JSON.parse(body);
-    } catch (e) {
-      // leave as string
-    }
-  }
-
-  // Option B: IPC-based API when running inside Electron.
-  if (window.electronAPI && typeof window.electronAPI.apiRequest === "function") {
-    const result = await window.electronAPI.apiRequest({
-      method,
-      url,
-      headers,
-      body,
-    });
-
-    // Avoid deadlocking auth flows: auth endpoints themselves may return 401
-    // (e.g. invalid password). If we call showAuthModal() here, we'll re-enter
-    // the modal while already awaiting auth completion.
-    const isAuthEndpoint = typeof url === 'string' && url.startsWith('/api/auth/');
-    if (!isAuthEndpoint && result && result.status === 401) {
-      await showAuthModal();
-      throw new Error("Unauthorized");
-    }
-
-    return {
-      ok: Boolean(result && result.ok),
-      status: result ? result.status : 500,
-      json: async () => {
-        if (result && result.ok) {
-          return result.data || {};
-        }
-        const detail = (result && (result.error || result.detail)) ? String(result.error || result.detail) : 'Request failed';
-        return { detail };
-      },
-      text: async () => {
-        if (result && result.ok) {
-          return JSON.stringify(result.data || {});
-        }
-        const detail = (result && (result.error || result.detail)) ? String(result.error || result.detail) : 'Request failed';
-        return JSON.stringify({ detail });
-      },
-    };
-  }
-
   const response = await fetch(url, options);
-  const isAuthEndpoint = typeof url === 'string' && url.startsWith('/api/auth/');
-  if (!isAuthEndpoint && response.status === 401) {
+  if (response.status === 401) {
     await showAuthModal();
     throw new Error("Unauthorized");
   }
   return response;
-};
-
-const downloadBlob = (filename, blob) => {
-  const a = document.createElement('a');
-  const url = URL.createObjectURL(blob);
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
 const setTheme = (theme) => {
@@ -105,26 +43,6 @@ const setTheme = (theme) => {
     toggle.textContent = theme === "dark" ? "Light mode" : "Dark mode";
   }
 };
-
-// Desktop/Electron startup: prompt for auth immediately and then load app.
-document.addEventListener('DOMContentLoaded', () => {
-  const mainAuthModal = document.getElementById('auth-modal');
-  if (!mainAuthModal) {
-    return;
-  }
-
-  (async () => {
-    try {
-      const authed = await showAuthModal();
-      if (!authed) return;
-      await fetchSchema();
-      await loadData();
-      switchPage('dashboard');
-    } catch (err) {
-      console.error('Startup auth failed:', err);
-    }
-  })();
-});
 
 const initTheme = () => {
   const stored = localStorage.getItem("workflow-theme");
@@ -157,7 +75,7 @@ const t = (key, fallback) => {
 
 async function initI18n() {
   try {
-    const response = await fetch(`./locales/${I18N.locale}.json`);
+    const response = await fetch(`/static/locales/${I18N.locale}.json`);
     if (response.ok) {
       I18N.messages[I18N.locale] = await response.json();
     } else {
@@ -187,11 +105,11 @@ const initPasswordToggles = () => {
     btn.className = 'password-toggle';
     btn.title = 'Show password';
     btn.setAttribute('aria-pressed', 'false');
-    btn.textContent = 'Show';
+    btn.innerHTML = '👁️';
     btn.addEventListener('click', () => {
       const show = input.type === 'password';
       input.type = show ? 'text' : 'password';
-      btn.textContent = show ? 'Hide' : 'Show';
+      btn.innerHTML = show ? '🙈' : '👁️';
       btn.title = show ? 'Hide password' : 'Show password';
       btn.setAttribute('aria-pressed', show ? 'true' : 'false');
     });
@@ -241,24 +159,18 @@ const FORM_LAYOUT = [
   {
     title: "Candidate Details",
     fields: [
+      "Name",
       "ICIMS ID",
       "Employee ID",
       "Job Name",
-      "Job Location", 
+      "Job Location",
       "Manager Name",
       "Branch",
       "Scheduled",
       "NEO Scheduled Date",
-      { type: "title", text: "Emergency Contact" },
-      "EC First Name",
-      "EC Last Name", 
-      "EC Relationship",
-      "EC Phone Number",
-      { type: "title", text: "Bank Info" },
-      "Bank Name",
-      "Routing Number",
-      "Account Number",
-      "Deposit Account Type",
+      { type: "title", text: "Candidate Contact Info" },
+      "Candidate Phone Number",
+      "Candidate Email",
     ],
   },
   {
@@ -266,9 +178,10 @@ const FORM_LAYOUT = [
     fields: [
       "Background Completion Date",
       "CORI Status",
-      "CORI Submit Date", 
+      "CORI Submit Date",
       "CORI Cleared Date",
       "NH GC Status",
+      "NH GC Expiration Date",
       "NH GC ID Number",
       "ME GC Status",
       "ME GC Sent Date",
@@ -277,16 +190,24 @@ const FORM_LAYOUT = [
     ],
   },
   {
-    title: "Uniforms & Sizing",
+    title: "Uniforms & Emergency Contact",
     fields: [
       "Shirt Size",
-      "Pants Size", 
+      "Pants Size",
       "Boots",
+      "Deposit Account Type",
+      "Bank Name",
+      "Routing Number",
+      "Account Number",
+      "EC First Name",
+      "EC Last Name",
+      "EC Relationship",
+      "EC Phone Number",
     ],
   },
   {
     title: "Personal ID",
-    fields: ["Other ID", "State", "ID No.", "DOB", "Social"],
+    fields: ["Other ID", "State", "ID No.", "Exp.", "DOB", "Social"],
   },
   {
     title: "Additional Notes",
@@ -302,50 +223,10 @@ const updateCardSelection = () => {
 
 const findCardInfo = (uid) => {
   if (!uid) return null;
-  const targetUid = String(uid);
   return Object.values(state.columns)
     .flat()
-    .find((item) => String(item.uid ?? "") === targetUid);
+    .find((item) => item.uid === uid);
 };
-
-const findPersonByUid = (uid) => {
-  if (!uid) return null;
-  const targetUid = String(uid);
-  return (
-    state.people.find((item) => String(item.uid ?? item.id ?? "") === targetUid) || null
-  );
-};
-
-// ============================================================================
-// FLYOUT PANEL SYSTEM (core definitions — must be before updateDetailsPanel)
-// ============================================================================
-const FLYOUT_PANELS = {
-  details: 'details-panel',
-  weekly: 'weekly-panel',
-  todo: 'todo-panel',
-};
-
-state.flyoutPanel = null;
-state.todos = { list: [] };
-
-const _hideFlyoutPanel = (panelEl) => {
-  if (!panelEl) return;
-  panelEl.classList.add('details--hidden');
-  panelEl.setAttribute('aria-hidden', 'true');
-};
-
-const _showFlyoutPanel = (panelEl) => {
-  if (!panelEl) return;
-  const board = document.querySelector('#page-dashboard .board');
-  if (board) {
-    const boardRect = board.getBoundingClientRect();
-    panelEl.style.setProperty('--details-top', `${boardRect.top}px`);
-  }
-  panelEl.classList.remove('details--hidden');
-  panelEl.setAttribute('aria-hidden', 'false');
-};
-
-const FLYOUT_TRANSITION_MS = 350;
 
 const updateDetailsPanel = () => {
   const app = document.querySelector(".app");
@@ -356,224 +237,258 @@ const updateDetailsPanel = () => {
   const body = document.getElementById("details-body");
   const notes = document.getElementById("details-notes");
 
-  // Determine if we should show the panel
-  // We only rely on state.activeUid being present.
-  const person = state.activeUid ? findPersonByUid(state.activeUid) : null;
+  const person = state.people.find((item) => item.uid === state.activeUid) || null;
   const cardInfo = findCardInfo(state.activeUid);
-  const showPanel = state.page === "dashboard" && !!person;
+  const showPanel = state.page === "dashboard" && person;
 
   if (panel) {
-    if (showPanel) {
-      // If another flyout panel is open, hide it first then show details
-      if (state.flyoutPanel && state.flyoutPanel !== 'details') {
-        const currentEl = document.getElementById(FLYOUT_PANELS[state.flyoutPanel]);
-        if (currentEl) _hideFlyoutPanel(currentEl);
-        state.flyoutPanel = 'details';
-        setTimeout(() => {
-          _showFlyoutPanel(panel);
-        }, FLYOUT_TRANSITION_MS);
-      } else {
-        state.flyoutPanel = 'details';
-        _showFlyoutPanel(panel);
-      }
-    } else {
-      _hideFlyoutPanel(panel);
-      if (state.flyoutPanel === 'details') {
-        state.flyoutPanel = null;
-      }
-    }
+    panel.classList.toggle("details--hidden", !showPanel);
   }
   if (app) {
     app.classList.toggle("app--details-hidden", !showPanel);
   }
-
-  // If we are hiding the panel, return early to preserve DOM for animation
   if (!showPanel) {
+    if (body) body.innerHTML = "";
+    if (notes) notes.textContent = "";
+    if (status) status.textContent = "";
     return;
   }
 
-  if (title) {
-    title.textContent = person.Name || cardInfo?.name || "Candidate Details";
-    // Check for existing status element in title area or create it
-    let statusEl = document.getElementById('details-status-inline');
-    if (!statusEl) {
-      statusEl = document.createElement('div');
-      statusEl.id = 'details-status-inline';
-      statusEl.className = 'details__status-inline';
-      // Insert after title
-      title.parentNode.insertBefore(statusEl, title.nextSibling);
-    }
+  if (title) title.textContent = person.Name || cardInfo?.name || "Candidate Details";
+  if (subtitle) {
+    const subtitleParts = [cardInfo?.manager, cardInfo?.date, person["Job Location"]].filter(Boolean);
+    subtitle.textContent = subtitleParts.join(" • ");
+  }
+  if (status) {
+    status.textContent = cardInfo?.status || "";
+    status.className = badgeClass(cardInfo?.badge || "warning");
+    status.style.display = cardInfo?.status ? "inline-flex" : "none";
 
-    // Status logic
-    const statusText = cardInfo?.status || "";
-    // Only show if scheduled (starts with NEO:)
-    const isNeo = statusText.toLowerCase().startsWith("neo:");
-
-    if (isNeo) {
-      statusEl.textContent = statusText;
-      statusEl.className = `details__status-inline ${badgeClass(cardInfo?.badge || "warning")}`;
-      statusEl.style.display = "inline-flex";
-
-      // Clickable NEO actions
-      statusEl.style.cursor = "pointer";
-      statusEl.title = "Click for NEO actions";
-      statusEl.onclick = (e) => {
+    // If the status is a scheduled NEO, make the badge clickable so user can take manual actions
+    if (cardInfo?.status && cardInfo.status.toLowerCase().startsWith("neo:")) {
+      status.style.cursor = "pointer";
+      status.title = "Click for NEO actions";
+      status.onclick = (e) => {
         e.stopPropagation();
         showNeoModal(person?.uid);
       };
     } else {
-      statusEl.style.display = "none";
+      status.style.cursor = "";
+      status.title = "";
+      status.onclick = null;
     }
-  }
-
-  if (subtitle) {
-    // Moved metadata logic to Body construction to ensure proper state access if needed,
-    // or we can simply clear it here if it's being repurposed.
-    // We will update it in the main body flow logic above or just keep it here.
-    // Actually, let's keep it but just empty for now, as we set it below in the main flow?
-    // The previous code had it here.
-    // The request implies it's a fixed header part.
-    // "Location Manager Branch"
-  }
-
-  // Remove the old independent status element if it exists in DOM
-  if (status) {
-    status.style.display = "none";
   }
 
   if (body) {
     body.innerHTML = "";
 
-    // Subtitle: location / manager / branch metadata
-    if (subtitle) {
-      const metaParts = [person["Job Location"], cardInfo?.manager, person["Branch"]].filter(Boolean);
-      subtitle.textContent = metaParts.join(" \u2022 ");
-      subtitle.className = "details__meta";
-    }
-
-    // Helper: check if a value is meaningful (non-empty, non-placeholder)
-    const hasValue = (key) => {
-      const v = person[key];
-      if (v === null || v === undefined) return false;
+    const _sanitizeValue = (v) => {
+      // Accept numbers and non-empty strings, and truthy booleans.
+      if (v === null || v === undefined) return null;
+      if (typeof v === 'boolean') return v ? t('details.yes', 'Yes') : null;
       const s = String(v).trim();
-      if (!s) return false;
+      if (!s) return null;
       const lower = s.toLowerCase();
-      const empty = new Set(['none', 'n/a', 'na', 'false', 'no', 'no date', '\u2014', '-']);
-      return !empty.has(lower);
+      // Treat common placeholders as empty
+      const emptyValues = new Set(['none', 'n/a', 'na', 'false', 'no', 'no date', '—', '-']);
+      if (emptyValues.has(lower)) return null;
+      return s;
     };
 
-    const displayVal = (key) => {
-      const v = person[key];
-      if (v === null || v === undefined) return "";
-      return String(v).trim();
-    };
-
-    // Build a label/value row (full-width single column)
     const makeKV = (label, value) => {
+      const sanitized = _sanitizeValue(value);
+      if (sanitized === null && sanitized !== 0) return null;
       const row = document.createElement("div");
-      const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-      row.className = `details__kv details__kv--${slug}`;
-
+      row.className = "details__kv";
       const labelEl = document.createElement("div");
       labelEl.className = "details__kv-label";
       labelEl.textContent = label;
-
       const valEl = document.createElement("div");
       valEl.className = "details__kv-value";
-
-      if (label.toLowerCase().includes("email") && value) {
+      // If email, render as mailto link
+      if (label.toLowerCase().includes("email")) {
         const a = document.createElement("a");
-        a.href = `mailto:${value}`;
-        a.textContent = value;
+        a.href = `mailto:${sanitized}`;
+        a.textContent = sanitized;
         a.style.color = "inherit";
         a.style.textDecoration = "underline";
         valEl.appendChild(a);
       } else {
-        valEl.textContent = value;
+        valEl.textContent = sanitized;
       }
-
       row.appendChild(labelEl);
       row.appendChild(valEl);
       return row;
     };
 
-    // Build sections from FORM_LAYOUT — only show fields that have data
-    for (const section of FORM_LAYOUT) {
-      // Collect rows for this section first, then only render if any exist
-      const rows = [];
+    const addSep = () => {
+      const hr = document.createElement("hr");
+      hr.className = "details__sep";
+      body.appendChild(hr);
+    };
 
-      for (const field of section.fields) {
-        // Sub-title markers (e.g. { type: "title", text: "Emergency Contact" })
-        if (typeof field === "object" && field.type === "title") {
-          // We'll insert sub-headers only if subsequent fields have data
-          rows.push({ type: "sub-header", text: field.text });
-          continue;
-        }
+    const appendIfExists = (container, el) => {
+      if (!el) return false;
+      container.appendChild(el);
+      return true;
+    };
 
-        const fieldName = typeof field === "string" ? field : field.name;
-        if (!fieldName || fieldName === "uid") continue;
-
-        if (hasValue(fieldName)) {
-          rows.push({ type: "kv", label: fieldName, value: displayVal(fieldName) });
-        }
+    // helper: pick first available key from multiple possible names
+    const getVal = (...keys) => {
+      for (const k of keys) {
+        if (person[k] || person[k] === 0) return person[k];
       }
+      return "";
+    };
 
-      // For the first section, also check contact fields
-      if (section === FORM_LAYOUT[0]) {
-        const phoneKey = hasValue("Candidate Phone Number") ? "Candidate Phone Number" : "Candidate Phone";
-        const emailKey = hasValue("Candidate Email") ? "Candidate Email" : "Email";
-        if (hasValue(phoneKey)) rows.push({ type: "kv", label: "Phone", value: displayVal(phoneKey) });
-        if (hasValue(emailKey)) rows.push({ type: "kv", label: "Email", value: displayVal(emailKey) });
+    // Candidate IDs (ICIMS, EID) — always show both; Employee ID is editable inline
+    const icims = getVal("ICIMS ID", "ICIMS", "ICIMS ID Number");
+    const eid = getVal("Employee ID", "EID");
+
+    const idRow = document.createElement("div");
+    idRow.className = "details__ids";
+
+    const left = document.createElement("div");
+    left.className = "details__id";
+    left.innerHTML = `<strong>${t('details.icims')}</strong> <span>${icims || ''}</span>`;
+    idRow.appendChild(left);
+
+    const right = document.createElement("div");
+    right.className = "details__id";
+    const label = document.createElement("strong");
+    label.textContent = t('details.eid');
+    const eidInput = document.createElement("input");
+    eidInput.type = "text";
+    eidInput.id = "details-employee-id";
+    eidInput.className = "input input--header input--narrow input--inline";
+    eidInput.value = eid || "";
+    eidInput.placeholder = "";
+    right.appendChild(label);
+    right.appendChild(document.createTextNode(' '));
+    right.appendChild(eidInput);
+    idRow.appendChild(right);
+
+    body.appendChild(idRow);
+    addSep();
+
+    // Save Employee ID on blur (silent save; reload data on success)
+    eidInput.addEventListener('blur', async (ev) => {
+      if (!state.activeUid) return;
+      const newVal = ev.target.value.trim();
+      const current = person["Employee ID"] || "";
+      if (newVal === current) return;
+      const response = await apiFetch(`/api/people/${state.activeUid}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ "Employee ID": newVal }),
+      });
+      if (!response.ok) {
+        await showMessageModal('Error', 'Unable to save Employee ID.');
+        eidInput.value = current;
+        return;
       }
+      // reflect change locally
+      person["Employee ID"] = newVal;
+      loadData();
+      updateDetailsPanel();
+    });
 
-      // Filter: only keep sub-headers that are followed by at least one KV row
-      const filteredRows = [];
-      for (let i = 0; i < rows.length; i++) {
-        if (rows[i].type === "sub-header") {
-          // Check if any KV row follows before the next sub-header or end
-          const hasFollowing = rows.slice(i + 1).some(r => r.type === "kv");
-          if (hasFollowing) filteredRows.push(rows[i]);
-        } else {
-          filteredRows.push(rows[i]);
-        }
-      }
 
-      // Only render section if it has at least one KV row
-      const kvRows = filteredRows.filter(r => r.type === "kv");
-      if (kvRows.length === 0) continue;
-
-      const sectionHeader = document.createElement("div");
-      sectionHeader.className = "details__section-title";
-      sectionHeader.textContent = section.title;
-      body.appendChild(sectionHeader);
-
-      for (const row of filteredRows) {
-        if (row.type === "sub-header") {
-          const subHeader = document.createElement("div");
-          subHeader.className = "details__section-title details__section-title--sub";
-          subHeader.textContent = row.text;
-          body.appendChild(subHeader);
-        } else {
-          body.appendChild(makeKV(row.label, row.value));
-        }
-      }
-
-      const sep = document.createElement("div");
-      sep.className = "details__section-sep";
-      body.appendChild(sep);
+    // Contact (Phone, Email) - each on its own row
+    const phoneRow = makeKV(t('details.phone'), getVal("Candidate Phone Number", "Candidate Phone"));
+    const emailRow = makeKV(t('details.email'), getVal("Candidate Email", "Email"));
+    if (appendIfExists(body, phoneRow) || appendIfExists(body, emailRow)) {
+      addSep();
     }
+
+    // Job details: Job Name, Job Location, Manager, Branch
+    const jobWrap = document.createElement("div");
+    jobWrap.className = "details__job";
+    appendIfExists(jobWrap, makeKV(t('details.job_name'), getVal("Job Name", "Job Name/ID")));
+    appendIfExists(jobWrap, makeKV(t('details.job_location'), getVal("Job Location")));
+    appendIfExists(jobWrap, makeKV(t('details.manager'), getVal("Manager Name", "Manager")));
+    appendIfExists(jobWrap, makeKV(t('details.branch'), getVal("Branch")));
+    if (jobWrap.children.length) {
+      body.appendChild(jobWrap);
+      addSep();
+    }
+
+    // ID / Licenses (ID Type, State, ID No., Exp., DOB, Social, DOD)
+    const idSection = document.createElement("div");
+    idSection.className = "details__licenses";
+    appendIfExists(idSection, makeKV(t('details.id_type'), getVal("ID Type", "Other ID")));
+    appendIfExists(idSection, makeKV(t('details.state'), getVal("State", "State Abbreviation")));
+    appendIfExists(idSection, makeKV(t('details.id_number'), getVal("ID No.", "License Number")));
+    appendIfExists(idSection, makeKV(t('details.expiration'), getVal("Exp.", "Expiration Date")));
+    appendIfExists(idSection, makeKV(t('details.dob'), getVal("DOB", "Date of Birth", "DOB")));
+    appendIfExists(idSection, makeKV(t('details.ssn'), getVal("Social", "Social Security Number")));
+    appendIfExists(idSection, makeKV(t('details.dod_clearance'), getVal("DOD Clearance")));
+    if (idSection.children.length) {
+      body.appendChild(idSection);
+      addSep();
+    }
+
+    // State licensing: show if any related data present (status or date/id fields)
+    const showStatus = (...keys) => {
+      return keys.some((k) => !!getVal(k));
+    };
+
+    const licenses = document.createElement("div");
+    licenses.className = "details__state-licenses";
+    if (showStatus("NH GC Status", "NHGC Status", "NH GC Expiration Date", "NHGC Expiration Date", "NH GC ID Number", "NHGC ID Number")) {
+      appendIfExists(licenses, makeKV(t('details.nh_gc_status'), getVal("NH GC Status", "NHGC Status")));
+      appendIfExists(licenses, makeKV(t('details.nh_gc_status') + ' Exp', getVal("NH GC Expiration Date", "NHGC Expiration Date")));
+      appendIfExists(licenses, makeKV(t('details.nh_gc_status') + ' ID', getVal("NH GC ID Number", "NHGC ID Number")));
+    }
+    if (showStatus("CORI Status", "CORI Submit Date", "CORI Date", "CORI Cleared Date")) {
+      appendIfExists(licenses, makeKV(t('details.cori_status'), getVal("CORI Status")));
+      appendIfExists(licenses, makeKV(t('details.cori_status') + ' Date', getVal("CORI Submit Date", "CORI Date")));
+      appendIfExists(licenses, makeKV(t('details.cori_status') + ' Cleared', getVal("CORI Cleared Date")));
+    }
+    if (showStatus("ME GC Status", "Maine GC Status", "ME GC Sent Date", "ME GC Date")) {
+      appendIfExists(licenses, makeKV(t('details.me_gc_status'), getVal("ME GC Status", "Maine GC Status")));
+      appendIfExists(licenses, makeKV(t('details.me_gc_status') + ' Sent', getVal("ME GC Sent Date", "ME GC Date")));
+    }
+    appendIfExists(licenses, makeKV(t('details.mvr'), getVal("MVR")));
+    if (licenses.children.length) {
+      body.appendChild(licenses);
+      addSep();
+    }
+
+    // Emergency Contact
+    const ecName = `${person["EC First Name"] || ""} ${person["EC Last Name"] || ""}`.trim();
+    const ecWrap = document.createElement("div");
+    ecWrap.className = "details__emergency";
+    appendIfExists(ecWrap, makeKV("Emergency Contact", ecName));
+    appendIfExists(ecWrap, makeKV("Relationship", person["EC Relationship"]));
+    appendIfExists(ecWrap, makeKV("EC Phone", person["EC Phone Number"]));
+    if (ecWrap.children.length) {
+      body.appendChild(ecWrap);
+      addSep();
+    }
+
+    // Uniforms / Accounts
+    const uni = document.createElement("div");
+    uni.className = "details__uniforms";
+    appendIfExists(uni, makeKV("Shirt", getVal("Shirt Size")));
+    appendIfExists(uni, makeKV("Pants", getVal("Pants Size")));
+    appendIfExists(uni, makeKV("Boots", getVal("Boots")));
+    appendIfExists(uni, makeKV("Deposit Account", getVal("Deposit Account Type")));
+    appendIfExists(uni, makeKV("Bank", getVal("Bank Name")));
+    appendIfExists(uni, makeKV("Routing #", getVal("Routing Number")));
+    appendIfExists(uni, makeKV("Account #", getVal("Account Number")));
+    if (uni.children.length) body.appendChild(uni);
   }
 
   if (notes) {
-    const noteValue = (person.Notes || "").trim();
+    const noteValue = person.Notes || "";
     notes.textContent = noteValue;
     notes.style.display = noteValue ? "block" : "none";
   }
 };
 
 const selectCandidate = (uid) => {
-  const nextUid = uid ? String(uid) : null;
-  state.activeUid = state.activeUid && nextUid && String(state.activeUid) === nextUid ? null : nextUid;
+  state.activeUid = state.activeUid === uid ? null : uid;
   updateCardSelection();
   updateDetailsPanel();
 };
@@ -582,8 +497,8 @@ const selectCandidate = (uid) => {
 const showNeoModal = (uid) => {
   const modal = document.getElementById("neo-modal");
   if (!modal) return;
-  modal.dataset.uid = uid ? String(uid) : "";
-  const person = findPersonByUid(uid) || {};
+  modal.dataset.uid = uid || "";
+  const person = state.people.find((p) => p.uid === uid) || {};
   const nameEl = document.getElementById("neo-name");
   const dateEl = document.getElementById("neo-date");
   if (nameEl) nameEl.textContent = person.Name || person.name || "Unnamed";
@@ -644,8 +559,6 @@ const renderCard = (item) => {
   const card = document.createElement("div");
   card.className = "card";
   card.dataset.uid = item.uid || "";
-  // DEV: show payload for debugging missing job names
-  console.debug('renderCard', { uid: item.uid, name: item.name, job: item.job, manager: item.manager, raw: item });
 
   const title = document.createElement("div");
   title.className = "card__title";
@@ -663,36 +576,8 @@ const renderCard = (item) => {
 
   const meta = document.createElement("div");
   meta.className = "card__meta";
+  meta.innerHTML = `<span>${item.manager}</span><span>•</span><span>${item.date}</span>`;
 
-  // Left: job name + manager. Right: NEO date (kept visible)
-  const left = document.createElement("div");
-  left.className = "card__meta-left";
-  const jobSpan = document.createElement("span");
-  jobSpan.className = "card__job";
-  // fallback to raw person data if server didn't include job
-  let jobText = item.job || "";
-  if (!jobText && state.people && state.people.length) {
-    const p = state.people.find((x) => (x.uid || x.id) === item.uid);
-    jobText = (p && (p["Job Name"] || p["Job Location"])) || jobText;
-  }
-  jobSpan.textContent = jobText || "";
-
-  const managerSpan = document.createElement("span");
-  managerSpan.className = "card__manager";
-  managerSpan.textContent = item.manager || "";
-
-  // Only show separator when both job and manager are present
-  if (jobText && managerSpan.textContent) {
-    const sep = document.createElement("span");
-    sep.className = "card__sep";
-    sep.textContent = " • ";
-    left.append(jobSpan, sep, managerSpan);
-  } else {
-    left.append(jobSpan || managerSpan);
-  }
-
-  // no separate date on the subtitle — the status badge shows NEO date
-  meta.append(left);
   card.append(meta);
   return card;
 };
@@ -750,12 +635,9 @@ const loadData = async () => {
 };
 
 const fetchSchema = async () => {
-  console.log('Fetching schema...');
   const response = await apiFetch("/api/schema");
   if (!response.ok) throw new Error("Schema unavailable");
-  console.log('Schema response received, parsing...');
   state.schema = await response.json();
-  console.log('Schema parsed successfully:', state.schema);
   const branchFilter = document.getElementById("branch-filter");
   if (branchFilter) {
     branchFilter.innerHTML = "";
@@ -769,7 +651,6 @@ const fetchSchema = async () => {
       option.textContent = branch;
       branchFilter.appendChild(option);
     });
-    console.log('Branch filter populated');
   }
 };
 
@@ -789,15 +670,6 @@ const normalizeField = (field) => {
   };
 };
 
-const getFormatterType = (name = "") => {
-  const normalized = String(name).toLowerCase();
-  if (normalized.includes("phone")) return "phone";
-  if (normalized.includes("exp.") || normalized.includes("expiration") || normalized.includes("dob")) return "date";
-  if (normalized.includes("social") || normalized.includes("ssn")) return "ssn";
-  if (normalized.includes("state")) return "state";
-  return null;
-};
-
 const buildField = (field, person) => {
   const wrapper = document.createElement("div");
   wrapper.className = "field";
@@ -810,122 +682,6 @@ const buildField = (field, person) => {
   const codeMap = state.schema?.code_maps?.[name];
   if (name === "Notes") {
     input = document.createElement("textarea");
-    input.name = name;
-    input.value = fieldValue(name, person);
-    if (placeholder) input.placeholder = placeholder;
-    wrapper.append(label, input);
-    
-    addInputFormatting(input, name);
-  } else if (field.type === "multiselect") {
-    // Hidden select to hold the actual values for form submission
-    input = document.createElement("select");
-    input.multiple = true;
-    input.style.display = "none";
-    input.name = name;
-
-    // Custom UI container
-    const customContainer = document.createElement("div");
-    customContainer.className = "multi-select";
-
-    // Trigger (display box)
-    const trigger = document.createElement("div");
-    trigger.className = "multi-select__trigger";
-    // input styling match
-    trigger.className += " input";
-
-    // Dropdown menu
-    const menu = document.createElement("div");
-    menu.className = "multi-select__menu";
-    menu.style.display = "none";
-
-    const selectedValues = new Set((fieldValue(name, person) || "").split(", ").filter(Boolean));
-
-    const updateTriggerText = () => {
-      if (selectedValues.size === 0) {
-        trigger.textContent = "Select options...";
-        trigger.style.color = "var(--muted)";
-      } else {
-        trigger.textContent = Array.from(selectedValues).join(", ");
-        trigger.style.color = "var(--text)";
-      }
-    };
-
-    // Toggle menu
-    trigger.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const isVisible = menu.style.display === "block";
-      // Close all other instances first (optional, but good practice)
-      document.querySelectorAll('.multi-select__menu').forEach(el => el.style.display = 'none');
-      menu.style.display = isVisible ? "none" : "block";
-    });
-
-    // Close on click outside
-    const closeMenu = (e) => {
-      if (!customContainer.contains(e.target)) {
-        menu.style.display = "none";
-      }
-    };
-    document.addEventListener("click", closeMenu);
-
-    // Populate options
-    (field.options || []).forEach((optVal) => {
-      // 1. Option for hidden select
-      const option = document.createElement("option");
-      option.value = optVal;
-      option.textContent = optVal;
-      if (selectedValues.has(optVal)) {
-        option.selected = true;
-      }
-      input.appendChild(option);
-
-      // 2. Option for custom UI
-      const item = document.createElement("div");
-      item.className = "multi-select__option";
-
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.checked = selectedValues.has(optVal);
-
-      const itemLabel = document.createElement("span");
-      itemLabel.textContent = optVal;
-
-      item.addEventListener("click", (e) => {
-        e.stopPropagation();
-        cb.checked = !cb.checked;
-        if (cb.checked) {
-          selectedValues.add(optVal);
-          option.selected = true;
-        } else {
-          selectedValues.delete(optVal);
-          option.selected = false;
-        }
-        updateTriggerText();
-      });
-
-      // Prevent check click from bubbling twice if clicking checkbox directly
-      cb.addEventListener("click", (e) => e.stopPropagation());
-      cb.addEventListener("change", () => {
-        if (cb.checked) {
-          selectedValues.add(optVal);
-          option.selected = true;
-        } else {
-          selectedValues.delete(optVal);
-          option.selected = false;
-        }
-        updateTriggerText();
-      });
-
-      item.append(cb, itemLabel);
-      menu.appendChild(item);
-    });
-
-    updateTriggerText();
-    customContainer.append(trigger, menu);
-    wrapper.append(label, input, customContainer);
-    // Be careful with event listeners leaking on extensive re-renders, 
-    // but complexity is low here.
-    return wrapper;
-
   } else if (codeMap) {
     input = document.createElement("select");
     codeMap.forEach(([labelText, value]) => {
@@ -938,8 +694,6 @@ const buildField = (field, person) => {
       }
       input.appendChild(option);
     });
-    input.name = name;
-    wrapper.append(label, input);
   } else if (name === "Branch" && state.schema?.branches?.length) {
     input = document.createElement("select");
     state.schema.branches.forEach((branch) => {
@@ -951,258 +705,17 @@ const buildField = (field, person) => {
       }
       input.appendChild(option);
     });
-    input.name = name;
-    input.setAttribute("data-field", name);
-    wrapper.append(label, input);
   } else {
     input = document.createElement("input");
     input.type = "text";
-    input.name = name;
-    input.value = fieldValue(name, person);
-    input.setAttribute("data-field", name);
-    
-    // Add field-specific attributes for validation and formatting
-    if (name.includes("Exp.") || name.includes("Expiration")) {
-      input.maxLength = 10;
-      input.placeholder = "MM/DD/YYYY";
-    } else if (name.includes("DOB")) {
-      input.maxLength = 10;
-      input.placeholder = "MM/DD/YYYY";
-    } else if (name.includes("Social") || name.includes("SSN")) {
-      input.maxLength = 11;
-      input.placeholder = "###-##-####";
-    } else if (name.includes("State")) {
-      input.maxLength = 2;
-      input.placeholder = "ST";
-    } else if (name.includes("Phone")) {
-      input.maxLength = 14;
-      input.placeholder = "###-###-####";
-    }
-    
-    if (placeholder) input.placeholder = placeholder;
-    wrapper.append(label, input);
-    
-    addInputFormatting(input, name);
   }
 
+  input.name = name;
+  input.value = fieldValue(name, person);
+  if (placeholder) input.placeholder = placeholder;
+
+  wrapper.append(label, input);
   return wrapper;
-};
-
-// Input formatting and validation functions
-const formatPhoneNumber = (input) => {
-  let value = input.value.replace(/\D/g, '');
-  if (value.length <= 3) {
-    input.value = value;
-  } else if (value.length <= 6) {
-    input.value = `${value.slice(0, 3)}-${value.slice(3)}`;
-  } else {
-    input.value = `${value.slice(0, 3)}-${value.slice(3, 6)}-${value.slice(6, 10)}`;
-  }
-};
-
-const formatDate = (input) => {
-  let value = input.value.replace(/\D/g, '');
-  if (value.length <= 2) {
-    input.value = value;
-  } else if (value.length <= 4) {
-    input.value = `${value.slice(0, 2)}/${value.slice(2)}`;
-  } else {
-    input.value = `${value.slice(0, 2)}/${value.slice(2, 4)}/${value.slice(4, 8)}`;
-  }
-};
-
-const formatSSN = (input) => {
-  let value = input.value.replace(/\D/g, '');
-  if (value.length <= 3) {
-    input.value = value;
-  } else if (value.length <= 5) {
-    input.value = `${value.slice(0, 3)}-${value.slice(3)}`;
-  } else {
-    input.value = `${value.slice(0, 3)}-${value.slice(3, 5)}-${value.slice(5, 9)}`;
-  }
-};
-
-const formatState = (input) => {
-  input.value = input.value.replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 2);
-};
-
-// Add input event listeners for formatting
-const addInputFormatting = (input, name) => {
-  const formatter = getFormatterType(name);
-  if (!formatter) return;
-  input.addEventListener('input', () => {
-    if (formatter === "phone") {
-      formatPhoneNumber(input);
-    } else if (formatter === "date") {
-      formatDate(input);
-    } else if (formatter === "ssn") {
-      formatSSN(input);
-    } else if (formatter === "state") {
-      formatState(input);
-    }
-  });
-};
-
-// Enhanced form building functions
-const createSectionHeader = (title) => {
-  const header = document.createElement("div");
-  header.className = "edit-card__section edit-card__section--enhanced";
-  header.textContent = title;
-  return header;
-};
-
-const buildEnhancedField = (field, person) => {
-  const wrapper = document.createElement("div");
-  wrapper.className = "field field--enhanced";
-  
-  // Create icon container
-  const iconContainer = document.createElement("div");
-  iconContainer.className = "field__icon";
-  iconContainer.textContent = field.icon || "";
-  
-  // Create field container
-  const fieldContainer = document.createElement("div");
-  fieldContainer.className = "field__content";
-  
-  // Create label
-  const label = document.createElement("label");
-  label.textContent = field.label;
-  if (field.required) {
-    label.innerHTML += ' <span class="required">*</span>';
-  }
-  fieldContainer.appendChild(label);
-  
-  // Create input based on type
-  let input;
-  if (field.type === "select") {
-    input = document.createElement("select");
-    // Add select options based on field
-    addSelectOptions(input, field);
-  } else if (field.type === "multiselect") {
-    input = document.createElement("select");
-    input.multiple = true;
-    const options = field.options || ["MVR", "Amazon", "DOD Clearance"];
-    options.forEach(option => {
-      const optionEl = document.createElement("option");
-      optionEl.value = option;
-      optionEl.textContent = option;
-      input.appendChild(optionEl);
-    });
-  } else {
-    input = document.createElement("input");
-    input.type = getInputType(field.type);
-    if (field.placeholder) {
-      input.placeholder = field.placeholder;
-    }
-    // Add contextual validation
-    addInputValidation(input, field);
-  }
-  
-  input.name = field.name;
-  input.value = fieldValue(field.name, person);
-  
-  fieldContainer.appendChild(input);
-  
-  // Assemble field
-  wrapper.appendChild(iconContainer);
-  wrapper.appendChild(fieldContainer);
-  
-  // Add formatting listener
-  addInputFormatting(input, field.name);
-  
-  return wrapper;
-};
-
-const getInputType = (fieldType) => {
-  switch (fieldType) {
-    case "email": return "email";
-    case "phone": return "tel";
-    case "date": return "text"; // We'll format dates manually
-    case "ssn": return "text";
-    case "routing": return "text";
-    case "account": return "text";
-    case "state": return "text";
-    case "id": return "text";
-    default: return "text";
-  }
-};
-
-const addSelectOptions = (select, field) => {
-  const options = getSelectOptions(field.name);
-  options.forEach(option => {
-    const optionEl = document.createElement("option");
-    optionEl.value = option.value;
-    optionEl.textContent = option.label;
-    select.appendChild(optionEl);
-  });
-};
-
-const getSelectOptions = (fieldName) => {
-  switch (fieldName) {
-    case "ID Type":
-      return [
-        { value: "", label: "Select ID Type" },
-        { value: "Driver's License", label: "Driver's License" },
-        { value: "State ID", label: "State ID" },
-        { value: "Passport", label: "Passport" },
-        { value: "Military ID", label: "Military ID" },
-        { value: "Other", label: "Other" }
-      ];
-    case "Deposit Account Type":
-      return [
-        { value: "", label: "Select Account Type" },
-        { value: "Checking", label: "Checking" },
-        { value: "Savings", label: "Savings" }
-      ];
-    case "CORI Status":
-    case "NH GC Status":
-    case "ME GC Status":
-    case "BG Check Status":
-      return [
-        { value: "", label: "Select Status" },
-        { value: "Not Started", label: "Not Started" },
-        { value: "In Progress", label: "In Progress" },
-        { value: "Cleared", label: "Cleared" },
-        { value: "Rejected", label: "Rejected" }
-      ];
-    default:
-      return [{ value: "", label: "Select an option" }];
-  }
-};
-
-const addInputValidation = (input, field) => {
-  switch (field.type) {
-    case "phone":
-      input.maxLength = 15;
-      input.pattern = "[0-9\\-\\s\\(\\)]+";
-      input.title = "Enter phone number (10-15 digits)";
-      break;
-    case "ssn":
-      input.maxLength = 11;
-      input.pattern = "[0-9\\-]+";
-      input.title = "Enter SSN (XXX-XX-XXXX)";
-      break;
-    case "routing":
-      input.maxLength = 9;
-      input.pattern = "[0-9]+";
-      input.title = "Enter 9-digit routing number";
-      break;
-    case "account":
-      input.maxLength = 17;
-      input.pattern = "[0-9]+";
-      input.title = "Enter account number (up to 17 digits)";
-      break;
-    case "state":
-      input.maxLength = 2;
-      input.pattern = "[A-Z]{2}";
-      input.title = "Enter 2-letter state abbreviation";
-      break;
-    case "date":
-      input.maxLength = 10;
-      input.pattern = "[0-9\\/]+";
-      input.title = "Enter date (MM/DD/YYYY)";
-      break;
-  }
 };
 
 const buildEditCardForm = (person) => {
@@ -1211,170 +724,261 @@ const buildEditCardForm = (person) => {
   const job = document.getElementById("edit-card-job");
   const background = document.getElementById("edit-card-background");
   if (!form || !basics || !job || !background || !state.schema) return;
-  
-  // Clear existing content
   basics.innerHTML = "";
   job.innerHTML = "";
   background.innerHTML = "";
 
-  // Pre-NEO Info (Column 1)
-  const preNeoSection = createSectionHeader("Pre NEO Info");
-  basics.appendChild(preNeoSection);
+  const fields = [
+    // Employee ID removed per design; leave space for future fields
+  ];
 
-  // Phone/Email row
-  const phoneEmailRow = document.createElement("div");
-  phoneEmailRow.className = "field field--same-line field--enhanced";
-  const phoneField = buildEnhancedField({ name: "Candidate Phone Number", label: "Phone", type: "phone" }, person);
-  const emailField = buildEnhancedField({ name: "Candidate Email", label: "Email", type: "email" }, person);
-  phoneEmailRow.appendChild(phoneField);
-  phoneEmailRow.appendChild(emailField);
-  basics.appendChild(phoneEmailRow);
+  const contactFields = [
+    { name: "Candidate Phone Number", label: "Phone Number" , placeholder: "e.g. ###-###-####" , tooltip: "Candidate's phone number. Please include area code, e.g. 603-555-1234."},
+    { name: "Candidate Email", label: "Email" , placeholder: "e.g. example@example.com" , tooltip: "Candidate's email address. Please enter a valid email address, e.g. example@example.com."},
+  ];
 
-  // Job ID/Name + Location row
-  const jobRow = document.createElement("div");
-  jobRow.className = "field field--same-line field--enhanced";
-  const jobIdField = buildEnhancedField({ name: "Job Name", label: "Job ID/Name" }, person);
-  const jobLocationField = buildEnhancedField({ name: "Job Location", label: "Job Location" }, person);
-  jobRow.appendChild(jobIdField);
-  jobRow.appendChild(jobLocationField);
-  basics.appendChild(jobRow);
+  const licensingFields = [
+    { name: "ID Type", label: "ID Type" , placeholder: "e.g. Driver's License, State ID, Passport, Other" , tooltip: "Primary form of identification for the candidate. Please specify the type of ID, such as Driver's License, State ID, Passport, or Other."},
+    { name: "Other ID", label: "Other ID" , placeholder: "Specify if ID Type is 'Other'" , tooltip: "Additional details about the candidate's primary form of identification, if needed. Only fill out if 'ID Type' is set to 'Other' or if you have additional relevant information about the ID."},
+    { name: "State", label: "State Abbreviation" , placeholder: "Only for Driver's License or State ID" , tooltip: "Two-letter state abbreviation for driver's license or state ID, e.g. NH, MA, ME. Leave blank if not applicable."},
+    { name: "ID No.", label: "ID #" , placeholder: "e.g. License Number" , tooltip: "ID number from the candidate's primary form of identification, such as driver's license or passport. Please enter the ID number exactly as it appears on the ID."},
+    { name: "Exp.", label: "Expiration", placeholder: "MM/DD/YYYY" , tooltip: "Expiration date of ID. Please enter in format MM/DD/YYYY."},
+    { name: "DOB", label: "DOB", placeholder: "MM/DD/YYYY" , tooltip: "Date of Birth. Please enter in format MM/DD/YYYY."},
+    { name: "Social", label: "SSN" , placeholder: "###-##-####" , tooltip: "Social Security Number. Please enter in format ###-##-####."},
+  ];
 
-  // Manager + Branch row
-  const managerBranchRow = document.createElement("div");
-  managerBranchRow.className = "field field--same-line field--enhanced";
-  const managerField = buildEnhancedField({ name: "Manager Name", label: "Manager" }, person);
-  const branchField = buildEnhancedField({ name: "Branch", label: "Branch", type: "select" }, person);
-  managerBranchRow.appendChild(managerField);
-  managerBranchRow.appendChild(branchField);
-  basics.appendChild(managerBranchRow);
+  const jobFields = [
+    { name: "Job Name", label: "ID/Name" , placeholder: "e.g. 12345FX" , tooltip: "Job ID and name for the position this candidate is being hired for. Please select the job that corresponds to the hiring manager."},
+    { name: "Job Location", label: "Job Location" , placeholder: "e.g. Manchester, NH" , tooltip: "Location of the job this candidate is being hired for. Please select the location that corresponds to the hiring manager."},
+    { name: "Manager Name", label: "Manager Name" , placeholder: "Full name of hiring manager" , tooltip: "Hiring manager for this candidate. Please select the manager that corresponds to the job location."},
+    { name: "Branch", label: "Branch" , placeholder: "Select branch from dropdown" , tooltip: "Branch assignment for this candidate. Please select the branch that corresponds to the job location or hiring manager."},
+  ];
 
-  // Background & Clearance
-  const bgSection = createSectionHeader("Background & Clearance");
-  basics.appendChild(bgSection);
+  const bgFields = [
+    { name: "Background Completion Date", label: "Background Completion Date", placeholder: "MM/DD/YYYY" , tooltip: "Date when background check was completed. Leave blank if not completed yet."},
+    { name: "BG Check Status", label: "Background Check Status" , placeholder: "e.g. Clear, Consider, etc." , tooltip: "Overall status of background check. Leave blank if not completed yet."},
+  ];
 
-  const bgRow = document.createElement("div");
-  bgRow.className = "field field--same-line field--enhanced";
-  const bgStatusField = buildEnhancedField({ name: "BG Check Status", label: "Background Status", type: "select" }, person);
-  const bgDateField = buildEnhancedField({ name: "Background Completion Date", label: "Background Completion Date", type: "date" }, person);
-  bgRow.appendChild(bgStatusField);
-  bgRow.appendChild(bgDateField);
-  basics.appendChild(bgRow);
+  const coriFields = [
+    { name: "CORI Status", label: "CORI Status" , placeholder: "e.g. Clear, Consider, etc." , tooltip: "CORI status. Only applicable for candidates in Massachusetts."},
+    { name: "CORI Submit Date", label: "CORI Submit Date", placeholder: "MM/DD/YYYY" , tooltip: "Date when CORI was submitted for processing. Leave blank if not submitted yet."},
+    { name: "CORI Cleared Date", label: "CORI Cleared Date", placeholder: "MM/DD/YYYY" , tooltip: "Date when CORI was cleared. Leave blank if not cleared yet."},
+  ];
 
-  const bgExtrasField = buildEnhancedField({ name: "Extras", label: "Background Extras", type: "multiselect" }, person);
-  basics.appendChild(bgExtrasField);
+  const nhgcFields = [
+    { name: "NH GC Status", label: "NH GC Status" , placeholder: "e.g. Clear, Consider, etc." , tooltip: "NH GC status. Only applicable for candidates in New Hampshire."},
+    { name: "NH GC Expiration Date", label: "NH GC Expiration Date", placeholder: "MM/DD/YYYY"  , tooltip: "Expiration date of NH GC. Leave blank if not applicable or unknown."},
+    { name: "NH GC ID Number", label: "NH GC ID Number" , placeholder: "e.g. License or Certificate Number" , tooltip: "ID number associated with NH GC, if applicable."},
+  ];
 
-  // Massachusetts CORI
-  const coriSection = createSectionHeader("Massachusetts CORI");
-  basics.appendChild(coriSection);
+  const meGcFields = [
+    { name: "ME GC Status", label: "ME GC Status" , placeholder: "e.g. Clear, Consider, etc.", tooltip: "Maine GC status. Only applicable for candidates in Maine."},
+    { name: "ME GC Sent Date", label: "ME GC Sent Date", placeholder: "MM/DD/YYYY" , tooltip: "Date when Maine GC was sent for processing. Leave blank if not sent yet."},
+  ];
 
-  const coriRow = document.createElement("div");
-  coriRow.className = "field field--same-line field--enhanced";
-  const coriStatusField = buildEnhancedField({ name: "CORI Status", label: "CORI Status", type: "select" }, person);
-  const coriDateField = buildEnhancedField({ name: "CORI Submit Date", label: "CORI Date", type: "date" }, person);
-  coriRow.appendChild(coriStatusField);
-  coriRow.appendChild(coriDateField);
-  basics.appendChild(coriRow);
+  const emergencyFields = [
+    { name: "EC Name", label: "Name" , placeholder: "Full name of emergency contact", tooltip: "Emergency contact information is required and recommended in case we need to reach someone on the candidate's behalf."},
+    { name: "EC Relationship", label: "Relationship" , placeholder: "Relationship to candidate, e.g. Spouse, Parent, Friend, etc." ,tooltip: "Relationship of emergency contact to candidate"},
+    { name: "EC Phone Number", label: "Phone Number", placeholder: "###-###-####" , tooltip: "Phone number of emergency contact. Please include area code."},
+  ];
 
-  // Guard Card
-  const guardSection = createSectionHeader("Guard Card");
-  basics.appendChild(guardSection);
+  const uniformsFields = [
+    { name: "Shirt Size", label: "Shirt Size" , placeholder: "e.g. Small, Medium, Large" , tooltip: "Shirt size for uniform. If unsure, select closest size or leave blank."},
+    { name: "Pants Size", label: "Pants Size" , placeholder: "Wasit/Inseem" , tooltip: "Pants size for uniform. If unsure, select closest size or leave blank."},
+    { name: "Boots", label: "Boots" , placeholder: "Boot size or Yes/No" , tooltip: "Boot size for uniform, or indicate if boots are needed. If unsure, select closest size or leave blank."},
+    { name: "Deposit Account Type", label: "Deposit Account Type" , tooltip: "Type of deposit account for payroll, e.g. Checking, Savings."},
+    { name: "Bank Name", label: "Bank Name" , placeholder: "Name of bank for payroll deposit" , tooltip: "Name of bank where payroll will be deposited."},
+    { name: "Routing Number", label: "Routing Number" , placeholder: "Bank routing number for payroll deposit" , tooltip: "Routing number for bank where payroll will be deposited."},
+    { name: "Account Number", label: "Account Number" , placeholder: "Bank account number for payroll deposit" , tooltip: "Account number for bank where payroll will be deposited."},
+  ];
 
-  const guardStateField = buildEnhancedField({ name: "Guard Card State", label: "Guard Card State Abbrev." }, person);
-  basics.appendChild(guardStateField);
+  fields.forEach((field) => {
+    const fieldEl = buildField(field, person);
+    basics.appendChild(fieldEl);
+  });
 
-  const guardRow = document.createElement("div");
-  guardRow.className = "field field--same-line field--enhanced";
-  const guardStatusField = buildEnhancedField({ name: "Guard Card Status", label: "Guard Card Status", type: "select" }, person);
-  const guardDateField = buildEnhancedField({ name: "Guard Card Date", label: "Guard Card Date", type: "date" }, person);
-  guardRow.appendChild(guardStatusField);
-  guardRow.appendChild(guardDateField);
-  basics.appendChild(guardRow);
+  // Only show divider if there were any basic fields (avoids empty separator when fields are removed)
+  if (fields.length) {
+    const basicsDivider = document.createElement("div");
+    basicsDivider.className = "edit-card__divider";
+    basics.appendChild(basicsDivider);
+  }
 
-  const guardIdField = buildEnhancedField({ name: "Guard Card ID", label: "Guard Card ID" }, person);
-  basics.appendChild(guardIdField);
+  const contactTitle = document.createElement("div");
+  contactTitle.className = "edit-card__section";
+  contactTitle.textContent = "Contact Info";
+  basics.appendChild(contactTitle);
 
-  // Column 2: At NEO
-  // License & Identification
-  const licenseSection = createSectionHeader("License & Identification");
-  job.appendChild(licenseSection);
+  contactFields.forEach((field) => {
+    const fieldEl = buildField(field, person);
+    basics.appendChild(fieldEl);
+  });
 
-  const idTypeField = buildEnhancedField({ name: "ID Type", label: "ID Type", type: "select" }, person);
-  job.appendChild(idTypeField);
+  const licensingDivider = document.createElement("div");
+  licensingDivider.className = "edit-card__divider";
+  basics.appendChild(licensingDivider);
 
-  const idRow = document.createElement("div");
-  idRow.className = "field field--same-line field--enhanced";
-  const idStateField = buildEnhancedField({ name: "State", label: "State Abbrev." }, person);
-  const idNumberField = buildEnhancedField({ name: "ID No.", label: "ID#" }, person);
-  idRow.appendChild(idStateField);
-  idRow.appendChild(idNumberField);
-  job.appendChild(idRow);
+  const licensingTitle = document.createElement("div");
+  licensingTitle.className = "edit-card__section";
+  licensingTitle.textContent = "Licensing Info";
+  basics.appendChild(licensingTitle);
 
-  const expDobRow = document.createElement("div");
-  expDobRow.className = "field field--same-line field--enhanced";
-  const expField = buildEnhancedField({ name: "Exp.", label: "Exp", type: "date" }, person);
-  const dobField = buildEnhancedField({ name: "DOB", label: "DOB", type: "date" }, person);
-  expDobRow.appendChild(expField);
-  expDobRow.appendChild(dobField);
-  job.appendChild(expDobRow);
+  let idTypeSelect = null;
+  let otherWrapper = null;
+  let stateWrapper = null;
+  let licenseWrapper = null;
 
-  const ssnField = buildEnhancedField({ name: "Social", label: "SSN", type: "ssn" }, person);
-  job.appendChild(ssnField);
+  const syncIdTypeVisibility = () => {
+    const value = idTypeSelect?.value || "";
+    const showLicense = value === "Driver's License" || value === "State ID";
+    if (stateWrapper) stateWrapper.style.display = showLicense ? "grid" : "none";
+    if (licenseWrapper) licenseWrapper.style.display = showLicense ? "grid" : "none";
+    if (otherWrapper) otherWrapper.style.display = value === "Other" ? "grid" : "none";
+  };
 
-  // Emergency Contact
-  const emergencySection = createSectionHeader("Emergency Contact");
-  job.appendChild(emergencySection);
+  licensingFields.forEach((field) => {
+    const fieldEl = buildField(field, person);
+    if (field.name === "ID Type") {
+      fieldEl.classList.add("field--half");
+      basics.appendChild(fieldEl);
 
-  const emergencyNameField = buildEnhancedField({ name: "EC Name", label: "Name" }, person);
-  job.appendChild(emergencyNameField);
+      const stateAbbrev = document.createElement("div");
+      stateAbbrev.className = "field field--half";
 
-  const emergencyPhoneRow = document.createElement("div");
-  emergencyPhoneRow.className = "field field--same-line field--enhanced";
-  const emergencyRelationshipField = buildEnhancedField({ name: "EC Relationship", label: "Relationship" }, person);
-  const emergencyPhoneField = buildEnhancedField({ name: "EC Phone Number", label: "Phone", type: "phone" }, person);
-  emergencyPhoneRow.appendChild(emergencyRelationshipField);
-  emergencyPhoneRow.appendChild(emergencyPhoneField);
-  job.appendChild(emergencyPhoneRow);
+      const stateLabel = document.createElement("label");
+      stateLabel.textContent = "State Abbreviation";
 
-  // Direct Deposit Information
-  const depositSection = createSectionHeader("Direct Deposit Information");
-  job.appendChild(depositSection);
+      const stateInput = document.createElement("input");
+      stateInput.type = "text";
+      stateInput.name = "State Abbreviation";
+      stateInput.value = fieldValue("State Abbreviation", person);
 
-  const bankNameField = buildEnhancedField({ name: "Bank Name", label: "Bank Name" }, person);
-  job.appendChild(bankNameField);
+      stateAbbrev.append(stateLabel, stateInput);
+      stateAbbrev.style.display = "none";
+      basics.appendChild(stateAbbrev);
+      stateWrapper = stateAbbrev;
 
-  const accountTypeField = buildEnhancedField({ name: "Deposit Account Type", label: "Account Type", type: "select" }, person);
-  job.appendChild(accountTypeField);
+      const otherField = document.createElement("div");
+      otherField.className = "field";
 
-  const routingField = buildEnhancedField({ name: "Routing Number", label: "Routing Number", type: "routing" }, person);
-  job.appendChild(routingField);
+      const otherLabel = document.createElement("label");
+      otherLabel.textContent = "Other ID Type";
 
-  const accountField = buildEnhancedField({ name: "Account Number", label: "Account Number", type: "account" }, person);
-  job.appendChild(accountField);
+      const otherInput = document.createElement("input");
+      otherInput.type = "text";
+      otherInput.name = "ID Type Other";
+      otherInput.value = fieldValue("ID Type Other", person);
 
-  // Column 3: Post NEO
-  // Uniform Items
-  const uniformSection = createSectionHeader("Uniform Items");
-  background.appendChild(uniformSection);
+      otherField.append(otherLabel, otherInput);
+      otherField.style.display = "none";
+      basics.appendChild(otherField);
+      otherWrapper = otherField;
 
-  const uniformRow = document.createElement("div");
-  uniformRow.className = "field field--same-line field--enhanced";
-  const uniformStatusField = buildEnhancedField({ name: "Uniform Status", label: "Uniform Status", type: "select" }, person);
-  const shirtSizeField = buildEnhancedField({ name: "Shirt Size", label: "Shirt Size", type: "select" }, person);
-  uniformRow.appendChild(uniformStatusField);
-  uniformRow.appendChild(shirtSizeField);
-  background.appendChild(uniformRow);
+      idTypeSelect = fieldEl.querySelector("select");
+      if (idTypeSelect) {
+        idTypeSelect.addEventListener("change", syncIdTypeVisibility);
+      }
+      return;
+    }
 
-  const pantsBootsRow = document.createElement("div");
-  pantsBootsRow.className = "field field--same-line field--enhanced";
-  const pantsSizeField = buildEnhancedField({ name: "Pants Size", label: "Pants" }, person);
-  const bootsField = buildEnhancedField({ name: "Boots", label: "Boots" }, person);
-  pantsBootsRow.appendChild(pantsSizeField);
-  pantsBootsRow.appendChild(bootsField);
-  background.appendChild(pantsBootsRow);
+    if (field.name === "License Number") {
+      fieldEl.classList.add("field--half");
+      basics.appendChild(fieldEl);
+      licenseWrapper = fieldEl;
+      return;
+    }
 
-  // Initialize password toggles for new fields
-  initPasswordToggles();
-  observeNewPasswordFields();
+    basics.appendChild(fieldEl);
+  });
+
+  syncIdTypeVisibility();
+
+  jobFields.forEach((field) => {
+    const fieldEl = buildField(field, person);
+    job.appendChild(fieldEl);
+  });
+
+  const bgTitle = document.createElement("div");
+  bgTitle.className = "edit-card__section";
+  bgTitle.textContent = "Background Check";
+  background.appendChild(bgTitle);
+
+  bgFields.forEach((field) => {
+    const fieldEl = buildField(field, person);
+    fieldEl.classList.add("field--half");
+    background.appendChild(fieldEl);
+  });
+
+  const coriDivider = document.createElement("div");
+  coriDivider.className = "edit-card__divider";
+  background.appendChild(coriDivider);
+
+  const coriTitle = document.createElement("div");
+  coriTitle.className = "edit-card__section";
+  coriTitle.textContent = "Criminal Offender Record Information Request (CORI)";
+  background.appendChild(coriTitle);
+
+  coriFields.forEach((field) => {
+    const fieldEl = buildField(field, person);
+    fieldEl.classList.add("field--half");
+    background.appendChild(fieldEl);
+  });
+
+  const nhgcDivider = document.createElement("div");
+  nhgcDivider.className = "edit-card__divider";
+  background.appendChild(nhgcDivider);
+
+  const nhgcTitle = document.createElement("div");
+  nhgcTitle.className = "edit-card__section";
+  nhgcTitle.textContent = "New Hampshire Guard Licensing (NHGC)";
+  background.appendChild(nhgcTitle);
+
+  nhgcFields.forEach((field) => {
+    const fieldEl = buildField(field, person);
+    fieldEl.classList.add("field--half");
+    background.appendChild(fieldEl);
+  });
+
+  const meGcDivider = document.createElement("div");
+  meGcDivider.className = "edit-card__divider";
+  background.appendChild(meGcDivider);
+
+  const meGcTitle = document.createElement("div");
+  meGcTitle.className = "edit-card__section";
+  meGcTitle.textContent = "Maine Guard Licensing";
+  background.appendChild(meGcTitle);
+
+  meGcFields.forEach((field) => {
+    const fieldEl = buildField(field, person);
+    fieldEl.classList.add("field--half");
+    background.appendChild(fieldEl);
+  });
+
+  const emergencyTitle = document.createElement("div");
+  emergencyTitle.className = "edit-card__section";
+  emergencyTitle.textContent = "Emergency Contact";
+  job.appendChild(emergencyTitle);
+
+  emergencyFields.forEach((field) => {
+    const fieldEl = buildField(field, person);
+    fieldEl.classList.add("field--half");
+    job.appendChild(fieldEl);
+  });
+
+  const uniformsDivider = document.createElement("div");
+  uniformsDivider.className = "edit-card__divider";
+  job.appendChild(uniformsDivider);
+
+  const uniformsTitle = document.createElement("div");
+  uniformsTitle.className = "edit-card__section";
+  uniformsTitle.textContent = "Uniforms";
+  job.appendChild(uniformsTitle);
+
+  uniformsFields.forEach((field) => {
+    const fieldEl = buildField(field, person);
+    fieldEl.classList.add("field--half");
+    job.appendChild(fieldEl);
+  });
 };
 
 const openEditPage = async (uid = null) => {
@@ -1389,55 +993,45 @@ const openEditPage = async (uid = null) => {
       return;
     }
   }
+  const nameInput = document.getElementById("edit-name");
+  const icimsInput = document.getElementById("edit-icims");
+  const employeeInput = document.getElementById("edit-employee-id");
+  const neoInput = document.getElementById("edit-neo-date");
 
-  // Show modal instead of switching pages
-  const modal = document.getElementById('edit-modal');
-  if (!modal) {
-    console.error('Modal not found');
-    return;
-  }
+  state.activeUid = uid;
+  const person = state.people.find((item) => item.uid === uid) || null;
 
-  // Update modal title based on whether we're editing or creating
-  const modalTitle = document.getElementById('modal-title');
-  const modalSubtitle = document.getElementById('modal-subtitle');
-  if (uid) {
-    modalTitle.textContent = 'Edit Candidate';
-    modalSubtitle.textContent = 'Update candidate information';
-  } else {
-    modalTitle.textContent = 'Add Candidate';
-    modalSubtitle.textContent = 'Create a new candidate';
-  }
-
-  // Build the form
-  const person = uid ? (findPersonByUid(uid) || {}) : {};
   buildEditCardForm(person);
 
-  // Show modal with animation
-  modal.style.display = 'flex';
-  modal.classList.remove('modal--closing');
-  modal.classList.add('modal--open');
+  // Populate header fields (form-associated inputs)
+  if (nameInput) nameInput.value = person?.Name || "";
+  if (icimsInput) icimsInput.value = person?.["ICIMS ID"] || "";
+  if (employeeInput) employeeInput.value = person?.["Employee ID"] || "";
+  if (neoInput) {
+    const raw = person?.["NEO Scheduled Date"] || "";
+    // convert MM/DD/YYYY to YYYY-MM-DD for input type=date
+    if (raw && raw.includes("/")) {
+      const parts = raw.split("/");
+      if (parts.length >= 3) {
+        const mm = parts[0].padStart(2, "0");
+        const dd = parts[1].padStart(2, "0");
+        const yyyy = parts[2];
+        neoInput.value = `${yyyy}-${mm}-${dd}`;
+      } else {
+        neoInput.value = raw;
+      }
+    } else {
+      neoInput.value = raw;
+    }
+  }
 
-  // Set active UID for form operations
-  state.activeUid = uid ? String(uid) : null;
+  switchPage("edit");
 };
 
 const closeEditPage = () => {
-  const modal = document.getElementById('edit-modal');
-  if (!modal) return;
-  
-  // Add closing animation
-  modal.classList.add('modal--closing');
-  modal.classList.remove('modal--open');
-  
-  // Hide after animation
-  setTimeout(() => {
-    modal.style.display = 'none';
-    modal.classList.remove('modal--closing');
-    updateCardSelection();
-    updateDetailsPanel();
-  }, 300);
-  
   switchPage("dashboard");
+  updateCardSelection();
+  updateDetailsPanel();
 };
 
 const collectFormData = () => {
@@ -1446,12 +1040,7 @@ const collectFormData = () => {
   const data = {};
   Array.from(form.elements).forEach((element) => {
     if (!element.name) return;
-    if (element.tagName === "SELECT" && element.multiple) {
-      const values = Array.from(element.selectedOptions).map(opt => opt.value);
-      data[element.name] = values.join(", ");
-    } else {
-      data[element.name] = element.value;
-    }
+    data[element.name] = element.value;
   });
   // Normalize NEO date: convert YYYY-MM-DD -> MM/DD/YYYY for compatibility
   if (data["NEO Scheduled Date"] && data["NEO Scheduled Date"].includes("-")) {
@@ -1471,29 +1060,21 @@ const saveCandidate = async (event) => {
   const payload = collectFormData();
   const url = state.activeUid ? `/api/people/${state.activeUid}` : "/api/people";
   const method = state.activeUid ? "PUT" : "POST";
-  try {
-    const response = await apiFetch(url, {
-      method,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      const errorMsg = errorData.error || errorData.detail || 'Unknown error';
-      console.error('Save failed:', response.status, errorMsg);
-      alert(`Save failed: ${errorMsg} (Status: ${response.status})`);
-      return;
-    }
-    const payloadJson = await response.json();
-    if (payloadJson?.person?.uid) {
-      state.activeUid = payloadJson.person.uid;
-    }
-    closeEditPage();
-    loadData();
-  } catch (error) {
-    console.error('Save error:', error);
-    alert(`Save failed: ${error.message}`);
+  const response = await apiFetch(url, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    alert("Save failed. Check WORKFLOW_PASSWORD or try again.");
+    return;
   }
+  const payloadJson = await response.json();
+  if (payloadJson?.person?.uid) {
+    state.activeUid = payloadJson.person.uid;
+  }
+  closeEditPage();
+  loadData();
 };
 
 const deleteCandidate = async () => {
@@ -1513,31 +1094,25 @@ const showAuthModal = async () => {
   const title = document.getElementById("auth-title");
   if (!modal || !title) return false;
   try {
-    const response = await apiFetch("/api/auth/status");
+    const response = await fetch("/api/auth/status");
     if (!response.ok) return false;
     const status = await response.json();
-    console.log('Auth status:', status);
     state.auth = status;
     title.textContent = status.configured ? "Sign In" : "Create Program Password";
     // If already authenticated, resolve immediately
-    if (status.authenticated) {
-      console.log('Already authenticated');
-      return true;
-    }
+    if (status.authenticated) return true;
     modal.classList.remove("hidden");
     return await new Promise((resolve) => {
       const onSuccess = () => {
         window.removeEventListener('workflow:auth-success', onSuccess);
         window.removeEventListener('workflow:auth-cancel', onCancel);
-        modal.classList.add("hidden");
-        console.log('Authentication successful');
+        modal.classList.add('hidden');
         resolve(true);
       };
       const onCancel = () => {
         window.removeEventListener('workflow:auth-success', onSuccess);
         window.removeEventListener('workflow:auth-cancel', onCancel);
-        modal.classList.add("hidden");
-        console.log('Authentication cancelled');
+        modal.classList.add('hidden');
         resolve(false);
       };
       window.addEventListener('workflow:auth-success', onSuccess);
@@ -1591,7 +1166,7 @@ const handleChangePasswordSubmit = async (event) => {
     alert('New password and confirmation do not match.');
     return;
   }
-  const response = await apiFetch('/api/auth/change', {
+  const response = await fetch('/api/auth/change', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ current, new: nw }),
@@ -1612,16 +1187,13 @@ const handleAuthSubmit = async (event) => {
   if (submitBtn && submitBtn.dataset.submitting) return; // prevent double submits
   const passwordEl = document.getElementById("auth-password");
   const password = passwordEl ? passwordEl.value : '';
-  console.log('Attempting authentication, configured:', Boolean(state.auth && state.auth.configured));
-  const configured = Boolean(state.auth && state.auth.configured);
-  const endpoint = configured ? "/api/auth/login" : "/api/auth/setup";
+  const endpoint = state.auth.configured ? "/api/auth/login" : "/api/auth/setup";
   try {
     if (submitBtn) {
       submitBtn.dataset.submitting = '1';
       submitBtn.disabled = true;
     }
-    console.log('Sending auth request to:', endpoint);
-    const response = await apiFetch(endpoint, {
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password }),
@@ -1629,7 +1201,6 @@ const handleAuthSubmit = async (event) => {
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
       const msg = body && body.detail ? body.detail : 'Authentication failed.';
-      console.error('Auth failed:', response.status, msg);
       alert(msg);
       return;
     }
@@ -1639,22 +1210,11 @@ const handleAuthSubmit = async (event) => {
     if (!state.auth.configured) {
       state.auth.configured = true;
     }
-    
-    await response.json();
-    
-    // Dispatch success event first
     window.dispatchEvent(new Event('workflow:auth-success'));
     hideAuthModal();
-    
-    // Then try to load data with error handling
-    try {
-      await fetchSchema();
-      await loadData();
-    } catch (err) {
-      console.error('Error loading data after authentication:', err);
-      alert('Successfully authenticated, but failed to load data. Please refresh the page.');
-      // Don't return here - let the user see the error message
-    }
+    // Re-fetch status and data
+    await fetchSchema();
+    await loadData();
   } catch (err) {
     console.error('Auth submit error', err);
     alert('Unable to contact server. Try again.');
@@ -1664,7 +1224,7 @@ const handleAuthSubmit = async (event) => {
       submitBtn.disabled = false;
     }
   }
-};
+  };
 
 const openArchiveModal = () => {
   if (!state.activeUid) return;
@@ -1835,15 +1395,17 @@ const getCachedArchivePassword = (archiveName) => {
   return entry.pw;
 };
 
-const promptPasswordModal = ({ modalId, formId, inputId, closeId, cancelId, onOpen }) => {
+const showArchivePasswordPrompt = async (archiveName) => {
+  // Ensure authenticated first
+  const authOk = await showAuthModal();
+  if (!authOk) return null;
   return new Promise((resolve) => {
-    const modal = document.getElementById(modalId);
-    const form = document.getElementById(formId);
-    const input = document.getElementById(inputId);
-    const close = document.getElementById(closeId);
-    const cancel = document.getElementById(cancelId);
+    const modal = document.getElementById('archive-password-modal');
+    const form = document.getElementById('archive-password-form');
+    const input = document.getElementById('archive-prompt-password');
+    const close = document.getElementById('archive-password-close');
+    const cancel = document.getElementById('archive-password-cancel');
     if (!modal || !form || !input) return resolve(null);
-    if (typeof onOpen === 'function') onOpen();
     input.value = '';
     initPasswordToggles();
     modal.classList.remove('hidden');
@@ -1871,19 +1433,6 @@ const promptPasswordModal = ({ modalId, formId, inputId, closeId, cancelId, onOp
   });
 };
 
-const showArchivePasswordPrompt = async (archiveName) => {
-  // Ensure authenticated first
-  const authOk = await showAuthModal();
-  if (!authOk) return null;
-  return promptPasswordModal({
-    modalId: 'archive-password-modal',
-    formId: 'archive-password-form',
-    inputId: 'archive-prompt-password',
-    closeId: 'archive-password-close',
-    cancelId: 'archive-password-cancel',
-  });
-};
-
 // Get archive password, checking cache first and caching after prompt
 const getArchivePassword = async (archiveName) => {
   if (!archiveName) return null;
@@ -1896,18 +1445,39 @@ const getArchivePassword = async (archiveName) => {
 
 // Confirm delete modal: asks for program password and returns it, or null on cancel
 const showDeleteArchiveModal = (archiveName) => {
-  return promptPasswordModal({
-    modalId: 'archive-delete-modal',
-    formId: 'archive-delete-form',
-    inputId: 'archive-delete-password',
-    closeId: 'archive-delete-close',
-    cancelId: 'archive-delete-cancel',
-    onOpen: () => {
-      const message = document.getElementById('archive-delete-message');
-      if (message) {
-        message.textContent = `Delete '${archiveName}' — this action cannot be undone.`;
-      }
-    },
+  return new Promise((resolve) => {
+    const modal = document.getElementById('archive-delete-modal');
+    const form = document.getElementById('archive-delete-form');
+    const input = document.getElementById('archive-delete-password');
+    const close = document.getElementById('archive-delete-close');
+    const cancel = document.getElementById('archive-delete-cancel');
+    const message = document.getElementById('archive-delete-message');
+    if (!modal || !form || !input || !message) return resolve(null);
+    message.textContent = `Delete '${archiveName}' — this action cannot be undone.`;
+    input.value = '';
+    initPasswordToggles();
+    modal.classList.remove('hidden');
+    input.focus();
+    const cleanup = () => {
+      modal.classList.add('hidden');
+      form.removeEventListener('submit', onSubmit);
+      if (close) close.removeEventListener('click', onCancel);
+      if (cancel) cancel.removeEventListener('click', onCancel);
+    };
+    const onSubmit = (e) => {
+      e.preventDefault();
+      const val = input.value;
+      cleanup();
+      resolve(val);
+    };
+    const onCancel = (e) => {
+      e && e.preventDefault();
+      cleanup();
+      resolve(null);
+    };
+    form.addEventListener('submit', onSubmit);
+    if (close) close.addEventListener('click', onCancel);
+    if (cancel) cancel.addEventListener('click', onCancel);
   });
 };
 
@@ -1950,8 +1520,7 @@ const viewArchiveFile = async (internalPath) => {
     await showMessageModal('Error', 'Unable to load file.');
     return;
   }
-  const payload = await response.json().catch(() => ({}));
-  const text = payload && typeof payload.content === 'string' ? payload.content : '';
+  const text = await response.text();
   state.archives.selectedFile = internalPath;
   renderArchiveContents(state.archives.files);
   renderArchivePreview(internalPath, text);
@@ -1994,7 +1563,14 @@ const renderArchivePreview = (internalPath, text) => {
   dlBtn.textContent = "Download";
   dlBtn.addEventListener("click", () => {
     const blob = new Blob([text], { type: "text/plain" });
-    downloadBlob(internalPath.split("/").pop(), blob);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = internalPath.split("/").pop();
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   });
 
   actions.append(copyBtn, dlBtn);
@@ -2062,27 +1638,22 @@ const downloadArchiveFile = async (internalPath) => {
     await showMessageModal('Error', 'Unable to download file.');
     return;
   }
-  const payload = await response.json().catch(() => ({}));
-  const filename = internalPath.split("/").pop();
-  if (payload && typeof payload.content === 'string') {
-    downloadBlob(filename, new Blob([payload.content], { type: "text/plain" }));
-    return;
-  }
-  if (payload && typeof payload.base64 === 'string') {
-    const bin = atob(payload.base64);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    downloadBlob(filename, new Blob([bytes]));
-    return;
-  }
-  await showMessageModal('Error', 'Unable to download file.');
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = internalPath.split("/").pop();
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 };
 
 const downloadArchive = async () => {
   if (!state.archives.selected) { await showMessageModal('No archive selected', 'Select an archive to download.'); return; }
   const authOk = await showAuthModal();
   if (!authOk) return;
-  await showMessageModal('Not available', 'Archive download is not available in desktop mode yet.');
+  window.location.href = `/api/archive/${encodeURIComponent(state.archives.selected)}/download`;
 };
 
 const deleteArchive = async () => {
@@ -2098,7 +1669,7 @@ const deleteArchive = async () => {
   if (confirmBtn) confirmBtn.disabled = true;
   try {
     // Attempt program login with provided password
-    const loginResp = await apiFetch('/api/auth/login', {
+    const loginResp = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password: pw }),
@@ -2106,42 +1677,23 @@ const deleteArchive = async () => {
     if (!loginResp.ok) {
       const body = await loginResp.json().catch(() => ({}));
       await showMessageModal('Authentication failed', (body && body.detail) || 'Incorrect program password.');
-      return false;
+      return;
     }
 
-    // Mark authenticated and notify waiters
-    if (!state.auth) state.auth = {};
-    state.auth.authenticated = true;
-    if (!state.auth.configured) {
-      state.auth.configured = true;
+    // Now call delete endpoint
+    const response = await apiFetch(`/api/archive/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      await showMessageModal('Delete failed', (body && body.detail) || 'Unable to delete archive.');
+      return;
     }
-
-    // Dispatch success event for showAuthModal
-    window.dispatchEvent(new CustomEvent('workflow:auth-success', { 
-      authenticated: true 
-    }));
-
-    // Close auth modal
-    const modal = document.getElementById('auth-modal');
-    if (modal) {
-      modal.classList.add('hidden');
-    }
-
-    // Now fetch schema and load data
-    try {
-      await fetchSchema();
-      await loadData();
-      // Don't switchPage here - let the normal app flow handle it
-      return true;
-    } catch (err) {
-      console.error('Error after login:', err);
-      alert('Error: Failed to load data after login. Please try again.');
-      return false;
-    }
+    await showMessageModal('Deleted', `${name} was deleted. This action cannot be undone.`);
+    loadArchivesList();
   } catch (err) {
-    console.error('Login error:', err);
-    await showMessageModal('Error', 'Authentication failed. Please try again.');
-    return false;
+    console.error('Delete error', err);
+    await showMessageModal('Error', 'Unable to delete archive. Try again.');
+  } finally {
+    if (confirmBtn) confirmBtn.disabled = false;
   }
 };
 
@@ -2260,23 +1812,6 @@ const previewExport = async (file) => {
 
 const switchPage = (page) => {
   if (!page) return;
-
-  // Weekly and Todo are flyout panels on the dashboard, not separate pages
-  if (page === 'weekly' || page === 'todo') {
-    // Switch to dashboard first if not already there
-    if (state.page !== 'dashboard') {
-      state.page = 'dashboard';
-      document.querySelectorAll(".page").forEach((section) => {
-        section.classList.toggle("page--active", section.id === "page-dashboard");
-      });
-    }
-    document.querySelectorAll(".nav-item").forEach((btn) => {
-      btn.classList.toggle("nav-item--active", btn.dataset.page === page);
-    });
-    switchFlyoutPanel(page);
-    return;
-  }
-
   const target = document.getElementById(`page-${page}`) ? page : "dashboard";
   state.page = target;
   document.querySelectorAll(".page").forEach((section) => {
@@ -2285,16 +1820,6 @@ const switchPage = (page) => {
   document.querySelectorAll(".nav-item").forEach((btn) => {
     btn.classList.toggle("nav-item--active", btn.dataset.page === target);
   });
-  // Close any open flyout when switching to a non-dashboard page
-  if (target !== 'dashboard' && state.flyoutPanel) {
-    const currentEl = document.getElementById(FLYOUT_PANELS[state.flyoutPanel]);
-    if (currentEl) _hideFlyoutPanel(currentEl);
-    if (state.flyoutPanel === 'details') {
-      state.activeUid = null;
-      updateCardSelection();
-    }
-    state.flyoutPanel = null;
-  }
   updateDetailsPanel();
   if (target === "exports") {
     loadExportsList();
@@ -2342,7 +1867,7 @@ const removeCandidate = async () => {
 
 const downloadSelectedExport = () => {
   if (!state.exports.selected) return;
-  showMessageModal('Not available', 'Export download is not available in desktop mode yet.');
+  window.location.href = `/api/exports/file?name=${encodeURIComponent(state.exports.selected)}`;
 };
 
 const setupEventListeners = () => {
@@ -2413,33 +1938,21 @@ const setupEventListeners = () => {
   }
   if (exportButton) {
     exportButton.addEventListener("click", () => {
-      showMessageModal('Not available', 'CSV export is not available in desktop mode yet.');
+      window.location.href = "/api/export/csv";
+      setTimeout(loadExportsList, 1200);
     });
   }
-  if (weeklyButton) weeklyButton.addEventListener("click", () => switchFlyoutPanel('weekly'));
+  if (weeklyButton) weeklyButton.addEventListener("click", openWeeklyTracker);
   const weeklyMini = document.getElementById('weekly-tracker-mini');
-  if (weeklyMini) weeklyMini.addEventListener('click', () => switchFlyoutPanel('weekly'));
+  if (weeklyMini) weeklyMini.addEventListener('click', openWeeklyTracker);
   if (weeklyClose) weeklyClose.addEventListener("click", closeWeeklyTracker);
   if (weeklyCancel) weeklyCancel.addEventListener("click", closeWeeklyTracker);
   if (weeklyForm) weeklyForm.addEventListener("submit", saveWeeklyTracker);
   if (weeklyExport) {
     weeklyExport.addEventListener("click", () => {
-      showMessageModal('Not available', 'Weekly summary export is not available in desktop mode yet.');
+      window.location.href = "/api/weekly/summary";
     });
   }
-  // Todo panel button
-  const todoButton = document.getElementById('todo-tracker');
-  if (todoButton) todoButton.addEventListener('click', () => switchFlyoutPanel('todo'));
-  const todoMini = document.getElementById('todo-tracker-mini');
-  if (todoMini) todoMini.addEventListener('click', () => switchFlyoutPanel('todo'));
-  // Todo add button + Enter key
-  const todoAddBtn = document.getElementById('todo-add');
-  if (todoAddBtn) todoAddBtn.addEventListener('click', addTodo);
-  const todoInput = document.getElementById('todo-input');
-  if (todoInput) todoInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addTodo(); } });
-  // Weekly panel save
-  const weeklyPanelSave = document.getElementById('weekly-panel-save');
-  if (weeklyPanelSave) weeklyPanelSave.addEventListener('click', saveWeeklyPanel);
   if (archiveModalClose) archiveModalClose.addEventListener("click", closeArchiveModal);
   if (archiveModalCancel) archiveModalCancel.addEventListener("click", closeArchiveModal);
   if (archiveForm) archiveForm.addEventListener("submit", submitArchive);
@@ -2502,7 +2015,7 @@ const openWeeklyTracker = async () => {
     range.textContent = `Week of ${data.week_start} to ${data.week_end}`;
   }
   // Render days in a fixed Monday->Sunday order inside a 7-column grid
-  const days = ["Friday", "Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"];
+  const days = ["Friday","Saturday","Sunday","Monday","Tuesday","Wednesday","Thursday"];
   const grid = document.createElement('div');
   grid.className = 'weekly__grid';
   days.forEach((day) => {
@@ -2572,293 +2085,23 @@ const saveWeeklyTracker = async (event) => {
   closeWeeklyTracker();
 };
 
-// ============================================================================
-// FLYOUT PANEL SYSTEM (continued — switchFlyoutPanel + panel openers)
-// ============================================================================
-
-const switchFlyoutPanel = (targetName) => {
-  // If clicking the same panel, close it
-  if (state.flyoutPanel === targetName) {
-    const currentEl = document.getElementById(FLYOUT_PANELS[state.flyoutPanel]);
-    _hideFlyoutPanel(currentEl);
-    state.flyoutPanel = null;
-    // If closing details, clear selection
-    if (targetName === 'details') {
-      state.activeUid = null;
-      updateCardSelection();
-    }
-    return;
-  }
-
-  // If a panel is currently open, hide it first, then show the new one after transition
-  if (state.flyoutPanel) {
-    const currentEl = document.getElementById(FLYOUT_PANELS[state.flyoutPanel]);
-    _hideFlyoutPanel(currentEl);
-    // If leaving details, clear selection
-    if (state.flyoutPanel === 'details') {
-      state.activeUid = null;
-      updateCardSelection();
-    }
-    setTimeout(() => {
-      _openFlyoutTarget(targetName);
-    }, FLYOUT_TRANSITION_MS);
-  } else {
-    _openFlyoutTarget(targetName);
-  }
-};
-
-const _openFlyoutTarget = async (targetName) => {
-  state.flyoutPanel = targetName;
-  const panelEl = document.getElementById(FLYOUT_PANELS[targetName]);
-  if (!panelEl) return;
-
-  // Load content before showing
-  if (targetName === 'weekly') {
-    await loadWeeklyPanel();
-  } else if (targetName === 'todo') {
-    await loadTodoPanel();
-  }
-
-  _showFlyoutPanel(panelEl);
-};
-
-// ============================================================================
-// TODO LIST PANEL
-// ============================================================================
-
-const loadTodoPanel = async () => {
-  try {
-    const response = await apiFetch('/api/todos');
-    if (!response.ok) return;
-    const payload = await response.json();
-    state.todos.list = payload.todos || [];
-    renderTodoList();
-  } catch (err) {
-    console.error('loadTodoPanel error', err);
-  }
-};
-
-const renderTodoList = () => {
-  const list = document.getElementById('todo-list');
-  if (!list) return;
-  list.innerHTML = '';
-  state.todos.list.forEach((todo) => {
-    const li = document.createElement('li');
-    li.className = 'todo__item' + (todo.completed ? ' todo__item--completed' : '');
-
-    const text = document.createElement('span');
-    text.className = 'todo__item-text';
-    text.textContent = todo.text;
-
-    const actions = document.createElement('div');
-    actions.className = 'todo__item-actions';
-
-    if (!todo.completed) {
-      const completeBtn = document.createElement('button');
-      completeBtn.className = 'todo__btn todo__btn--complete';
-      completeBtn.textContent = '\u2714';
-      completeBtn.title = 'Complete (adds to weekly tracker)';
-      completeBtn.addEventListener('click', () => completeTodo(todo.id));
-      actions.appendChild(completeBtn);
-    }
-
-    const deleteBtn = document.createElement('button');
-    deleteBtn.className = 'todo__btn todo__btn--delete';
-    deleteBtn.textContent = '\u2716';
-    deleteBtn.title = 'Delete';
-    deleteBtn.addEventListener('click', () => deleteTodo(todo.id));
-    actions.appendChild(deleteBtn);
-
-    li.append(text, actions);
-    list.appendChild(li);
-  });
-};
-
-const addTodo = async () => {
-  const input = document.getElementById('todo-input');
-  if (!input) return;
-  const text = input.value.trim();
-  if (!text) return;
-  try {
-    const response = await apiFetch('/api/todos', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
-    });
-    if (!response.ok) return;
-    const payload = await response.json();
-    if (payload.todo) {
-      state.todos.list.unshift(payload.todo);
-      renderTodoList();
-    }
-    input.value = '';
-    input.focus();
-  } catch (err) {
-    console.error('addTodo error', err);
-  }
-};
-
-const completeTodo = async (id) => {
-  try {
-    const response = await apiFetch(`/api/todos/${id}/complete`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-    if (!response.ok) return;
-    // Update local state
-    const todo = state.todos.list.find((t) => t.id === id);
-    if (todo) {
-      todo.completed = true;
-      todo.completed_at = new Date().toISOString();
-    }
-    renderTodoList();
-    // Refresh weekly panel if it's open
-    if (state.flyoutPanel === 'weekly') {
-      await loadWeeklyPanel();
-    }
-  } catch (err) {
-    console.error('completeTodo error', err);
-  }
-};
-
-const deleteTodo = async (id) => {
-  try {
-    const response = await apiFetch(`/api/todos/${id}`, { method: 'DELETE' });
-    if (!response.ok) return;
-    state.todos.list = state.todos.list.filter((t) => t.id !== id);
-    renderTodoList();
-  } catch (err) {
-    console.error('deleteTodo error', err);
-  }
-};
-
-// ============================================================================
-// WEEKLY TRACKER PANEL (fly-out version)
-// ============================================================================
-
-const loadWeeklyPanel = async () => {
-  try {
-    const response = await apiFetch('/api/weekly/current');
-    if (!response.ok) return;
-    const data = await response.json();
-    renderWeeklyPanel(data);
-  } catch (err) {
-    console.error('loadWeeklyPanel error', err);
-  }
-};
-
-const renderWeeklyPanel = (data) => {
-  const body = document.getElementById('weekly-panel-body');
-  const range = document.getElementById('weekly-panel-range');
-  if (!body) return;
-  if (range) {
-    range.textContent = `${data.week_start} to ${data.week_end}`;
-  }
-  body.innerHTML = '';
-  const days = ['Friday', 'Saturday', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'];
-  days.forEach((day) => {
-    const info = (data.entries && data.entries[day]) ? data.entries[day] : { start: '', end: '', content: '' };
-    const card = document.createElement('div');
-    card.className = 'weekly-panel__day';
-
-    const header = document.createElement('div');
-    header.className = 'weekly-panel__day-header';
-    const title = document.createElement('div');
-    title.className = 'weekly-panel__day-title';
-    title.textContent = day;
-
-    const timeWrap = document.createElement('div');
-    timeWrap.className = 'weekly-panel__time';
-    const startInput = document.createElement('input');
-    startInput.type = 'text';
-    startInput.name = `${day}__start`;
-    startInput.placeholder = 'In';
-    startInput.value = info.start || '';
-    const endInput = document.createElement('input');
-    endInput.type = 'text';
-    endInput.name = `${day}__end`;
-    endInput.placeholder = 'Out';
-    endInput.value = info.end || '';
-    timeWrap.append(startInput, endInput);
-    header.append(title, timeWrap);
-
-    const textarea = document.createElement('textarea');
-    textarea.name = `${day}__content`;
-    textarea.placeholder = '';
-    textarea.value = info.content || '';
-
-    card.append(header, textarea);
-    body.appendChild(card);
-  });
-};
-
-const saveWeeklyPanel = async () => {
-  const body = document.getElementById('weekly-panel-body');
-  if (!body) return;
-  const entries = {};
-  body.querySelectorAll('input, textarea').forEach((el) => {
-    if (!el.name) return;
-    const [day, field] = el.name.split('__');
-    if (!day || !field) return;
-    entries[day] = entries[day] || { content: '', start: '', end: '' };
-    entries[day][field] = el.value;
-  });
-  try {
-    const response = await apiFetch('/api/weekly/current', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entries }),
-    });
-    if (!response.ok) {
-      alert('Unable to save weekly tracker.');
-      return;
-    }
-    // Brief visual feedback
-    const saveBtn = document.getElementById('weekly-panel-save');
-    if (saveBtn) {
-      const orig = saveBtn.textContent;
-      saveBtn.textContent = 'Saved!';
-      setTimeout(() => { saveBtn.textContent = orig; }, 1200);
-    }
-  } catch (err) {
-    console.error('saveWeeklyPanel error', err);
-    alert('Unable to save weekly tracker.');
-  }
-};
-
 initTheme();
 setupEventListeners();
 initPasswordToggles();
 observeNewPasswordFields();
-
-// Set up modal event listeners
-document.addEventListener('DOMContentLoaded', () => {
-  // Modal close button
-  const modalClose = document.getElementById('modal-close');
-  if (modalClose) {
-    modalClose.addEventListener('click', closeEditPage);
-  }
-
-  // Modal overlay click to close
-  const modalOverlay = document.querySelector('.modal__overlay');
-  if (modalOverlay) {
-    modalOverlay.addEventListener('click', closeEditPage);
-  }
-
-  // Cancel button
-  const editCancel = document.getElementById('edit-cancel');
-  if (editCancel) {
-    editCancel.addEventListener('click', closeEditPage);
-  }
-
-  // ESC key to close modal
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      const modal = document.getElementById('edit-modal');
-      if (modal && modal.style.display === 'flex') {
-        closeEditPage();
-      }
+fetch("/api/auth/status")
+  .then((response) => response.json())
+  .then((status) => {
+    state.auth = status;
+    if (!status.authenticated) {
+      showAuthModal();
+      return;
     }
+    return fetchSchema().then(() => {
+      switchPage("dashboard");
+      return loadData();
+    });
+  })
+  .catch(() => {
+    showAuthModal();
   });
-});
