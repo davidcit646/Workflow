@@ -10,8 +10,8 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/styles.css" />
-    <link rel="stylesheet" href="/static/overrides.css" />
+    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./overrides.css" />
   </head>
   <body>
     <div class="app">
@@ -25,24 +25,26 @@
           </div>
         </div>
         <nav class="sidebar__nav">
-          <button class="nav-item nav-item--active" data-page="dashboard">🏠 Onboarding Dashboard</button>
-          <button id="weekly-tracker" class="nav-item" data-page="weekly">📅 Weekly Tracker</button>
-          <button class="nav-item" data-page="removed">🗑️ Removed Candidates</button>
-          <button class="nav-item" data-page="exports">📦 Exports</button>
-          <button class="nav-item" data-page="archives">🗄️ Archives</button>
+          <button class="nav-item nav-item--active" data-page="dashboard">Onboarding Dashboard</button>
+          <button id="weekly-tracker" class="nav-item" data-page="weekly">Weekly Tracker</button>
+          <button id="todo-tracker" class="nav-item" data-page="todo">To Do List</button>
+          <button class="nav-item" data-page="removed">Removed Candidates</button>
+          <button class="nav-item" data-page="exports">Exports</button>
+          <button class="nav-item" data-page="archives">Archives</button>
         </nav>
 
         <div class="sidebar__mini" aria-hidden="true">
-          <button class="nav-item nav-item--mini" data-page="dashboard" title="Onboarding Dashboard" tabindex="-1">🏠</button>
-          <button id="weekly-tracker-mini" class="nav-item nav-item--mini" data-page="weekly" title="Weekly Tracker" tabindex="-1">📅</button>
-          <button class="nav-item nav-item--mini" data-page="removed" title="Removed Candidates" tabindex="-1">🗑️</button>
-          <button class="nav-item nav-item--mini" data-page="exports" title="Exports" tabindex="-1">📦</button>
-          <button class="nav-item nav-item--mini" data-page="archives" title="Archives" tabindex="-1">🗄️</button>
-          <button class="nav-item nav-item--mini" data-page="settings" title="Settings" tabindex="-1">⚙️</button>
+          <button class="nav-item nav-item--mini" data-page="dashboard" title="Onboarding Dashboard" tabindex="-1">DB</button>
+          <button id="weekly-tracker-mini" class="nav-item nav-item--mini" data-page="weekly" title="Weekly Tracker" tabindex="-1">WK</button>
+          <button id="todo-tracker-mini" class="nav-item nav-item--mini" data-page="todo" title="To Do List" tabindex="-1">TD</button>
+          <button class="nav-item nav-item--mini" data-page="removed" title="Removed Candidates" tabindex="-1">RM</button>
+          <button class="nav-item nav-item--mini" data-page="exports" title="Exports" tabindex="-1">EX</button>
+          <button class="nav-item nav-item--mini" data-page="archives" title="Archives" tabindex="-1">AR</button>
+          <button class="nav-item nav-item--mini" data-page="settings" title="Settings" tabindex="-1">ST</button>
         </div>
         <div class="sidebar__spacer"></div>
         <div class="sidebar__footer">
-          <button id="settings-button" class="nav-item" data-page="settings">⚙️ Settings</button>
+          <button id="settings-button" class="nav-item" data-page="settings">Settings</button>
         </div>
       </aside>
 
@@ -107,27 +109,41 @@
             </div>
             <div class="topbar__actions">
               <button id="download-selected" class="button button--success">
-                <span class="button__icon">⬇</span>
+                <span class="button__icon">↓</span>
                 Download
               </button>
               <button id="export-csv" class="button button--primary">Export CSV</button>
               <button id="exports-delete" class="button button--danger" disabled>
-                <span class="button__icon">🗑</span>
+                <span class="button__icon">Del</span>
                 Delete Selected
               </button>
               <button id="exports-refresh" class="button button--circle" aria-label="Refresh">↻</button>
             </div>
           </header>
-          <div class="exports-grid">
-            <div class="exports-card">
-              <h3>Export Files</h3>
-              <ul id="exports-list"></ul>
+
+          <section class="board board--exports">
+            <div class="board__column" data-column="exports-files">
+              <div class="column__header">
+                <div>
+                  <div class="column__title">Export Files</div>
+                  <div class="column__subtitle">Select a CSV file to preview.</div>
+                </div>
+              </div>
+              <ul id="exports-list" class="column__list"></ul>
             </div>
-            <div class="exports-card">
-              <h3>Preview</h3>
-              <div id="exports-preview" class="exports-preview">Select a CSV to preview.</div>
+
+            <div class="board__column board__column--wide" data-column="exports-preview">
+              <div class="column__header">
+                <div>
+                  <div class="column__title">Preview</div>
+                  <div class="column__subtitle">Preview the selected export.</div>
+                </div>
+              </div>
+              <div class="column__list">
+                <div id="exports-preview" class="exports-preview">Select a CSV to preview.</div>
+              </div>
             </div>
-          </div>
+          </section>
         </section>
 
         <section id="page-archives" class="page">
@@ -144,18 +160,33 @@
               </div>
             </div>
           </header>
-          <div class="archives__body">
-            <div class="archives__column">
-              <h3>Archive Files</h3>
-              <ul id="archives-list"></ul>
+
+          <section class="board board--archives">
+            <div class="board__column" data-column="archives">
+              <div class="column__header">
+                <div>
+                  <div class="column__title">Archive Files</div>
+                  <div class="column__subtitle">Select an archive.</div>
+                </div>
+              </div>
+              <ul id="archives-list" class="column__list"></ul>
             </div>
-            <div class="archives__column">
-              <div class="archives__list-and-preview">
-                <ul id="archives-contents" class="archives-files"></ul>
-                <div id="archive-preview" class="archive-preview">Select a file to view.</div>
+
+            <div class="board__column board__column--wide" data-column="archive-contents">
+              <div class="column__header">
+                <div>
+                  <div class="column__title">Contents</div>
+                  <div class="column__subtitle">Browse files and preview contents.</div>
+                </div>
+              </div>
+              <div class="column__list">
+                <div class="archives__list-and-preview">
+                  <ul id="archives-contents" class="archives-files"></ul>
+                  <div id="archive-preview" class="archive-preview">Select a file to view.</div>
+                </div>
               </div>
             </div>
-          </div>
+          </section>
         </section>
 
         <section id="page-removed" class="page">
@@ -199,53 +230,54 @@
             </div>          </div>
         </section>
 
-        <!--
-        <section id="page-edit" class="page">
-          <header class="topbar">
-            <div>
-              <div id="edit-title" class="topbar__title">Edit Candidate</div>
-              <div class="topbar__subtitle">Update candidate details and onboarding status.</div>
+        <!-- Edit Candidate Modal -->
+        <div id="edit-modal" class="modal" style="display: none;">
+          <div class="modal__overlay"></div>
+          <div class="modal__container">
+            <div class="modal__header">
+              <div class="modal__title">
+                <h2 id="modal-title">Edit Candidate</h2>
+                <p id="modal-subtitle">Update candidate information</p>
+              </div>
+              <button class="modal__close" id="modal-close" aria-label="Close modal">✕</button>
             </div>
-            <div class="topbar__actions">
-              <button id="edit-cancel" class="button button--ghost" type="button">Back</button>
-              <button id="save-candidate" class="button button--primary" type="submit" form="candidate-form">Save</button>
+            
+            <div class="modal__body">
+              <form id="candidate-form" class="modal__form">
+                <div class="modal__quick-info">
+                  <input id="edit-name" form="candidate-form" name="Name" placeholder="Candidate name" class="modal__quick-input" />
+                  <input id="edit-icims" form="candidate-form" name="ICIMS ID" placeholder="ICIMS ID" class="modal__quick-input modal__quick-input--narrow" />
+                  <input id="edit-neo-date" form="candidate-form" name="NEO Scheduled Date" type="date" class="modal__quick-input modal__quick-input--date" />
+                  <input id="edit-employee-id" form="candidate-form" name="Employee ID" placeholder="Employee #" class="modal__quick-input modal__quick-input--narrow" />
+                </div>
+                
+                <div class="modal__content">
+                  <div class="edit-cards">
+                    <article class="edit-card" id="card-basics">
+                      <div class="edit-card__header">Pre NEO</div>
+                      <div class="edit-card__body" id="edit-card-basics"></div>
+                    </article>
+                    
+                    <article class="edit-card" id="card-job">
+                      <div class="edit-card__header">At NEO</div>
+                      <div class="edit-card__body" id="edit-card-job"></div>
+                    </article>
+                    
+                    <article class="edit-card" id="card-background">
+                      <div class="edit-card__header">Post NEO</div>
+                      <div class="edit-card__body" id="edit-card-background"></div>
+                    </article>
+                  </div>
+                </div>
+              </form>
             </div>
-          </header>
-          <form id="candidate-form" class="page__body"></form>
-        </section>
-        -->
-
-        <section id="page-edit" class="page">
-          <header class="topbar">
-            <div class="edit-header">
-              <input id="edit-name" form="candidate-form" name="Name" placeholder="Candidate name" class="input input--header" />
-              <input id="edit-icims" form="candidate-form" name="ICIMS ID" placeholder="ICIMS ID" class="input input--header input--narrow" />
-              <input id="edit-neo-date" form="candidate-form" name="NEO Scheduled Date" type="date" class="input input--header input--date" />
-              <input id="edit-employee-id" form="candidate-form" name="Employee ID" class="input input--header input--narrow" placeholder="Employee #" />
+            
+            <div class="modal__footer">
+              <button id="edit-cancel" class="button button--ghost" type="button">Cancel</button>
+              <button id="save-candidate" class="button button--primary" type="submit" form="candidate-form">Save Candidate</button>
             </div>
-            <div class="topbar__actions">
-              <button id="edit-cancel" class="button button--ghost" type="button">Back</button>
-              <button id="save-candidate" class="button button--primary" type="submit" form="candidate-form">Save</button>
-            </div>
-          </header>
-          <form id="candidate-form" class="page__body">
-            <div class="edit-cards">
-              <article class="edit-card" id="card-basics">
-                <div class="edit-card__header">Candidate Details</div>
-                <div class="edit-card__body" id="edit-card-basics"></div>
-              </article>
-              <article class="edit-card" id="card-job">
-                <div class="edit-card__header">Job Details</div>
-                <div class="edit-card__body" id="edit-card-job"></div>
-              </article>
-              <article class="edit-card" id="card-background">
-                <div class="edit-card__header">Background and Licensing</div>
-                <div class="edit-card__body" id="edit-card-background"></div>
-              </article>
-
-            </div>
-          </form>
-        </section>
+          </div>
+        </div>
       </main>
 
       <aside class="details details--hidden" id="details-panel">
@@ -263,6 +295,39 @@
             <button id="details-archive" class="button button--ghost">Archive Candidate</button>
             <button id="details-remove" class="button button--danger">Remove Candidate</button>
             <button id="details-edit" class="button button--primary button--full">Edit candidate details</button>
+          </div>
+        </div>
+      </aside>
+
+      <aside class="details details--hidden" id="weekly-panel">
+        <div class="details__card">
+          <div class="details__header">
+            <div>
+              <div class="details__title">Weekly Tracker</div>
+              <div class="details__subtitle" id="weekly-panel-range"></div>
+            </div>
+          </div>
+          <div class="details__body" id="weekly-panel-body"></div>
+          <div class="details__actions">
+            <button id="weekly-panel-save" class="button button--primary button--full">Save Week</button>
+          </div>
+        </div>
+      </aside>
+
+      <aside class="details details--hidden" id="todo-panel">
+        <div class="details__card">
+          <div class="details__header">
+            <div>
+              <div class="details__title">To Do List</div>
+              <div class="details__subtitle">Tasks are saved immediately</div>
+            </div>
+          </div>
+          <div class="details__body" id="todo-panel-body">
+            <div class="todo__input-row">
+              <input id="todo-input" type="text" placeholder="Add a new task..." class="todo__input" />
+              <button id="todo-add" class="button button--primary">Add</button>
+            </div>
+            <ul id="todo-list" class="todo__list"></ul>
           </div>
         </div>
       </aside>
@@ -464,6 +529,6 @@
       </div>
     </div>
 
-    <script src="/static/app.js"></script>
+    <script src="./app.js"></script>
   </body>
 </html>

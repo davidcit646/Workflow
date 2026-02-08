@@ -16,7 +16,7 @@
   padding: 12px 16px 12px 16px;
   font-size: 13px;
   scrollbar-width: thin;
-  padding-right: 24px; /* ensure space so right-aligned values don't touch edge */
+  padding-right: 16px;
 }
 .details__body::-webkit-scrollbar {
   width: 10px;
@@ -26,15 +26,13 @@
   border-radius: 999px;
 }
 
-..details__kv {
-  /* Use grid so label can take remaining space and value stays a limited width on the right */
-  display: grid;
-  grid-template-columns: 1fr minmax(80px, 260px);
-  align-items: center;
-  gap: 12px;
-  padding: 6px 0;
-  column-gap: 12px;
-  min-width: 0; /* allow value column to shrink */
+.details__kv {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 0;
+  width: 100%;
+  border-bottom: none;
 }
 .details__kv-label {
   color: var(--muted);
@@ -43,15 +41,14 @@
 }
 .details__kv-value {
   font-weight: 600;
-  text-align: right;
-  font-size: 13px;
-  /* Constrain width so values can't push the panel; allow wrapping if needed */
-  max-width: 320px;
+  text-align: left;
+  font-size: 14px;
   overflow-wrap: break-word;
   word-break: break-word;
   white-space: normal;
+  width: 100%;
 }
-..details__sep {
+.details__sep {
   border: none;
   border-top: 1px solid rgba(255,255,255,0.06);
   margin: 12px 0;
@@ -61,25 +58,25 @@
 .details__body { position: relative; }
 .details__body > * + * {
   /* visual spacing only; separator drawn with pseudo-element for a clean continuous line */
-  padding-top: 12px;
-  margin-top: 6px; /* slight spacing above the separator */
+  padding-top: 0;
+  margin-top: 0;
   position: relative;
 }
-.details__body > * + *::before {
+.details__body > .details__section-sep::before {
   content: "";
   position: absolute;
-  left: -18px;
-  right: -18px;
+  left: 0;
+  right: 0;
   top: 0;
-  height: 1.5px;
-  background: linear-gradient(90deg, rgba(120,130,150,0.10) 0%, rgba(120,130,150,0.18) 50%, rgba(120,130,150,0.10) 100%);
+  height: 1px;
+  background: linear-gradient(90deg, rgba(120,130,150,0.08) 0%, rgba(120,130,150,0.15) 50%, rgba(120,130,150,0.08) 100%);
   pointer-events: none;
   border-radius: 1px;
   opacity: 0.85;
 }
 
 /* So section titles sit nicely above the separator */
-.details__section-title { margin-top: 8px; margin-bottom: 6px; }
+.details__section-title { margin-top: 4px; margin-bottom: 2px; }
 .details__ids {
   display: flex;
   gap: 20px;
@@ -136,6 +133,130 @@
 .weekly__day-title { font-weight: 700; font-size: 13px; }
 .weekly__time input { width: 80px; margin-left: 6px; }
 .weekly__day textarea { flex: 1 1 auto; resize: vertical; min-height: 60px; margin-top: 6px; padding: 6px; border-radius: 6px; }
+
+/* ---- Todo panel styles ---- */
+.todo__input-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+.todo__input {
+  flex: 1;
+  border: none;
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: var(--panel-strong);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+.todo__input:focus {
+  box-shadow: 0 0 0 2px rgba(110, 168, 254, 0.3);
+}
+.todo__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.todo__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--panel-strong);
+  font-size: 13px;
+  transition: opacity 0.2s ease;
+}
+.todo__item--completed {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+.todo__item-text {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+.todo__item-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.todo__btn {
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 1;
+  transition: background 0.15s ease;
+}
+.todo__btn:hover {
+  background: rgba(110, 168, 254, 0.15);
+}
+.todo__btn--delete:hover {
+  background: rgba(240, 93, 94, 0.15);
+}
+
+/* Gap between weekly day cards in the flyout panel */
+#weekly-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ---- Weekly panel (fly-out) styles ---- */
+.weekly-panel__day {
+  background: var(--panel-strong);
+  border-radius: 10px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.weekly-panel__day-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.weekly-panel__day-title {
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+}
+.weekly-panel__time {
+  display: flex;
+  gap: 6px;
+}
+.weekly-panel__time input {
+  width: 60px;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 6px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 11px;
+  outline: none;
+}
+.weekly-panel__day textarea {
+  border: none;
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+  resize: vertical;
+  min-height: 40px;
+  font-family: inherit;
+}
 
 /* Prevent column cards from stretching to equal heights — keep them sized to content */
 .column__list {
