@@ -2469,6 +2469,12 @@ const setupEventListeners = () => {
   }
   if (board) {
     board.addEventListener("click", () => {
+      // Close any open flyout panels (todo/weekly) when clicking on board
+      if (state.flyoutPanel && state.flyoutPanel !== 'details') {
+        const currentEl = document.getElementById(FLYOUT_PANELS[state.flyoutPanel]);
+        if (currentEl) _hideFlyoutPanel(currentEl);
+        state.flyoutPanel = null;
+      }
       if (!state.activeUid) return;
       state.activeUid = null;
       updateCardSelection();
