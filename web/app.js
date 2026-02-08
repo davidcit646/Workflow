@@ -806,6 +806,19 @@ const buildField = (field, person) => {
   const codeMap = state.schema?.code_maps?.[name];
   if (name === "Notes") {
     input = document.createElement("textarea");
+  } else if (field.type === "dropdown" && field.options) {
+    // Handle custom dropdown fields
+    input = document.createElement("select");
+    field.options.forEach((optionText) => {
+      const option = document.createElement("option");
+      option.value = optionText;
+      option.textContent = optionText;
+      const stored = fieldValue(name, person);
+      if (optionText === stored) {
+        option.selected = true;
+      }
+      input.appendChild(option);
+    });
   } else if (codeMap) {
     input = document.createElement("select");
     codeMap.forEach(([labelText, value]) => {
@@ -857,13 +870,14 @@ const buildEditCardForm = (person) => {
   const cardJob = document.getElementById("card-job");
   const cardEmergency = document.getElementById("card-emergency");
   const cardUniforms = document.getElementById("card-uniforms");
+  const cardDirectDeposit = document.getElementById("card-direct-deposit");
   const cardBackground = document.getElementById("card-background");
-  const cardCori = document.getElementById("card-cori");
-  const cardNhgc = document.getElementById("card-nhgc");
-  const cardMegc = document.getElementById("card-megc");
+  const cardPostNeo = document.getElementById("card-post-neo");
+  const cardNotes = document.getElementById("card-notes");
+  const cardAdditional = document.getElementById("card-additional");
   
   if (!form || !cardContact || !cardId || !cardJob || !cardEmergency || !cardUniforms || 
-      !cardBackground || !cardCori || !cardNhgc || !cardMegc || !state.schema) return;
+      !cardDirectDeposit || !cardBackground || !cardPostNeo || !cardNotes || !cardAdditional || !state.schema) return;
   
   // Clear all cards
   cardContact.innerHTML = "";
@@ -871,10 +885,11 @@ const buildEditCardForm = (person) => {
   cardJob.innerHTML = "";
   cardEmergency.innerHTML = "";
   cardUniforms.innerHTML = "";
+  cardDirectDeposit.innerHTML = "";
   cardBackground.innerHTML = "";
-  cardCori.innerHTML = "";
-  cardNhgc.innerHTML = "";
-  cardMegc.innerHTML = "";
+  cardPostNeo.innerHTML = "";
+  cardNotes.innerHTML = "";
+  cardAdditional.innerHTML = "";
 
   const contactFields = [
     { name: "Candidate Phone Number", label: "Phone Number", placeholder: "###-###-####", tooltip: "Candidate's phone number. Please include area code, e.g. 603-555-1234." },
@@ -884,8 +899,9 @@ const buildEditCardForm = (person) => {
   const licensingFields = [
     { name: "ID Type", label: "ID Type", placeholder: "e.g. Driver's License, State ID, Passport, Other", tooltip: "Primary form of identification for the candidate." },
     { name: "Other ID", label: "Other ID", placeholder: "Specify if ID Type is 'Other'", tooltip: "Additional details about the candidate's primary form of identification." },
-    { name: "State", label: "State Abbreviation", placeholder: "e.g. NH, MA, ME", tooltip: "Two-letter state abbreviation for driver's license or state ID." },
+    { name: "State", label: "State Abbreviation", placeholder: "", tooltip: "Two-letter state abbreviation for driver's license or state ID." },
     { name: "ID No.", label: "ID #", placeholder: "e.g. License Number", tooltip: "ID number from the candidate's primary form of identification." },
+    { name: "Passport ID", label: "Passport Number", placeholder: "e.g. 123456789", tooltip: "Passport number for passport identification." },
     { name: "Exp.", label: "Expiration", placeholder: "MM/DD/YYYY", tooltip: "Expiration date of ID." },
     { name: "DOB", label: "DOB", placeholder: "MM/DD/YYYY", tooltip: "Date of Birth." },
     { name: "Social", label: "SSN", placeholder: "###-##-####", tooltip: "Social Security Number." },
@@ -905,23 +921,6 @@ const buildEditCardForm = (person) => {
     { name: "DOD Clearance", label: "DOD Clearance", placeholder: "e.g. Yes/No or clearance level", tooltip: "Department of Defense clearance status." },
   ];
 
-  const coriFields = [
-    { name: "CORI Status", label: "CORI Status", placeholder: "e.g. Clear, Consider, etc.", tooltip: "CORI status. Only applicable for candidates in Massachusetts." },
-    { name: "CORI Submit Date", label: "CORI Submit Date", placeholder: "MM/DD/YYYY", tooltip: "Date when CORI was submitted for processing." },
-    { name: "CORI Cleared Date", label: "CORI Cleared Date", placeholder: "MM/DD/YYYY", tooltip: "Date when CORI was cleared." },
-  ];
-
-  const nhgcFields = [
-    { name: "NH GC Status", label: "NH GC Status", placeholder: "e.g. Clear, Consider, etc.", tooltip: "NH GC status. Only applicable for candidates in New Hampshire." },
-    { name: "NH GC Expiration Date", label: "NH GC Expiration Date", placeholder: "MM/DD/YYYY", tooltip: "Expiration date of NH GC." },
-    { name: "NH GC ID Number", label: "NH GC ID Number", placeholder: "e.g. License or Certificate Number", tooltip: "ID number associated with NH GC." },
-  ];
-
-  const meGcFields = [
-    { name: "ME GC Status", label: "ME GC Status", placeholder: "e.g. Clear, Consider, etc.", tooltip: "Maine GC status. Only applicable for candidates in Maine." },
-    { name: "ME GC Sent Date", label: "ME GC Sent Date", placeholder: "MM/DD/YYYY", tooltip: "Date when Maine GC was sent for processing." },
-  ];
-
   const emergencyFields = [
     { name: "EC Name", label: "Name", placeholder: "Full name of emergency contact", tooltip: "Emergency contact information." },
     { name: "EC Relationship", label: "Relationship", placeholder: "e.g. Spouse, Parent, Friend", tooltip: "Relationship of emergency contact to candidate." },
@@ -932,10 +931,48 @@ const buildEditCardForm = (person) => {
     { name: "Shirt Size", label: "Shirt Size", placeholder: "e.g. Small, Medium, Large", tooltip: "Shirt size for uniform." },
     { name: "Pants Size", label: "Pants Size", placeholder: "Waist/Inseam", tooltip: "Pants size for uniform." },
     { name: "Boots", label: "Boots", placeholder: "Boot size or Yes/No", tooltip: "Boot size for uniform." },
+  ];
+
+  const directDepositFields = [
     { name: "Deposit Account Type", label: "Deposit Account Type", placeholder: "e.g. Checking, Savings", tooltip: "Type of deposit account for payroll." },
     { name: "Bank Name", label: "Bank Name", placeholder: "Name of bank", tooltip: "Name of bank where payroll will be deposited." },
     { name: "Routing Number", label: "Routing Number", placeholder: "9-digit routing number", tooltip: "Routing number for bank." },
     { name: "Account Number", label: "Account Number", placeholder: "Account number", tooltip: "Account number for bank." },
+  ];
+
+  const notesFields = [
+    { name: "Notes", label: "Notes", placeholder: "Additional notes about candidate", tooltip: "Any additional notes or information about the candidate." },
+  ];
+
+  // Create conditional fields example for Additional Information Card
+  const conditionalFields = [
+    { 
+      name: "Clearance and State Licenses", 
+      label: "Clearance and State Licenses", 
+      tooltip: "Select a clearance or license type",
+      type: "dropdown",
+      options: [
+        "Select a clearance or license...",
+        "Massachusetts COR", 
+        "New Hampshire Guard Card", 
+        "Maine Guard Card"
+      ]
+    },
+    // Massachusetts COR fields
+    { name: "COR Status", label: "COR Status", placeholder: "e.g. Clear, Consider, etc.", category: "Massachusetts COR" },
+    { name: "COR Submit Date", label: "COR Submit Date", placeholder: "MM/DD/YYYY", category: "Massachusetts COR" },
+    { name: "COR Cleared Date", label: "COR Cleared Date", placeholder: "MM/DD/YYYY", category: "Massachusetts COR" },
+    // New Hampshire Guard Card fields  
+    { name: "NH GC Status", label: "NH GC Status", placeholder: "e.g. Clear, Consider, etc.", category: "New Hampshire Guard Card" },
+    { name: "NH GC Expiration Date", label: "NH GC Expiration Date", placeholder: "MM/DD/YYYY", category: "New Hampshire Guard Card" },
+    { name: "NH GC ID Number", label: "NH GC ID Number", placeholder: "e.g. License or Certificate Number", category: "New Hampshire Guard Card" },
+    // Maine Guard Card fields
+    { name: "ME GC Status", label: "ME GC Status", placeholder: "e.g. Clear, Consider, etc.", category: "Maine Guard Card" },
+    { name: "ME GC Sent Date", label: "ME GC Sent Date", placeholder: "MM/DD/YYYY", category: "Maine Guard Card" }
+  ];
+
+  const additionalFields = [
+    // Removed: Scheduled, Onboarding Status, Background Completion Date
   ];
 
   // Populate Contact Info Card
@@ -947,21 +984,35 @@ const buildEditCardForm = (person) => {
   // Populate ID/Licensing Card with conditional fields
   let idTypeSelect = null;
   let otherWrapper = null;
+  let stateLicensePair = null;
   let stateWrapper = null;
   let licenseWrapper = null;
+  let passportWrapper = null;
+  let expWrapper = null;
+  let dobWrapper = null;
 
   const syncIdTypeVisibility = () => {
     const value = idTypeSelect?.value || "";
     const showLicense = value === "Driver's License" || value === "State ID";
-    if (stateWrapper) stateWrapper.style.display = showLicense ? "flex" : "none";
-    if (licenseWrapper) licenseWrapper.style.display = showLicense ? "flex" : "none";
+    const showPassport = value === "Passport";
+    
+    // License-specific fields (State, ID No.) - only for driver's license/state ID
+    if (stateLicensePair) stateLicensePair.style.display = showLicense ? "flex" : "none";
+    
+    // Passport-specific field (Passport ID) - only for passport
+    if (passportWrapper) passportWrapper.style.display = showPassport ? "flex" : "none";
+    
+    // Personal info fields (EXP, DOB) - show for ALL ID types
+    if (expWrapper && value && value !== "Select a type...") expWrapper.style.display = "flex";
+    if (dobWrapper && value && value !== "Select a type...") dobWrapper.style.display = "flex";
+    
+    // Other ID field
     if (otherWrapper) otherWrapper.style.display = value === "Other" ? "flex" : "none";
   };
 
   licensingFields.forEach((field) => {
-    const fieldEl = buildField(field, person);
-    
     if (field.name === "ID Type") {
+      const fieldEl = buildField(field, person);
       cardId.appendChild(fieldEl);
       idTypeSelect = fieldEl.querySelector("select");
       if (idTypeSelect) {
@@ -971,26 +1022,70 @@ const buildEditCardForm = (person) => {
     }
     
     if (field.name === "Other ID") {
-      otherWrapper = fieldEl;
+      otherWrapper = buildField(field, person);
       otherWrapper.style.display = "none";
-      cardId.appendChild(fieldEl);
+      cardId.appendChild(otherWrapper);
       return;
     }
     
     if (field.name === "State") {
-      stateWrapper = fieldEl;
-      stateWrapper.style.display = "none";
-      cardId.appendChild(fieldEl);
+      // Create paired container for State + ID No.
+      stateLicensePair = document.createElement("div");
+      stateLicensePair.className = "field-pair--state-license";
+      stateLicensePair.style.display = "none";
+      
+      // Build State field with special attributes
+      const stateField = buildField(field, person);
+      const stateInput = stateField.querySelector("input");
+      if (stateInput) {
+        stateInput.maxLength = 2;
+        stateInput.pattern = "[A-Z]{2}";
+        stateInput.style.textTransform = "uppercase";
+        // Auto-format to uppercase and limit to 2 chars
+        stateInput.addEventListener("input", (e) => {
+          e.target.value = e.target.value.toUpperCase().slice(0, 2);
+        });
+      }
+      
+      stateWrapper = stateField;
+      stateLicensePair.appendChild(stateWrapper);
+      cardId.appendChild(stateLicensePair);
       return;
     }
     
     if (field.name === "ID No.") {
-      licenseWrapper = fieldEl;
-      licenseWrapper.style.display = "none";
-      cardId.appendChild(fieldEl);
+      // Add ID No. field to the existing pair
+      if (stateLicensePair) {
+        const licenseField = buildField(field, person);
+        licenseWrapper = licenseField;
+        stateLicensePair.appendChild(licenseField);
+      }
       return;
     }
     
+    if (field.name === "Passport ID") {
+      passportWrapper = buildField(field, person);
+      passportWrapper.style.display = "none";
+      cardId.appendChild(passportWrapper);
+      return;
+    }
+    
+    if (field.name === "Exp.") {
+      expWrapper = buildField(field, person);
+      expWrapper.style.display = "none";
+      cardId.appendChild(expWrapper);
+      return;
+    }
+    
+    if (field.name === "DOB") {
+      dobWrapper = buildField(field, person);
+      dobWrapper.style.display = "none";
+      cardId.appendChild(dobWrapper);
+      return;
+    }
+    
+    // Add any other fields normally
+    const fieldEl = buildField(field, person);
     cardId.appendChild(fieldEl);
   });
 
@@ -1008,10 +1103,16 @@ const buildEditCardForm = (person) => {
     cardEmergency.appendChild(fieldEl);
   });
 
-  // Populate Uniforms Card
+  // Populate Uniforms Card (moved to Post NEO)
   uniformsFields.forEach((field) => {
     const fieldEl = buildField(field, person);
-    cardUniforms.appendChild(fieldEl);
+    cardPostNeo.appendChild(fieldEl);
+  });
+
+  // Populate Direct Deposit Card
+  directDepositFields.forEach((field) => {
+    const fieldEl = buildField(field, person);
+    cardDirectDeposit.appendChild(fieldEl);
   });
 
   // Populate Background Check Card
@@ -1020,23 +1121,65 @@ const buildEditCardForm = (person) => {
     cardBackground.appendChild(fieldEl);
   });
 
-  // Populate CORI Card
-  coriFields.forEach((field) => {
+  // Populate Notes Card
+  notesFields.forEach((field) => {
     const fieldEl = buildField(field, person);
-    cardCori.appendChild(fieldEl);
+    cardNotes.appendChild(fieldEl);
   });
 
-  // Populate NH GC Card
-  nhgcFields.forEach((field) => {
+  // Populate Additional Fields Card with conditional dropdown
+  let categorySelect = null;
+  const conditionalFieldWrappers = [];
+
+  const updateConditionalFields = () => {
+    const selectedCategory = categorySelect?.value || "";
+    
+    // Hide all conditional fields initially
+    conditionalFieldWrappers.forEach(wrapper => {
+      wrapper.style.display = "none";
+    });
+    
+    // Show fields for the selected category
+    if (selectedCategory && selectedCategory !== "Select a category...") {
+      conditionalFieldWrappers.forEach(wrapper => {
+        const input = wrapper.querySelector('input, textarea, select');
+        if (input && wrapper.dataset.category === selectedCategory) {
+          wrapper.style.display = "flex";
+        }
+      });
+    }
+  };
+
+  // Add the dropdown first
+  const categoryField = conditionalFields.find(field => field.name === "Clearance and State Licenses");
+  if (categoryField) {
+    const categoryFieldEl = buildField(categoryField, person);
+    cardAdditional.appendChild(categoryFieldEl);
+    categorySelect = categoryFieldEl.querySelector("select");
+    if (categorySelect) {
+      categorySelect.addEventListener("change", updateConditionalFields);
+    }
+  }
+
+  // Add all conditional fields (they'll be hidden/shown based on dropdown selection)
+  conditionalFields.forEach((field) => {
+    if (field.name === "Clearance and State Licenses") return; // Skip the dropdown itself
+    
     const fieldEl = buildField(field, person);
-    cardNhgc.appendChild(fieldEl);
+    fieldEl.style.display = "none"; // Hide initially
+    fieldEl.dataset.category = field.category; // Store category for filtering
+    cardAdditional.appendChild(fieldEl);
+    conditionalFieldWrappers.push(fieldEl);
   });
 
-  // Populate ME GC Card
-  meGcFields.forEach((field) => {
+  // Add the regular additional fields
+  additionalFields.forEach((field) => {
     const fieldEl = buildField(field, person);
-    cardMegc.appendChild(fieldEl);
+    cardAdditional.appendChild(fieldEl);
   });
+
+  // Initialize visibility based on current selection
+  updateConditionalFields();
 };
 
 const openEditPage = async (uid = null) => {

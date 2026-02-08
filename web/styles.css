@@ -1206,10 +1206,31 @@ body[data-theme="light"] .details__sep {
   width: 200px;
 }
 
+/* Compact state and license number pairing */
+.field-pair--state-license {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.field-pair--state-license .field:first-child {
+  flex: 0 0 auto;
+  min-width: 50px;
+  max-width: 60px;
+}
+
+.field-pair--state-license .field:last-child {
+  flex: 1;
+  min-width: 0;
+}
+
 .field input[data-field*="state"],
 .field input[data-field*="State"] {
-  width: 60px;
+  width: 100%;
   text-transform: uppercase;
+  text-align: center;
+  font-weight: 600;
+  letter-spacing: 0.1em;
 }
 
 .field input[data-field*="date"],
@@ -2176,13 +2197,13 @@ body[data-theme="light"] .multi-select__option:hover {
 
 /* Dashboard-style Modal Board Layout */
 .modal__container--wide {
-  width: min(1100px, 98vw);
+  width: min(1400px, 98vw);
   max-height: 94vh;
 }
 
 .modal__board {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 12px;
   padding: 16px 20px;
   overflow-y: auto;
@@ -2305,6 +2326,12 @@ body[data-theme="light"] .multi-select__option:hover {
 }
 
 /* Responsive adjustments */
+@media (max-width: 1400px) {
+  .modal__board {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
 @media (max-width: 1200px) {
   .modal__board {
     grid-template-columns: repeat(2, 1fr);
