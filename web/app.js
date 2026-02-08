@@ -199,8 +199,8 @@ const FORM_LAYOUT = [
       "Bank Name",
       "Routing Number",
       "Account Number",
-      "EC First Name",
-      "EC Last Name",
+      { type: "title", text: "Emergency Contact" },
+      "EC Name",
       "EC Relationship",
       "EC Phone Number",
     ],
@@ -456,7 +456,7 @@ const updateDetailsPanel = () => {
     }
 
     // Emergency Contact
-    const ecName = `${person["EC First Name"] || ""} ${person["EC Last Name"] || ""}`.trim();
+    const ecName = person["EC Name"] || "";  // Using combined field
     const ecWrap = document.createElement("div");
     ecWrap.className = "details__emergency";
     appendIfExists(ecWrap, makeKV("Emergency Contact", ecName));
