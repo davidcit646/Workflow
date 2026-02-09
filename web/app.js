@@ -1,200 +1,100 @@
+(() => {
+  if (window.__workflowAppInitialized) return;
+  window.__workflowAppInitialized = true;
+
 const state = {
-  schema: null,
-  people: [],
-  columns: {},
-  summary: {},
-  filters: {
-    search: "",
-    branch: "",
+  kanban: {
+    columns: [],
+    cards: [],
+    selectedColumnId: null,
+    activeColumnId: null,
+    editingCardId: null,
+    draggingCardId: null,
+    piiCandidateId: null,
+    loaded: false,
   },
-  activeUid: null,
   auth: {
     configured: false,
     authenticated: false,
   },
-  archives: {
-    selected: null,
-    list: [],
-    files: [],
+  todos: [],
+  data: {
+    tables: [],
+    tableId: null,
+    columns: [],
+    rows: [],
+    query: "",
+    selectedRowIds: new Set(),
+  },
+  flyouts: {
+    weekly: false,
+    todo: false,
   },
   page: "dashboard",
-  database: {
-    selectedTable: "",
-    data: [],
-    loading: false,
-  },
-  flyoutPanel: null,
-  weeklyData: null, // Store weekly data for todo integration
-  todos: [], // Todo list items
 };
 
-/** Flyout panel IDs mapping - all flyout panels including details */
-const FLYOUT_PANELS = {
-  details: 'details-panel',
-  todo: 'todo-panel',
-  weekly: 'weekly-panel',
-};
+const workflowApi = window.workflowApi;
 
-/** Show a flyout panel with transition */
-const _showFlyoutPanel = (panelEl) => {
-  if (!panelEl) return;
-  panelEl.classList.remove('details--hidden');
-};
+const $ = (id) => document.getElementById(id);
 
-/** Hide a flyout panel element */
-const _hideFlyoutPanel = (panelEl) => {
-  if (!panelEl) return;
-  panelEl.classList.add('details--hidden');
-};
-
-/** Toggle flyout panels with smart switching logic
- * - If clicking same panel: close it
- * - If clicking different panel: switch to it
- * - If candidate details is open and switching to weekly/todo: close details first
- */
-const toggleFlyoutPanel = (panelName) => {
-  const currentPanel = state.flyoutPanel;
-  const targetPanelEl = document.getElementById(FLYOUT_PANELS[panelName]);
-
-  if (!targetPanelEl) return;
-
-  // If clicking the same panel that's currently open, close it
-  if (currentPanel === panelName) {
-    _hideFlyoutPanel(targetPanelEl);
-    state.flyoutPanel = null;
-    return;
-  }
-
-  // If there's a current panel open, close it first
-  if (currentPanel) {
-    const currentEl = document.getElementById(FLYOUT_PANELS[currentPanel]);
-    if (currentEl) _hideFlyoutPanel(currentEl);
-  }
-
-  // Open the target panel
-  _showFlyoutPanel(targetPanelEl);
-  state.flyoutPanel = panelName;
-};
-
-/** Close all flyout panels */
-const closeAllFlyoutPanels = () => {
-  Object.values(FLYOUT_PANELS).forEach((panelId) => {
-    const panelEl = document.getElementById(panelId);
-    if (panelEl) _hideFlyoutPanel(panelEl);
+const showMessageModal = (title, message) => {
+  const modal = $("action-result-modal");
+  const titleEl = $("action-result-title");
+  const messageEl = $("action-result-message");
+  const ok = $("action-result-ok");
+  const close = $("action-result-close");
+  if (!modal || !titleEl || !messageEl || !ok) return Promise.resolve();
+  titleEl.textContent = title || "";
+  messageEl.textContent = message || "";
+  modal.classList.remove("hidden");
+  return new Promise((resolve) => {
+    const onClose = (e) => {
+      e && e.preventDefault();
+      modal.classList.add("hidden");
+      ok.removeEventListener("click", onClose);
+      if (close) close.removeEventListener("click", onClose);
+      resolve();
+    };
+    ok.addEventListener("click", onClose);
+    if (close) close.addEventListener("click", onClose);
   });
-  state.flyoutPanel = null;
 };
 
-/** Route API calls through Electron IPC to Python backend (no HTTP server when loading from file://) */
-const apiFetch = async (url, options = {}) => {
-  const method = (options.method || "GET").toUpperCase();
-  let body = options.body ?? null;
-  if (typeof body === "string") {
-    try { body = JSON.parse(body); } catch { /* pass through */ }
-  }
-  const request = { method, url, body };
-  const result = await window.electronAPI.apiRequest(request);
-  if (result.status === 401) {
-    await showAuthModal();
-    throw new Error("Unauthorized");
-  }
-  const data = result.data;
-  return {
-    ok: result.ok,
-    status: result.status,
-    json: () => Promise.resolve(data !== undefined ? data : (result.error ? { detail: result.error } : null)),
-    text: () => Promise.resolve(
-      typeof data === "string" ? data : (data?.content ?? (data ? JSON.stringify(data) : ""))
-    ),
-    blob: () => {
-      if (data?.base64) {
-        const bin = atob(data.base64);
-        const arr = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-        return Promise.resolve(new Blob([arr]));
-      }
-      return Promise.resolve(new Blob([typeof data === "string" ? data : JSON.stringify(data ?? "")]));
-    },
-  };
+const sanitizeLetters = (value) => (value || "").replace(/[^a-zA-Z\s'-]/g, "");
+const sanitizeNumbers = (value) => (value || "").replace(/\D/g, "");
+const sanitizeAlphaNum = (value) => (value || "").replace(/[^a-zA-Z0-9\s-]/g, "");
+
+const formatPhoneLike = (value) => {
+  const digits = sanitizeNumbers(value).slice(0, 10);
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+  return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6, 10)}`;
 };
 
-const setTheme = (theme) => {
-  document.body.dataset.theme = theme;
-  localStorage.setItem("workflow-theme", theme);
-  const toggle = document.getElementById("theme-toggle");
-  if (toggle) {
-    toggle.textContent = theme === "dark" ? "Light mode" : "Dark mode";
-  }
-};
+const isPhoneLikeValid = (value) => /^\d{3}-\d{3}-\d{4}$/.test(value);
+const sortByOrder = (a, b) => (a.order ?? 0) - (b.order ?? 0);
 
-const initTheme = () => {
-  const stored = localStorage.getItem("workflow-theme");
-  const theme = stored || "dark";
-  setTheme(theme);
-  const toggle = document.getElementById("theme-toggle");
-  if (toggle) {
-    toggle.addEventListener("click", () => {
-      const next = document.body.dataset.theme === "dark" ? "light" : "dark";
-      setTheme(next);
-    });
-  }
-};
-
-/* Minimal i18n: load simple JSON locales from /static/locales/<lang>.json */
-const I18N = { locale: 'en', messages: {} };
-const t = (key, fallback) => {
-  const locale = I18N.locale || 'en';
-  const parts = key.split('.');
-  let cur = I18N.messages[locale] || I18N.messages['en'] || {};
-  for (const p of parts) {
-    if (cur && Object.prototype.hasOwnProperty.call(cur, p)) {
-      cur = cur[p];
-    } else {
-      return fallback !== undefined ? fallback : key;
-    }
-  }
-  return cur;
-};
-
-async function initI18n() {
-  try {
-    const response = await fetch(`/static/locales/${I18N.locale}.json`);
-    if (response.ok) {
-      I18N.messages[I18N.locale] = await response.json();
-    } else {
-      I18N.messages[I18N.locale] = {};
-    }
-  } catch (e) {
-    I18N.messages[I18N.locale] = {};
-  }
-}
-
-// Initialize i18n after I18N is defined to avoid temporal-dead-zone errors
-initI18n();
-
-// Add show/hide toggles to all password fields (including dynamically inserted ones)
 const initPasswordToggles = () => {
   document.querySelectorAll('input[type="password"]').forEach((input) => {
     if (input.dataset.pwToggle) return;
     input.dataset.pwToggle = "1";
-    const wrapper = document.createElement('div');
-    wrapper.className = 'password-wrapper';
-    // Replace input with wrapper -> input inside wrapper
+    const wrapper = document.createElement("div");
+    wrapper.className = "password-wrapper";
     input.parentNode.insertBefore(wrapper, input);
     wrapper.appendChild(input);
 
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'password-toggle';
-    btn.title = 'Show password';
-    btn.setAttribute('aria-pressed', 'false');
-    btn.innerHTML = '👁️';
-    btn.addEventListener('click', () => {
-      const show = input.type === 'password';
-      input.type = show ? 'text' : 'password';
-      btn.innerHTML = show ? '🙈' : '👁️';
-      btn.title = show ? 'Hide password' : 'Show password';
-      btn.setAttribute('aria-pressed', show ? 'true' : 'false');
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "password-toggle";
+    btn.title = "Show password";
+    btn.setAttribute("aria-pressed", "false");
+    btn.innerHTML = "👁️";
+    btn.addEventListener("click", () => {
+      const show = input.type === "password";
+      input.type = show ? "text" : "password";
+      btn.innerHTML = show ? "🙈" : "👁️";
+      btn.title = show ? "Hide password" : "Show password";
+      btn.setAttribute("aria-pressed", show ? "true" : "false");
     });
 
     wrapper.appendChild(btn);
@@ -213,2022 +113,1305 @@ const observeNewPasswordFields = () => {
   mo.observe(document.body, { childList: true, subtree: true });
 };
 
-const badgeClass = (type) => {
-  switch (type) {
-    case "success":
-      return "badge badge--success";
-    case "danger":
-      return "badge badge--danger";
-    default:
-      return "badge badge--warning";
-  }
-};
-
-const DETAILS_FIELDS = [
-  { label: "Branch", key: "Branch" },
-  { label: "Manager", key: "Manager Name" },
-  { label: "Job Location", key: "Job Location" },
-  { label: "NEO Date", key: "NEO Scheduled Date" },
-  { label: "Background Complete", key: "Background Completion Date" },
-  { label: "Employee ID", key: "Employee ID" },
-  { label: "ICIMS ID", key: "ICIMS ID" },
-  { label: "CORI Status", key: "CORI Status" },
-  { label: "NH GC Status", key: "NH GC Status" },
-  { label: "ME GC Status", key: "ME GC Status" },
-  { label: "DOD Clearance", key: "DOD Clearance" },
-];
-
-const FORM_LAYOUT = [
-  {
-    title: "Candidate Details",
-    fields: [
-      "Name",
-      "ICIMS ID",
-      "Employee ID",
-      "Job Name",
-      "Job Location",
-      "Manager Name",
-      "Branch",
-      "Scheduled",
-      "NEO Scheduled Date",
-      { type: "title", text: "Candidate Contact Info" },
-      "Candidate Phone Number",
-      "Candidate Email",
-    ],
-  },
-  {
-    title: "Background & Clearance",
-    fields: [
-      "Background Completion Date",
-      "CORI Status",
-      "CORI Submit Date",
-      "CORI Cleared Date",
-      "NH GC Status",
-      "NH GC Expiration Date",
-      "NH GC ID Number",
-      "ME GC Status",
-      "ME GC Sent Date",
-      "MVR",
-      "DOD Clearance",
-    ],
-  },
-  {
-    title: "Uniforms & Emergency Contact",
-    fields: [
-      "Shirt Size",
-      "Pants Size",
-      "Boots",
-      "Deposit Account Type",
-      "Bank Name",
-      "Routing Number",
-      "Account Number",
-      { type: "title", text: "Emergency Contact" },
-      "EC Name",
-      "EC Relationship",
-      "EC Phone Number",
-    ],
-  },
-  {
-    title: "Personal ID",
-    fields: ["Other ID", "State", "ID No.", "Exp.", "DOB", "Social"],
-  },
-  {
-    title: "Additional Notes",
-    fields: ["Notes"],
-  },
-];
-
-const updateCardSelection = () => {
-  document.querySelectorAll(".card").forEach((card) => {
-    card.classList.toggle("card--active", card.dataset.uid === state.activeUid);
-  });
-};
-
-const findCardInfo = (uid) => {
-  if (!uid) return null;
-  return Object.values(state.columns)
-    .flat()
-    .find((item) => item.uid === uid);
-};
-
-const updateDetailsPanel = () => {
-  const app = document.querySelector(".app");
-  const panel = document.getElementById("details-panel");
-  const title = document.getElementById("details-title");
-  const subtitle = document.getElementById("details-subtitle");
-  const status = document.getElementById("details-status");
-  const body = document.getElementById("details-body");
-  const notes = document.getElementById("details-notes");
-
-  const person = state.people.find((item) => item.uid === state.activeUid) || null;
-  const cardInfo = findCardInfo(state.activeUid);
-  const showPanel = state.page === "dashboard" && person;
-
-  if (panel) {
-    panel.classList.toggle("details--hidden", !showPanel);
-  }
-  if (app) {
-    app.classList.toggle("app--details-hidden", !showPanel);
-  }
-  if (!showPanel) {
-    if (body) body.innerHTML = "";
-    if (notes) notes.textContent = "";
-    if (status) status.textContent = "";
-    return;
-  }
-
-  if (title) title.textContent = person.Name || cardInfo?.name || "Candidate Details";
-  if (subtitle) {
-    const subtitleParts = [];
-    
-    // Add UID first if available
-    if (person.uid) {
-      subtitleParts.push(`ID: ${person.uid}`);
-    }
-    
-    // Add existing subtitle parts
-    subtitleParts.push(cardInfo?.manager, cardInfo?.date, person["Job Location"]);
-    
-    // Filter out empty values and join
-    subtitle.textContent = subtitleParts.filter(Boolean).join(" • ");
-  }
-  if (status) {
-    status.textContent = cardInfo?.status || "";
-    status.className = badgeClass(cardInfo?.badge || "warning");
-    status.style.display = cardInfo?.status ? "inline-flex" : "none";
-
-    // If the status is a scheduled NEO, make the badge clickable so user can take manual actions
-    if (cardInfo?.status && cardInfo.status.toLowerCase().startsWith("neo:")) {
-      status.style.cursor = "pointer";
-      status.title = "Click for NEO actions";
-      status.onclick = (e) => {
-        e.stopPropagation();
-        showNeoModal(person?.uid);
-      };
-    } else {
-      status.style.cursor = "";
-      status.title = "";
-      status.onclick = null;
-    }
-  }
-
-  if (body) {
-    body.innerHTML = "";
-
-    const _sanitizeValue = (v) => {
-      // Accept numbers and non-empty strings, and truthy booleans.
-      if (v === null || v === undefined) return null;
-      if (typeof v === 'boolean') return v ? t('details.yes', 'Yes') : null;
-      const s = String(v).trim();
-      if (!s) return null;
-      const lower = s.toLowerCase();
-      // Treat common placeholders as empty
-      const emptyValues = new Set(['none', 'n/a', 'na', 'false', 'no', 'no date', '—', '-']);
-      if (emptyValues.has(lower)) return null;
-      return s;
-    };
-
-    const makeKV = (label, value) => {
-      const sanitized = _sanitizeValue(value);
-      if (sanitized === null && sanitized !== 0) return null;
-      const row = document.createElement("div");
-      row.className = "details__kv";
-      const labelEl = document.createElement("div");
-      labelEl.className = "details__kv-label";
-      labelEl.textContent = label;
-      const valEl = document.createElement("div");
-      valEl.className = "details__kv-value";
-      // If email, render as mailto link
-      if (label.toLowerCase().includes("email")) {
-        const a = document.createElement("a");
-        a.href = `mailto:${sanitized}`;
-        a.textContent = sanitized;
-        a.style.color = "inherit";
-        a.style.textDecoration = "underline";
-        valEl.appendChild(a);
-      } else {
-        valEl.textContent = sanitized;
-      }
-      row.appendChild(labelEl);
-      row.appendChild(valEl);
-      return row;
-    };
-
-    const addSep = () => {
-      const hr = document.createElement("hr");
-      hr.className = "details__sep";
-      body.appendChild(hr);
-    };
-
-    const appendIfExists = (container, el) => {
-      if (!el) return false;
-      container.appendChild(el);
-      return true;
-    };
-
-    // helper: pick first available key from multiple possible names
-    const getVal = (...keys) => {
-      for (const k of keys) {
-        if (person[k] || person[k] === 0) return person[k];
-      }
-      return "";
-    };
-
-    // Candidate IDs (ICIMS, EID) — always show both; Employee ID is editable inline
-    const icims = getVal("ICIMS ID", "ICIMS", "ICIMS ID Number");
-    const eid = getVal("Employee ID", "EID");
-
-    const idRow = document.createElement("div");
-    idRow.className = "details__ids";
-
-    const left = document.createElement("div");
-    left.className = "details__id";
-    left.innerHTML = `<strong>${t('details.icims')}</strong> <span>${icims || ''}</span>`;
-    idRow.appendChild(left);
-
-    const right = document.createElement("div");
-    right.className = "details__id";
-    const label = document.createElement("strong");
-    label.textContent = t('details.eid');
-    const eidInput = document.createElement("input");
-    eidInput.type = "text";
-    eidInput.id = "details-employee-id";
-    eidInput.className = "input input--header input--narrow input--inline";
-    eidInput.value = eid || "";
-    eidInput.placeholder = "";
-    right.appendChild(label);
-    right.appendChild(document.createTextNode(' '));
-    right.appendChild(eidInput);
-    idRow.appendChild(right);
-
-    body.appendChild(idRow);
-    addSep();
-
-    // Save Employee ID on blur (silent save; reload data on success)
-    eidInput.addEventListener('blur', async (ev) => {
-      if (!state.activeUid) return;
-      const newVal = ev.target.value.trim();
-      const current = person["Employee ID"] || "";
-      if (newVal === current) return;
-      const response = await apiFetch(`/api/people/${state.activeUid}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ "Employee ID": newVal }),
-      });
-      if (!response.ok) {
-        await showMessageModal('Error', 'Unable to save Employee ID.');
-        eidInput.value = current;
-        return;
-      }
-      // reflect change locally
-      person["Employee ID"] = newVal;
-      loadData();
-      updateDetailsPanel();
-    });
-
-
-    // Contact (Phone, Email) - each on its own row
-    const phoneRow = makeKV(t('details.phone'), getVal("Candidate Phone Number", "Candidate Phone"));
-    const emailRow = makeKV(t('details.email'), getVal("Candidate Email", "Email"));
-    if (appendIfExists(body, phoneRow) || appendIfExists(body, emailRow)) {
-      addSep();
-    }
-
-    // Job details: Job Name, Job Location, Manager, Branch
-    const jobWrap = document.createElement("div");
-    jobWrap.className = "details__job";
-    appendIfExists(jobWrap, makeKV(t('details.job_name'), getVal("Job Name", "Job Name/ID")));
-    appendIfExists(jobWrap, makeKV(t('details.job_location'), getVal("Job Location")));
-    appendIfExists(jobWrap, makeKV(t('details.manager'), getVal("Manager Name", "Manager")));
-    appendIfExists(jobWrap, makeKV(t('details.branch'), getVal("Branch")));
-    if (jobWrap.children.length) {
-      body.appendChild(jobWrap);
-      addSep();
-    }
-
-    // ID / Licenses (ID Type, State, ID No., Exp., DOB, Social, DOD)
-    const idSection = document.createElement("div");
-    idSection.className = "details__licenses";
-    appendIfExists(idSection, makeKV(t('details.id_type'), getVal("ID Type", "Other ID")));
-    appendIfExists(idSection, makeKV(t('details.state'), getVal("State", "State Abbreviation")));
-    appendIfExists(idSection, makeKV(t('details.id_number'), getVal("ID No.", "License Number")));
-    appendIfExists(idSection, makeKV(t('details.expiration'), getVal("Exp.", "Expiration Date")));
-    appendIfExists(idSection, makeKV(t('details.dob'), getVal("DOB", "Date of Birth", "DOB")));
-    appendIfExists(idSection, makeKV(t('details.ssn'), getVal("Social", "Social Security Number")));
-    appendIfExists(idSection, makeKV(t('details.dod_clearance'), getVal("DOD Clearance")));
-    if (idSection.children.length) {
-      body.appendChild(idSection);
-      addSep();
-    }
-
-    // State licensing: show if any related data present (status or date/id fields)
-    const showStatus = (...keys) => {
-      return keys.some((k) => !!getVal(k));
-    };
-
-    const licenses = document.createElement("div");
-    licenses.className = "details__state-licenses";
-    if (showStatus("NH GC Status", "NHGC Status", "NH GC Expiration Date", "NHGC Expiration Date", "NH GC ID Number", "NHGC ID Number")) {
-      appendIfExists(licenses, makeKV(t('details.nh_gc_status'), getVal("NH GC Status", "NHGC Status")));
-      appendIfExists(licenses, makeKV(t('details.nh_gc_status') + ' Exp', getVal("NH GC Expiration Date", "NHGC Expiration Date")));
-      appendIfExists(licenses, makeKV(t('details.nh_gc_status') + ' ID', getVal("NH GC ID Number", "NHGC ID Number")));
-    }
-    if (showStatus("CORI Status", "CORI Submit Date", "CORI Date", "CORI Cleared Date")) {
-      appendIfExists(licenses, makeKV(t('details.cori_status'), getVal("CORI Status")));
-      appendIfExists(licenses, makeKV(t('details.cori_status') + ' Date', getVal("CORI Submit Date", "CORI Date")));
-      appendIfExists(licenses, makeKV(t('details.cori_status') + ' Cleared', getVal("CORI Cleared Date")));
-    }
-    if (showStatus("ME GC Status", "Maine GC Status", "ME GC Sent Date", "ME GC Date")) {
-      appendIfExists(licenses, makeKV(t('details.me_gc_status'), getVal("ME GC Status", "Maine GC Status")));
-      appendIfExists(licenses, makeKV(t('details.me_gc_status') + ' Sent', getVal("ME GC Sent Date", "ME GC Date")));
-    }
-    appendIfExists(licenses, makeKV(t('details.mvr'), getVal("MVR")));
-    if (licenses.children.length) {
-      body.appendChild(licenses);
-      addSep();
-    }
-
-    // Emergency Contact
-    const ecName = person["EC Name"] || "";  // Using combined field
-    const ecWrap = document.createElement("div");
-    ecWrap.className = "details__emergency";
-    appendIfExists(ecWrap, makeKV("Emergency Contact", ecName));
-    appendIfExists(ecWrap, makeKV("Relationship", person["EC Relationship"]));
-    appendIfExists(ecWrap, makeKV("EC Phone", person["EC Phone Number"]));
-    if (ecWrap.children.length) {
-      body.appendChild(ecWrap);
-      addSep();
-    }
-
-    // Uniforms / Accounts
-    const uni = document.createElement("div");
-    uni.className = "details__uniforms";
-    appendIfExists(uni, makeKV("Shirt", getVal("Shirt Size")));
-    appendIfExists(uni, makeKV("Pants", getVal("Pants Size")));
-    appendIfExists(uni, makeKV("Boots", getVal("Boots")));
-    appendIfExists(uni, makeKV("Deposit Account", getVal("Deposit Account Type")));
-    appendIfExists(uni, makeKV("Bank", getVal("Bank Name")));
-    appendIfExists(uni, makeKV("Routing #", getVal("Routing Number")));
-    appendIfExists(uni, makeKV("Account #", getVal("Account Number")));
-    if (uni.children.length) body.appendChild(uni);
-  }
-
-  if (notes) {
-    const noteValue = person.Notes || "";
-    notes.textContent = noteValue;
-    notes.style.display = noteValue ? "block" : "none";
-  }
-};
-
-const selectCandidate = (uid) => {
-  // Toggle selection
-  if (state.activeUid === uid) {
-    // Deselecting - close everything
-    state.activeUid = null;
-    closeAllFlyoutPanels();
-  } else {
-    // Selecting new candidate
-    state.activeUid = uid;
-    // Close any other flyout panels when showing candidate details
-    if (state.flyoutPanel && state.flyoutPanel !== 'details') {
-      const currentEl = document.getElementById(FLYOUT_PANELS[state.flyoutPanel]);
-      if (currentEl) _hideFlyoutPanel(currentEl);
-      state.flyoutPanel = null;
-    }
-  }
-  updateCardSelection();
-  updateDetailsPanel();
-};
-
-/* --- NEO action modal helpers --- */
-const showNeoModal = (uid) => {
-  const modal = document.getElementById("neo-modal");
-  if (!modal) return;
-  modal.dataset.uid = uid || "";
-  const person = state.people.find((p) => p.uid === uid) || {};
-  const nameEl = document.getElementById("neo-name");
-  const dateEl = document.getElementById("neo-date");
-  if (nameEl) nameEl.textContent = person.Name || person.name || "Unnamed";
-  const cardInfo = findCardInfo(uid);
-  if (dateEl) dateEl.textContent = person["NEO Scheduled Date"] || cardInfo?.date || "—";
-  modal.classList.remove("hidden");
-};
-
-const hideNeoModal = () => {
-  const modal = document.getElementById("neo-modal");
-  if (!modal) return;
-  modal.classList.add("hidden");
-  modal.dataset.uid = "";
-};
-
-const neoMoveToInProgress = async () => {
-  const modal = document.getElementById("neo-modal");
-  if (!modal) return;
-  const uid = modal.dataset.uid;
-  if (!uid) return hideNeoModal();
-  const response = await apiFetch(`/api/people/${uid}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ "Onboarding Status": "In Progress" }),
-  });
-  if (!response.ok) {
-    alert("Unable to update onboarding status.");
-    return;
-  }
-  hideNeoModal();
-  loadData();
-};
-
-const neoRemoveCandidate = async () => {
-  const modal = document.getElementById("neo-modal");
-  if (!modal) return;
-  const uid = modal.dataset.uid;
-  if (!uid) return hideNeoModal();
-  if (!confirm("Remove this candidate?")) return;
-  const response = await apiFetch(`/api/people/${uid}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ Removed: true }),
-  });
-  if (!response.ok) {
-    alert("Unable to remove candidate.");
-    return;
-  }
-  hideNeoModal();
-  state.activeUid = null;
-  updateCardSelection();
-  updateDetailsPanel();
-  loadData();
-};
-
-const renderCard = (item) => {
-  const card = document.createElement("div");
-  card.className = "card";
-  card.dataset.uid = item.uid || "";
-
-  const title = document.createElement("div");
-  title.className = "card__title";
-  title.textContent = item.name;
-
-  // Add UID subtitle if available
-  if (item.uid) {
-    const subtitle = document.createElement("div");
-    subtitle.className = "card__subtitle";
-    subtitle.textContent = `ID: ${item.uid}`;
-    card.append(title, subtitle);
-  } else {
-    card.append(title);
-  }
-
-  // Badge: only show when there's a useful status to display
-  if (item.status && item.status.trim()) {
-    const badge = document.createElement("span");
-    badge.className = badgeClass(item.badge);
-    badge.textContent = item.status;
-    card.append(badge);
-  }
-
-  const meta = document.createElement("div");
-  meta.className = "card__meta";
-  meta.innerHTML = `<span>${item.manager}</span><span>•</span><span>${item.date}</span>`;
-
-  card.append(meta);
-  return card;
-};
-
-const renderColumns = (columns) => {
-  Object.entries(columns).forEach(([column, items]) => {
-    const container = document.getElementById(column);
-    if (!container) return;
-    container.innerHTML = "";
-    items.forEach((item) => {
-      const card = renderCard(item);
-      card.addEventListener("click", (event) => {
-        event.stopPropagation();
-        selectCandidate(item.uid);
-      });
-      container.appendChild(card);
-    });
-  });
-  updateCardSelection();
-};
-
-const updateStats = () => {
-  const notScheduled = document.getElementById("stat-not-scheduled");
-  const neoScheduled = document.getElementById("stat-neo-scheduled");
-  const inProgress = document.getElementById("stat-in-progress");
-  const total = document.getElementById("stat-total");
-  if (notScheduled) notScheduled.textContent = state.summary["not-scheduled"] ?? 0;
-  if (neoScheduled) neoScheduled.textContent = state.summary["neo-scheduled"] ?? 0;
-  if (inProgress) inProgress.textContent = state.summary["in-progress"] ?? 0;
-  if (total) total.textContent = state.summary.total ?? 0;
-};
-
-const loadData = async () => {
-  const params = new URLSearchParams();
-  if (state.filters.search) params.set("search", state.filters.search);
-  if (state.filters.branch) params.set("branch", state.filters.branch);
-  try {
-    const response = await apiFetch(`/api/people?${params.toString()}`);
-    if (!response.ok) throw new Error("API unavailable");
-    const payload = await response.json();
-    state.people = payload.people || [];
-    state.columns = payload.columns || {};
-    state.summary = payload.summary || {};
-    renderColumns(state.columns);
-    updateStats();
-    if (state.activeUid && !state.people.find((item) => item.uid === state.activeUid)) {
-      state.activeUid = null;
-    }
-    updateDetailsPanel();
-  } catch (error) {
-    renderColumns({});
-    state.activeUid = null;
-    updateDetailsPanel();
-  }
-};
-
-const fetchSchema = async () => {
-  const response = await apiFetch("/api/schema");
-  if (!response.ok) throw new Error("Schema unavailable");
-  state.schema = await response.json();
-  const branchFilter = document.getElementById("branch-filter");
-  if (branchFilter) {
-    branchFilter.innerHTML = "";
-    const defaultOption = document.createElement("option");
-    defaultOption.value = "";
-    defaultOption.textContent = "All branches";
-    branchFilter.appendChild(defaultOption);
-    (state.schema.branches || []).forEach((branch) => {
-      const option = document.createElement("option");
-      option.value = branch;
-      option.textContent = branch;
-      branchFilter.appendChild(option);
-    });
-  }
-};
-
-const fieldValue = (field, person) => {
-  if (!person) return "";
-  return person[field] ?? "";
-};
-
-const normalizeField = (field) => {
-  if (typeof field === "string") {
-    return { name: field, label: field };
-  }
-  return {
-    name: field.name,
-    label: field.label || field.name,
-    placeholder: field.placeholder || "",
-  };
-};
-
-const formatDateInput = (input) => {
-  input.addEventListener('input', (e) => {
-    let value = e.target.value.replace(/\D/g, ''); // Remove non-digits
-    if (value.length >= 2) {
-      value = value.slice(0, 2) + '/' + value.slice(2);
-    }
-    if (value.length >= 5) {
-      value = value.slice(0, 5) + '/' + value.slice(5, 9);
-    }
-    e.target.value = value;
-  });
-};
-
-const formatSsnInput = (input) => {
-  input.addEventListener('input', (e) => {
-    let value = e.target.value.replace(/\D/g, ''); // Remove non-digits
-    if (value.length >= 3) {
-      value = value.slice(0, 3) + '-' + value.slice(3);
-    }
-    if (value.length >= 6) {
-      value = value.slice(0, 6) + '-' + value.slice(6, 9);
-    }
-    e.target.value = value;
-  });
-};
-
-const formatPhoneInput = (input) => {
-  input.addEventListener('input', (e) => {
-    let value = e.target.value.replace(/\D/g, ''); // Remove non-digits
-    if (value.length >= 3) {
-      value = value.slice(0, 3) + '-' + value.slice(3);
-    }
-    if (value.length >= 6) {
-      value = value.slice(0, 6) + '-' + value.slice(6, 10);
-    }
-    e.target.value = value;
-  });
-};
-
-const formatRoutingNumberInput = (input) => {
-  input.addEventListener('input', (e) => {
-    let value = e.target.value.replace(/\D/g, ''); // Remove non-digits
-    // Limit to exactly 9 digits
-    e.target.value = value.slice(0, 9);
-  });
-};
-
-const formatAccountNumberInput = (input) => {
-  input.addEventListener('input', (e) => {
-    // Remove all non-digit characters, but allow longer numbers for account numbers
-    let value = e.target.value.replace(/\D/g, '');
-    e.target.value = value;
-  });
-};
-
-const buildField = (field, person) => {
-  const wrapper = document.createElement("div");
-  wrapper.className = "field";
-
-  const { name, label: labelText, placeholder } = normalizeField(field);
-  const label = document.createElement("label");
-  label.textContent = labelText;
-
-  let input;
-  const codeMap = state.schema?.code_maps?.[name];
-  if (name === "Notes") {
-    input = document.createElement("textarea");
-  } else if (field.type === "dropdown" && field.options) {
-    // Handle custom dropdown fields
-    input = document.createElement("select");
-    field.options.forEach((optionText) => {
-      const option = document.createElement("option");
-      option.value = optionText;
-      option.textContent = optionText;
-      const stored = fieldValue(name, person);
-      if (optionText === stored) {
-        option.selected = true;
-      }
-      input.appendChild(option);
-    });
-  } else if (codeMap) {
-    input = document.createElement("select");
-    codeMap.forEach(([labelText, value]) => {
-      const option = document.createElement("option");
-      option.value = labelText;
-      option.textContent = labelText;
-      const stored = fieldValue(name, person);
-      if (labelText === stored || value === stored) {
-        option.selected = true;
-      }
-      input.appendChild(option);
-    });
-  } else if (name === "Branch" && state.schema?.branches?.length) {
-    input = document.createElement("select");
-    state.schema.branches.forEach((branch) => {
-      const option = document.createElement("option");
-      option.value = branch;
-      option.textContent = branch;
-      if (branch === fieldValue(name, person)) {
-        option.selected = true;
-      }
-      input.appendChild(option);
-    });
-  } else {
-    input = document.createElement("input");
-    
-    // Use native date picker for all date fields including expiration and DOB fields
-    if (/(?:^|\b)(?:date|exp|dob)(?:\b|$)/i.test(name)) {
-      input.type = "date";
-    } else {
-      input.type = "text";
-    }
-    // Add auto-formatting for SSN fields
-    if (/ssn|social/i.test(name)) {
-      formatSsnInput(input);
-    }
-    // Add auto-formatting for phone number fields
-    if (/phone/i.test(name)) {
-      formatPhoneInput(input);
-    }
-    // Add auto-formatting for routing number fields (9 digits only)
-    if (/routing/i.test(name)) {
-      formatRoutingNumberInput(input);
-    }
-    // Add auto-formatting for account number fields (numbers only)
-    if (/account/i.test(name)) {
-      formatAccountNumberInput(input);
-    }
-  }
-
-  input.name = name;
-  input.value = fieldValue(name, person);
-  
-  // Convert date format for native date picker (MM/DD/YYYY -> YYYY-MM-DD)
-  if (input.type === "date" && input.value) {
-    const dateParts = input.value.split('/');
-    if (dateParts.length === 3) {
-      const [mm, dd, yyyy] = dateParts;
-      if (mm.length === 2 && dd.length === 2 && yyyy.length === 4) {
-        input.value = `${yyyy}-${mm}-${dd}`;
-      }
-    }
-  }
-  
-  if (placeholder) input.placeholder = placeholder;
-
-  wrapper.append(label, input);
-  return wrapper;
-};
-
-const buildEditCardForm = (person) => {
-  const form = document.getElementById("candidate-form");
-  const cardContact = document.getElementById("card-contact");
-  const cardId = document.getElementById("card-id");
-  const cardJob = document.getElementById("card-job");
-  const cardEmergency = document.getElementById("card-emergency");
-  const cardDirectDeposit = document.getElementById("card-direct-deposit");
-  const cardBackground = document.getElementById("card-background");
-  const cardPostNeo = document.getElementById("card-post-neo");
-  const cardNotes = document.getElementById("card-notes");
-  const cardAdditional = document.getElementById("card-additional");
-  
-  if (!form || !cardContact || !cardId || !cardJob || !cardEmergency || 
-      !cardDirectDeposit || !cardBackground || !cardPostNeo || !cardNotes || !cardAdditional || !state.schema) return;
-  
-  // Clear all cards
-  cardContact.innerHTML = "";
-  cardId.innerHTML = "";
-  cardJob.innerHTML = "";
-  cardEmergency.innerHTML = "";
-  cardDirectDeposit.innerHTML = "";
-  cardBackground.innerHTML = "";
-  cardPostNeo.innerHTML = "";
-  cardNotes.innerHTML = "";
-  cardAdditional.innerHTML = "";
-
-  // Add collapsible functionality to all modal cards
-  const makeCardCollapsible = (cardElement) => {
-    const header = cardElement.querySelector('.modal__card-header');
-    if (header && !header.dataset.collapsible) {
-      header.dataset.collapsible = 'true';
-      
-      // Add collapse icon if not already present
-      if (!header.querySelector('.modal__card-collapse-icon')) {
-        const icon = document.createElement('span');
-        icon.className = 'modal__card-collapse-icon';
-        icon.textContent = '▼';
-        header.appendChild(icon);
-      }
-      
-      // Add click handler
-      header.addEventListener('click', () => {
-        cardElement.classList.toggle('collapsed');
-      });
-    }
-  };
-
-  // Apply collapsible functionality to all cards
-  document.querySelectorAll('.modal__card').forEach(makeCardCollapsible);
-
-  const contactFields = [
-    { name: "Candidate Phone Number", label: "Phone Number", placeholder: "###-###-####", tooltip: "Candidate's phone number. Please include area code, e.g. 603-555-1234." },
-    { name: "Candidate Email", label: "Email", placeholder: "e.g. example@example.com", tooltip: "Candidate's email address. Please enter a valid email address, e.g. example@example.com." },
-  ];
-
-  const licensingFields = [
-    { name: "ID Type", label: "ID Type", placeholder: "e.g. Driver's License, State ID, Passport, Other", tooltip: "Primary form of identification for the candidate." },
-    { name: "Other ID", label: "Other ID", placeholder: "Specify if ID Type is 'Other'", tooltip: "Additional details about the candidate's primary form of identification." },
-    { name: "State", label: "State Abbreviation", placeholder: "", tooltip: "Two-letter state abbreviation for driver's license or state ID." },
-    { name: "ID No.", label: "ID #", placeholder: "e.g. License Number", tooltip: "ID number from the candidate's primary form of identification." },
-    { name: "Passport ID", label: "Passport Number", placeholder: "e.g. 123456789", tooltip: "Passport number for passport identification." },
-    { name: "Exp.", label: "Expiration", placeholder: "MM/DD/YYYY", tooltip: "Expiration date of ID." },
-    { name: "DOB", label: "DOB", placeholder: "MM/DD/YYYY", tooltip: "Date of Birth." },
-    { name: "Social", label: "SSN", placeholder: "###-##-####", tooltip: "Social Security Number." },
-    // Driver's License specific fields
-    { name: "Driver's License Exp", label: "Driver's License Expiration", placeholder: "MM/DD/YYYY", tooltip: "Driver's License expiration date.", idType: "Driver's License" },
-    { name: "Driver's License DOB", label: "Driver's License DOB", placeholder: "MM/DD/YYYY", tooltip: "Date of Birth from Driver's License.", idType: "Driver's License" },
-    // State ID specific fields
-    { name: "State ID Exp", label: "State ID Expiration", placeholder: "MM/DD/YYYY", tooltip: "State ID expiration date.", idType: "State ID" },
-    { name: "State ID DOB", label: "State ID DOB", placeholder: "MM/DD/YYYY", tooltip: "Date of Birth from State ID.", idType: "State ID" },
-    // Passport specific fields
-    { name: "Passport Exp", label: "Passport Expiration", placeholder: "MM/DD/YYYY", tooltip: "Passport expiration date.", idType: "Passport" },
-    { name: "Passport DOB", label: "Passport DOB", placeholder: "MM/DD/YYYY", tooltip: "Date of Birth from Passport.", idType: "Passport" },
-    // Other ID specific fields
-    { name: "Other ID Exp", label: "Other ID Expiration", placeholder: "MM/DD/YYYY", tooltip: "Other ID expiration date.", idType: "Other" },
-    { name: "Other ID DOB", label: "Other ID DOB", placeholder: "MM/DD/YYYY", tooltip: "Date of Birth from Other ID.", idType: "Other" },
-  ];
-
-  const jobFields = [
-    { name: "Job Name", label: "ID/Name", placeholder: "e.g. 12345FX", tooltip: "Job ID and name for the position this candidate is being hired for." },
-    { name: "Job Location", label: "Job Location", placeholder: "e.g. Manchester, NH", tooltip: "Location of the job this candidate is being hired for." },
-    { name: "Manager Name", label: "Manager Name", placeholder: "Full name of hiring manager", tooltip: "Hiring manager for this candidate." },
-    { name: "Branch", label: "Branch", placeholder: "Select branch from dropdown", tooltip: "Branch assignment for this candidate." },
-  ];
-
-  const bgFields = [
-    { 
-      name: "Background Check Type", 
-      label: "Background Check Type", 
-      tooltip: "Select the type of background check provider",
-      type: "dropdown",
-      options: [
-        "Select a background check type...",
-        "Sterling BG", 
-        "Sterling MVR", 
-        "Accurate"
-      ]
-    },
-    // Common field for all types
-    { name: "Background Date", label: "Background Date", placeholder: "MM/DD/YYYY", tooltip: "Date when background check was completed." },
-    // Sterling MVR specific fields  
-    { name: "Sterling MVR Run", label: "MVR Run", placeholder: "Yes/No", category: "Sterling MVR", tooltip: "Whether MVR has been run or needs to be run" },
-    // Accurate specific fields
-    { name: "Accurate MVR Run", label: "MVR Run", placeholder: "Yes/No", category: "Accurate", tooltip: "Whether MVR has been run or needs to be run" },
-  ];
-
-  const emergencyFields = [
-    { name: "EC Name", label: "Name", placeholder: "Full name of emergency contact", tooltip: "Emergency contact information." },
-    { name: "EC Relationship", label: "Relationship", placeholder: "e.g. Spouse, Parent, Friend", tooltip: "Relationship of emergency contact to candidate." },
-    { name: "EC Phone Number", label: "Phone Number", placeholder: "###-###-####", tooltip: "Phone number of emergency contact." },
-  ];
-
-  const uniformsFields = [
-    { name: "Shirt Size", label: "Shirt Size", placeholder: "e.g. Small, Medium, Large", tooltip: "Shirt size for uniform." },
-    { name: "Pants Size", label: "Pants Size", placeholder: "Waist/Inseam", tooltip: "Pants size for uniform." },
-    { name: "Boots", label: "Boots", placeholder: "Boot size or Yes/No", tooltip: "Boot size for uniform." },
-  ];
-
-  const directDepositFields = [
-    { name: "Deposit Account Type", label: "Deposit Account Type", placeholder: "e.g. Checking, Savings", tooltip: "Type of deposit account for payroll." },
-    { name: "Bank Name", label: "Bank Name", placeholder: "Name of bank", tooltip: "Name of bank where payroll will be deposited." },
-    { name: "Routing Number", label: "Routing Number", placeholder: "9-digit routing number", tooltip: "Routing number for bank." },
-    { name: "Account Number", label: "Account Number", placeholder: "Account number", tooltip: "Account number for bank." },
-  ];
-
-  const notesFields = [
-    { name: "Notes", label: "Notes", placeholder: "Additional notes about candidate", tooltip: "Any additional notes or information about the candidate." },
-  ];
-
-  // Create conditional fields example for Additional Information Card
-  const conditionalFields = [
-    { 
-      name: "Clearance and State Licenses", 
-      label: "Clearance and State Licenses", 
-      tooltip: "Select a clearance or license type",
-      type: "dropdown",
-      options: [
-        "Select a clearance or license...",
-        "Massachusetts COR", 
-        "New Hampshire Guard Card", 
-        "Maine Guard Card"
-      ]
-    },
-    // Massachusetts COR fields
-    { name: "COR Status", label: "COR Status", placeholder: "e.g. Clear, Consider, etc.", category: "Massachusetts COR" },
-    { name: "COR Submit Date", label: "COR Submit Date", placeholder: "MM/DD/YYYY", category: "Massachusetts COR" },
-    { name: "COR Cleared Date", label: "COR Cleared Date", placeholder: "MM/DD/YYYY", category: "Massachusetts COR" },
-    // New Hampshire Guard Card fields  
-    { name: "NH GC Status", label: "NH GC Status", placeholder: "e.g. Clear, Consider, etc.", category: "New Hampshire Guard Card" },
-    { name: "NH GC Expiration Date", label: "NH GC Expiration Date", placeholder: "MM/DD/YYYY", category: "New Hampshire Guard Card" },
-    { name: "NH GC ID Number", label: "NH GC ID Number", placeholder: "e.g. License or Certificate Number", category: "New Hampshire Guard Card" },
-    // Maine Guard Card fields
-    { name: "ME GC Status", label: "ME GC Status", placeholder: "e.g. Clear, Consider, etc.", category: "Maine Guard Card" },
-    { name: "ME GC Sent Date", label: "ME GC Sent Date", placeholder: "MM/DD/YYYY", category: "Maine Guard Card" }
-  ];
-
-  const additionalFields = [
-    // Removed: Scheduled, Onboarding Status, Background Completion Date
-  ];
-
-  // Populate Contact Info Card with paired fields
-  const contactPair = document.createElement("div");
-  contactPair.className = "field-pair--contact";
-  
-  contactFields.forEach((field) => {
-    const fieldEl = buildField(field, person);
-    contactPair.appendChild(fieldEl);
-  });
-  
-  cardContact.appendChild(contactPair);
-
-  // Populate ID/Licensing Card with conditional fields
-  let idTypeSelect = null;
-  let otherWrapper = null;
-  let stateLicensePair = null;
-  let stateWrapper = null;
-  let licenseWrapper = null;
-  let passportWrapper = null;
-  let expWrapper = null;
-  let dobWrapper = null;
-  let idTypeSpecificFields = [];
-
-  const syncIdTypeVisibility = () => {
-    const value = idTypeSelect?.value || "";
-    const showLicense = value === "Driver's License" || value === "State ID";
-    const showPassport = value === "Passport";
-    
-    // License-specific fields (State, ID No.) - show for ALL ID types that use them
-    if (stateLicensePair) {
-      // Show State + ID No. for Driver's License, State ID, and Other
-      const showStateFields = showLicense || value === "Other";
-      stateLicensePair.style.display = showStateFields ? "flex" : "none";
-    }
-    
-    // Passport-specific field (Passport ID) - only for passport
-    if (passportWrapper) passportWrapper.style.display = showPassport ? "flex" : "none";
-    
-    // Other ID field
-    if (otherWrapper) otherWrapper.style.display = value === "Other" ? "flex" : "none";
-    
-    // ID-type-specific DOB and EXP fields
-    idTypeSpecificFields.forEach((fieldData) => {
-      if (fieldData.expWrapper && fieldData.dobWrapper) {
-        const showField = value === fieldData.idType && value !== "Select a type...";
-        const dateContainer = fieldData.expWrapper.parentElement;
-        const className = `field-pair--${fieldData.idType.toLowerCase().replace(/\s+/g, '-').replace(/'/g, '')}-dates`;
-        if (dateContainer && dateContainer.classList.contains(className)) {
-          dateContainer.style.display = showField ? "flex" : "none";
-        }
-      }
-    });
-    
-    // Hide generic EXP and DOB fields since we now have ID-type-specific ones
-    if (expWrapper) {
-      const dateContainer = expWrapper.parentElement;
-      if (dateContainer && dateContainer.classList.contains('field-pair--licensing-dates')) {
-        dateContainer.style.display = "none";
-      } else {
-        expWrapper.style.display = "none";
-      }
-    }
-    if (dobWrapper) {
-      const dateContainer = dobWrapper.parentElement;
-      if (dateContainer && dateContainer.classList.contains('field-pair--licensing-dates')) {
-        dateContainer.style.display = "none";
-      } else {
-        dobWrapper.style.display = "none";
-      }
-    }
-  };
-
-  licensingFields.forEach((field) => {
-    if (field.name === "ID Type") {
-      const fieldEl = buildField(field, person);
-      cardId.appendChild(fieldEl);
-      idTypeSelect = fieldEl.querySelector("select");
-      if (idTypeSelect) {
-        idTypeSelect.addEventListener("change", syncIdTypeVisibility);
-      }
-      return;
-    }
-    
-    if (field.name === "Other ID") {
-      otherWrapper = buildField(field, person);
-      otherWrapper.style.display = "none";
-      cardId.appendChild(otherWrapper);
-      return;
-    }
-    
-    if (field.name === "State") {
-      // Create paired container for State + ID No.
-      stateLicensePair = document.createElement("div");
-      stateLicensePair.className = "field-pair--state-license";
-      stateLicensePair.style.display = "none";
-      
-      // Build State field with special attributes
-      const stateField = buildField(field, person);
-      const stateInput = stateField.querySelector("input");
-      if (stateInput) {
-        stateInput.maxLength = 2;
-        stateInput.pattern = "[A-Z]{2}";
-        stateInput.style.textTransform = "uppercase";
-        // Auto-format to uppercase and limit to 2 chars
-        stateInput.addEventListener("input", (e) => {
-          e.target.value = e.target.value.toUpperCase().slice(0, 2);
-        });
-      }
-      
-      stateWrapper = stateField;
-      stateLicensePair.appendChild(stateWrapper);
-      cardId.appendChild(stateLicensePair);
-      return;
-    }
-    
-    if (field.name === "ID No.") {
-      // Add ID No. field to the existing pair
-      if (stateLicensePair) {
-        const licenseField = buildField(field, person);
-        licenseWrapper = licenseField;
-        stateLicensePair.appendChild(licenseField);
-      }
-      return;
-    }
-    
-    if (field.name === "Passport ID") {
-      passportWrapper = buildField(field, person);
-      passportWrapper.style.display = "none";
-      cardId.appendChild(passportWrapper);
-      return;
-    }
-    
-    // Handle ID-type-specific EXP and DOB fields
-    if (field.idType) {
-      const idTypeKey = field.idType.toLowerCase().replace(/\s+/g, '-');
-      let fieldData = idTypeSpecificFields.find(f => f.idType === field.idType);
-      
-      if (!fieldData) {
-        fieldData = { idType: field.idType, expWrapper: null, dobWrapper: null };
-        idTypeSpecificFields.push(fieldData);
-      }
-      
-      if (field.name.includes("Exp")) {
-        fieldData.expWrapper = buildField(field, person);
-        fieldData.expWrapper.style.display = "none";
-        return;
-      }
-      
-      if (field.name.includes("DOB")) {
-        fieldData.dobWrapper = buildField(field, person);
-        fieldData.dobWrapper.style.display = "none";
-        
-        // Create pairing container for EXP + DOB when both are ready
-        if (fieldData.expWrapper) {
-          const datePair = document.createElement("div");
-          datePair.className = `field-pair--${idTypeKey.replace(/'/g, '')}-dates`;
-          datePair.style.display = "none";
-          datePair.appendChild(fieldData.expWrapper);
-          datePair.appendChild(fieldData.dobWrapper);
-          cardId.appendChild(datePair);
-        } else {
-          // Fallback if EXP wasn't processed first
-          cardId.appendChild(fieldData.dobWrapper);
-        }
-        return;
-      }
-    }
-    
-    // Handle generic EXP and DOB fields (keep for backward compatibility but hide by default)
-    if (field.name === "Exp.") {
-      expWrapper = buildField(field, person);
-      expWrapper.style.display = "none";
-      // Don't append yet - wait for DOB to pair
-      return;
-    }
-    
-    if (field.name === "DOB") {
-      dobWrapper = buildField(field, person);
-      dobWrapper.style.display = "none";
-      
-      // Create pairing container for EXP + DOB
-      if (expWrapper) {
-        const datePair = document.createElement("div");
-        datePair.className = "field-pair--licensing-dates";
-        datePair.style.display = "none";
-        datePair.appendChild(expWrapper);
-        datePair.appendChild(dobWrapper);
-        cardId.appendChild(datePair);
-      } else {
-        // Fallback if EXP wasn't processed first
-        cardId.appendChild(dobWrapper);
-      }
-      return;
-    }
-    
-    // Add any other fields normally
-    const fieldEl = buildField(field, person);
-    cardId.appendChild(fieldEl);
-  });
-
-  syncIdTypeVisibility();
-
-  // Populate Job Info Card with paired fields
-  const jobIdLocationPair = document.createElement("div");
-  jobIdLocationPair.className = "field-pair--job";
-  
-  const managerBranchPair = document.createElement("div");
-  managerBranchPair.className = "field-pair--job";
-  
-  jobFields.forEach((field) => {
-    const fieldEl = buildField(field, person);
-    
-    if (field.name === "Job Name") {
-      jobIdLocationPair.appendChild(fieldEl);
-    } else if (field.name === "Job Location") {
-      jobIdLocationPair.appendChild(fieldEl);
-    } else if (field.name === "Manager Name") {
-      managerBranchPair.appendChild(fieldEl);
-    } else if (field.name === "Branch") {
-      managerBranchPair.appendChild(fieldEl);
-    }
-  });
-  
-  // Add the paired containers to the card
-  cardJob.appendChild(jobIdLocationPair);
-  cardJob.appendChild(managerBranchPair);
-
-  // Populate Emergency Contact Card with paired fields
-  const emergencyPair = document.createElement("div");
-  emergencyPair.className = "field-pair--emergency";
-  let phoneField = null;
-  
-  emergencyFields.forEach((field) => {
-    if (field.name === "EC Phone Number") {
-      // Phone number stays separate
-      phoneField = buildField(field, person);
-    } else {
-      // Name and Relationship get paired
-      const fieldEl = buildField(field, person);
-      emergencyPair.appendChild(fieldEl);
-    }
-  });
-  
-  // Add the paired container first, then phone number
-  cardEmergency.appendChild(emergencyPair);
-  if (phoneField) {
-    cardEmergency.appendChild(phoneField);
-  }
-
-  // Populate Uniforms Card (moved to Post NEO)
-  uniformsFields.forEach((field) => {
-    const fieldEl = buildField(field, person);
-    cardPostNeo.appendChild(fieldEl);
-  });
-
-  // Populate Direct Deposit Card with paired fields
-  directDepositFields.forEach((field) => {
-    const fieldEl = buildField(field, person);
-    
-    if (field.name === "Deposit Account Type" || field.name === "Bank Name") {
-      // These stay separate
-      cardDirectDeposit.appendChild(fieldEl);
-    } else if (field.name === "Routing Number") {
-      // Create pairing container for Routing + Account
-      const bankingPair = document.createElement("div");
-      bankingPair.className = "field-pair--banking";
-      bankingPair.appendChild(fieldEl);
-      
-      // Find and add the Account Number field
-      const accountField = directDepositFields.find(f => f.name === "Account Number");
-      if (accountField) {
-        const accountEl = buildField(accountField, person);
-        bankingPair.appendChild(accountEl);
-      }
-      
-      cardDirectDeposit.appendChild(bankingPair);
-    }
-    // Skip Account Number since it's handled above
-  });
-
-  // Populate Background Check Card with conditional fields
-  let bgTypeSelect = null;
-  const bgConditionalFieldWrappers = [];
-  let bgTypeField = null;
-  let bgDateField = null;
-
-  const updateBgConditionalFields = () => {
-    const selectedBgType = bgTypeSelect?.value || "";
-    
-    // Hide all conditional fields initially
-    bgConditionalFieldWrappers.forEach(wrapper => {
-      wrapper.style.display = "none";
-    });
-    
-    // Show fields for the selected background check type
-    if (selectedBgType && selectedBgType !== "Select a background check type...") {
-      bgConditionalFieldWrappers.forEach(wrapper => {
-        const input = wrapper.querySelector('input, textarea, select');
-        if (input && wrapper.dataset.category === selectedBgType) {
-          wrapper.style.display = "flex";
-        }
-      });
-    }
-  };
-
-  // First, collect all conditional fields
-  bgFields.forEach((field) => {
-    if (field.category) {
-      // Add conditional fields (they'll be hidden/shown based on dropdown selection)
-      const fieldEl = buildField(field, person);
-      fieldEl.style.display = "none"; // Hide initially
-      fieldEl.dataset.category = field.category; // Store category for filtering
-      cardBackground.appendChild(fieldEl);
-      bgConditionalFieldWrappers.push(fieldEl);
-    }
-  });
-
-  // Then create and add the paired container for Background Check Type + Background Date
-  const bgPair = document.createElement("div");
-  bgPair.className = "field-pair--background";
-
-  bgFields.forEach((field) => {
-    if (field.name === "Background Check Type") {
-      bgTypeField = buildField(field, person);
-      bgTypeSelect = bgTypeField.querySelector("select");
-      if (bgTypeSelect) {
-        bgTypeSelect.addEventListener("change", updateBgConditionalFields);
-      }
-      bgPair.appendChild(bgTypeField);
-      return;
-    }
-    
-    // Always show Background Date (no category)
-    if (!field.category && field.name === "Background Date") {
-      bgDateField = buildField(field, person);
-      bgPair.appendChild(bgDateField);
-      return;
-    }
-  });
-
-  // Add the paired container to the card (this will be inserted BEFORE the conditional fields)
-  if (bgTypeField && bgDateField) {
-    cardBackground.insertBefore(bgPair, cardBackground.firstChild);
-  }
-
-  // Initialize visibility based on current selection
-  updateBgConditionalFields();
-
-  // Populate Notes Card
-  notesFields.forEach((field) => {
-    const fieldEl = buildField(field, person);
-    cardNotes.appendChild(fieldEl);
-  });
-
-  // Populate Additional Fields Card with conditional dropdown
-  let categorySelect = null;
-  const conditionalFieldWrappers = [];
-
-  const updateConditionalFields = () => {
-    const selectedCategory = categorySelect?.value || "";
-    
-    // Hide all conditional fields initially
-    conditionalFieldWrappers.forEach(wrapper => {
-      wrapper.style.display = "none";
-    });
-    
-    // Show fields for the selected category
-    if (selectedCategory && selectedCategory !== "Select a category...") {
-      conditionalFieldWrappers.forEach(wrapper => {
-        const input = wrapper.querySelector('input, textarea, select');
-        if (input && wrapper.dataset.category === selectedCategory) {
-          wrapper.style.display = "flex";
-        }
-      });
-    }
-  };
-
-  // Add the dropdown first
-  const categoryField = conditionalFields.find(field => field.name === "Clearance and State Licenses");
-  if (categoryField) {
-    const categoryFieldEl = buildField(categoryField, person);
-    cardAdditional.appendChild(categoryFieldEl);
-    categorySelect = categoryFieldEl.querySelector("select");
-    if (categorySelect) {
-      categorySelect.addEventListener("change", updateConditionalFields);
-    }
-  }
-
-  // Add all conditional fields (they'll be hidden/shown based on dropdown selection)
-  conditionalFields.forEach((field) => {
-    if (field.name === "Clearance and State Licenses") return; // Skip the dropdown itself
-    
-    const fieldEl = buildField(field, person);
-    fieldEl.style.display = "none"; // Hide initially
-    fieldEl.dataset.category = field.category; // Store category for filtering
-    cardAdditional.appendChild(fieldEl);
-    conditionalFieldWrappers.push(fieldEl);
-  });
-
-  // Add the regular additional fields
-  additionalFields.forEach((field) => {
-    const fieldEl = buildField(field, person);
-    cardAdditional.appendChild(fieldEl);
-  });
-
-  // Initialize visibility based on current selection
-  updateConditionalFields();
-};
-
-const openEditPage = async (uid = null) => {
-  console.log('openEditPage called', uid);
-  if (!state.schema) {
-    try {
-      await fetchSchema();
-    } catch (err) {
-      console.error('fetchSchema failed in openEditPage', err);
-      alert("Unable to load form schema. Please sign in or try again.");
-      showAuthModal();
-      return;
-    }
-  }
-  const nameInput = document.getElementById("edit-name");
-  const icimsInput = document.getElementById("edit-icims");
-  const employeeInput = document.getElementById("edit-employee-id");
-  const neoInput = document.getElementById("edit-neo-date");
-
-  state.activeUid = uid;
-  const person = state.people.find((item) => item.uid === uid) || null;
-
-  buildEditCardForm(person);
-
-  // Populate header fields (form-associated inputs)
-  if (nameInput) nameInput.value = person?.Name || "";
-  if (icimsInput) icimsInput.value = person?.["ICIMS ID"] || "";
-  if (employeeInput) employeeInput.value = person?.["Employee ID"] || "";
-  if (neoInput) {
-    const raw = person?.["NEO Scheduled Date"] || "";
-    // convert MM/DD/YYYY to YYYY-MM-DD for input type=date
-    if (raw && raw.includes("/")) {
-      const parts = raw.split("/");
-      if (parts.length >= 3) {
-        const mm = parts[0].padStart(2, "0");
-        const dd = parts[1].padStart(2, "0");
-        const yyyy = parts[2];
-        neoInput.value = `${yyyy}-${mm}-${dd}`;
-      } else {
-        neoInput.value = raw;
-      }
-    } else {
-      neoInput.value = raw;
-    }
-  }
-
-  const editModal = document.getElementById("edit-modal");
-  if (editModal) editModal.classList.remove("hidden");
-  switchPage("edit");
-};
-
-const closeEditPage = () => {
-  const editModal = document.getElementById("edit-modal");
-  if (editModal) editModal.classList.add("hidden");
-  switchPage("dashboard");
-  updateCardSelection();
-  updateDetailsPanel();
-  loadData();
-};
-
-const collectFormData = () => {
-  const form = document.getElementById("candidate-form");
-  if (!form) return {};
-  const data = {};
-  Array.from(form.elements).forEach(element => {
-    data[element.name] = element.value;
-  });
-  
-  // Normalize date fields: convert YYYY-MM-DD -> MM/DD/YYYY for compatibility
-  const dateFields = ["NEO Scheduled Date", "Exp.", "DOB", "Background Completion Date", "CORI Submit Date", "CORI Cleared Date", "NH GC Expiration Date", "ME GC Sent Date", "Driver's License Exp", "Driver's License DOB", "State ID Exp", "State ID DOB", "Passport Exp", "Passport DOB", "Other ID Exp", "Other ID DOB"];
-  dateFields.forEach(fieldName => {
-    if (data[fieldName] && data[fieldName].includes("-")) {
-      const parts = data[fieldName].split("-");
-      if (parts.length === 3) {
-        const yyyy = parts[0];
-        const mm = parts[1];
-        const dd = parts[2];
-        data[fieldName] = `${mm}/${dd}/${yyyy}`;
-      }
-    }
-  });
-  
-  return data;
-};
-
-const saveCandidate = async (event) => {
-  event.preventDefault();
-  const payload = collectFormData();
-  const url = state.activeUid ? `/api/people/${state.activeUid}` : "/api/people";
-  const method = state.activeUid ? "PUT" : "POST";
-  const response = await apiFetch(url, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    alert("Save failed. Check WORKFLOW_PASSWORD or try again.");
-    return;
-  }
-  const payloadJson = await response.json();
-  if (payloadJson?.person?.uid) {
-    state.activeUid = payloadJson.person.uid;
-  }
-  closeEditPage();
-  loadData();
-};
-
-const deleteCandidate = async () => {
-  if (!state.activeUid) return;
-  if (!confirm("Delete this candidate?")) return;
-  const response = await apiFetch(`/api/people/${state.activeUid}`, { method: "DELETE" });
-  if (!response.ok) {
-    alert("Delete failed.");
-    return;
-  }
-  closeEditPage();
-  loadData();
-};
-
 const showAuthModal = async () => {
-  const modal = document.getElementById("auth-modal");
-  const title = document.getElementById("auth-title");
+  const modal = $("auth-modal");
+  const title = $("auth-title");
   if (!modal || !title) return false;
-  try {
-    const response = await apiFetch("/api/auth/status");
-    if (!response.ok) return false;
-    const status = await response.json();
-    state.auth = status;
-    title.textContent = status.configured ? "Sign In" : "Create Program Password";
-    // If already authenticated, resolve immediately
-    if (status.authenticated) return true;
-    modal.classList.remove("hidden");
-    return await new Promise((resolve) => {
-      const onSuccess = () => {
-        window.removeEventListener('workflow:auth-success', onSuccess);
-        window.removeEventListener('workflow:auth-cancel', onCancel);
-        modal.classList.add('hidden');
-        resolve(true);
-      };
-      const onCancel = () => {
-        window.removeEventListener('workflow:auth-success', onSuccess);
-        window.removeEventListener('workflow:auth-cancel', onCancel);
-        modal.classList.add('hidden');
-        resolve(false);
-      };
-      window.addEventListener('workflow:auth-success', onSuccess);
-      window.addEventListener('workflow:auth-cancel', onCancel);
-    });
-  } catch (err) {
-    console.error('showAuthModal error', err);
-    return false;
-  }
+  if (!workflowApi) return false;
+  const status = await workflowApi.authStatus();
+  state.auth = status;
+  title.textContent = status.configured ? "Sign In" : "Create Program Password";
+  if (status.authenticated) return true;
+  modal.classList.remove("hidden");
+  return new Promise((resolve) => {
+    const onSuccess = () => {
+      window.removeEventListener("workflow:auth-success", onSuccess);
+      window.removeEventListener("workflow:auth-cancel", onCancel);
+      modal.classList.add("hidden");
+      resolve(true);
+    };
+    const onCancel = () => {
+      window.removeEventListener("workflow:auth-success", onSuccess);
+      window.removeEventListener("workflow:auth-cancel", onCancel);
+      modal.classList.add("hidden");
+      resolve(false);
+    };
+    window.addEventListener("workflow:auth-success", onSuccess);
+    window.addEventListener("workflow:auth-cancel", onCancel);
+  });
 };
 
 const hideAuthModal = () => {
-  const modal = document.getElementById("auth-modal");
+  const modal = $("auth-modal");
   if (modal) modal.classList.add("hidden");
-  // If modal closed without authentication, notify waiters
   if (!state.auth || !state.auth.authenticated) {
-    window.dispatchEvent(new Event('workflow:auth-cancel'));
+    window.dispatchEvent(new Event("workflow:auth-cancel"));
   }
-};
-
-const showChangePasswordModal = () => {
-  const modal = document.getElementById('change-password-modal');
-  if (!modal) return;
-  // clear fields
-  const cur = document.getElementById('change-current');
-  const nw = document.getElementById('change-new');
-  const conf = document.getElementById('change-confirm');
-  if (cur) cur.value = '';
-  if (nw) nw.value = '';
-  if (conf) conf.value = '';
-  // ensure password eye toggles are initialized
-  initPasswordToggles();
-  modal.classList.remove('hidden');
-};
-
-const hideChangePasswordModal = () => {
-  const modal = document.getElementById('change-password-modal');
-  if (modal) modal.classList.add('hidden');
-};
-
-const handleChangePasswordSubmit = async (event) => {
-  event.preventDefault();
-  const current = document.getElementById('change-current').value;
-  const nw = document.getElementById('change-new').value;
-  const confirm = document.getElementById('change-confirm').value;
-  if (!current || !nw) {
-    alert('Please enter current and new password.');
-    return;
-  }
-  if (nw !== confirm) {
-    alert('New password and confirmation do not match.');
-    return;
-  }
-  const response = await apiFetch('/api/auth/change', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ current, new: nw }),
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    const msg = body && body.detail ? body.detail : 'Unable to change password.';
-    alert(msg);
-    return;
-  }
-  alert('Password changed successfully.');
-  hideChangePasswordModal();
 };
 
 const handleAuthSubmit = async (event) => {
   event.preventDefault();
-  const submitBtn = document.getElementById('auth-submit');
-  if (submitBtn && submitBtn.dataset.submitting) return; // prevent double submits
-  const passwordEl = document.getElementById("auth-password");
-  const password = passwordEl ? passwordEl.value : '';
-  const endpoint = state.auth.configured ? "/api/auth/login" : "/api/auth/setup";
+  const submitBtn = $("auth-submit");
+  if (submitBtn && submitBtn.dataset.submitting) return;
+  const passwordEl = $("auth-password");
+  const password = passwordEl ? passwordEl.value : "";
+  if (!password) return;
   try {
     if (submitBtn) {
-      submitBtn.dataset.submitting = '1';
+      submitBtn.dataset.submitting = "1";
       submitBtn.disabled = true;
     }
-    const response = await apiFetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password }),
-    });
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      const msg = body && body.detail ? body.detail : 'Authentication failed.';
-      alert(msg);
+    const status = await workflowApi.authStatus();
+    let ok = false;
+    if (status.configured) {
+      ok = await workflowApi.authLogin(password);
+    } else {
+      ok = await workflowApi.authSetup(password);
+    }
+    if (!ok) {
+      await showMessageModal("Authentication failed", "Invalid password.");
       return;
     }
-    // Mark authenticated and notify waiters
-    if (!state.auth) state.auth = {};
-    state.auth.authenticated = true;
-    if (!state.auth.configured) {
-      state.auth.configured = true;
-    }
-    window.dispatchEvent(new Event('workflow:auth-success'));
+    state.auth = await workflowApi.authStatus();
+    window.dispatchEvent(new Event("workflow:auth-success"));
     hideAuthModal();
-    // Re-fetch status and data
-    await fetchSchema();
-    await loadData();
+    switchPage("dashboard");
+    await loadKanban();
+    await loadTodos();
   } catch (err) {
-    console.error('Auth submit error', err);
-    alert('Unable to contact server. Try again.');
+    console.error("Auth submit error", err);
+    await showMessageModal("Error", "Unable to authenticate.");
   } finally {
     if (submitBtn) {
-      submitBtn.dataset.submitting = '';
+      submitBtn.dataset.submitting = "";
       submitBtn.disabled = false;
     }
   }
-  };
-
-const openArchiveModal = () => {
-  if (!state.activeUid) return;
-  const modal = document.getElementById("archive-modal");
-  if (modal) modal.classList.remove("hidden");
 };
 
-const closeArchiveModal = () => {
-  const modal = document.getElementById("archive-modal");
+const showChangePasswordModal = () => {
+  const modal = $("change-password-modal");
+  if (!modal) return;
+  const cur = $("change-current");
+  const nw = $("change-new");
+  const conf = $("change-confirm");
+  if (cur) cur.value = "";
+  if (nw) nw.value = "";
+  if (conf) conf.value = "";
+  initPasswordToggles();
+  modal.classList.remove("hidden");
+};
+
+const hideChangePasswordModal = () => {
+  const modal = $("change-password-modal");
   if (modal) modal.classList.add("hidden");
 };
 
-const submitArchive = async (event) => {
+const handleChangePasswordSubmit = async (event) => {
   event.preventDefault();
-  if (!state.activeUid) return;
-  const startTime = document.getElementById("archive-start").value;
-  const endTime = document.getElementById("archive-end").value;
-  
-  // Ensure person has required fields
-  const person = state.people.find((p) => p.uid === state.activeUid) || {};
-  const name = (person.Name || '').trim();
-  const neo = (person['NEO Scheduled Date'] || '').trim();
-  if (!name || !neo) {
-    await showMessageModal('Missing information', 'Name and NEO Scheduled Date must be set before archiving.');
+  const current = $("change-current").value;
+  const nw = $("change-new").value;
+  const confirm = $("change-confirm").value;
+  if (!current || !nw) {
+    await showMessageModal("Missing fields", "Please enter current and new password.");
     return;
   }
-  try {
-    const response = await apiFetch(`/api/archive`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        uid: state.activeUid,
-        start_time: startTime,
-        end_time: endTime,
-      }),
-    });
-    if (!response.ok) {
-      const error = await response.text();
-      await showMessageModal('Archive failed', `Unable to archive: ${error}`);
-      return;
+  if (nw !== confirm) {
+    await showMessageModal("Mismatch", "New password and confirmation do not match.");
+    return;
+  }
+  const ok = await workflowApi.authChange(current, nw);
+  if (!ok) {
+    await showMessageModal("Error", "Unable to change password.");
+    return;
+  }
+  await showMessageModal("Updated", "Password changed successfully.");
+  hideChangePasswordModal();
+};
+
+const getColumnName = (columnId) => {
+  const column = state.kanban.columns.find((col) => col.id === columnId);
+  return column ? column.name : "";
+};
+
+const getDragAfterElement = (container, y) => {
+  const draggableElements = [...container.querySelectorAll(".kanban-card:not(.dragging)")];
+  return draggableElements.reduce(
+    (closest, child) => {
+      const box = child.getBoundingClientRect();
+      const offset = y - box.top - box.height / 2;
+      if (offset < 0 && offset > closest.offset) {
+        return { offset, element: child };
+      }
+      return closest;
+    },
+    { offset: Number.NEGATIVE_INFINITY, element: null }
+  ).element;
+};
+
+const getOrderedIdsForColumn = (columnId) => {
+  return state.kanban.cards
+    .filter((card) => card.column_id === columnId)
+    .sort(sortByOrder)
+    .map((card) => card.uuid);
+};
+
+const applyOrderToColumn = (columnId, orderedIds) => {
+  const columnCards = state.kanban.cards.filter((card) => card.column_id === columnId);
+  const map = new Map(columnCards.map((card) => [card.uuid, card]));
+  const seen = new Set();
+  const ordered = [];
+  orderedIds.forEach((id) => {
+    const card = map.get(id);
+    if (card && !seen.has(id)) {
+      ordered.push(card);
+      seen.add(id);
     }
-    await showMessageModal('Archived', 'Candidate has been archived successfully.');
-    closeArchiveModal();
-    state.activeUid = null;
-    updateCardSelection();
-    updateDetailsPanel();
-    loadData();
-  } catch (err) {
-    console.error('Archive error', err);
-    await showMessageModal('Error', 'Unable to archive. Try again.');
-  }
-};
-
-const loadArchivesList = async () => {
-  const response = await apiFetch("/api/archive/list");
-  if (!response.ok) {
-    alert("Unable to load archives.");
-    return;
-  }
-  const payload = await response.json();
-  state.archives.list = payload.archives || [];
-  state.archives.selected = null;
-  renderArchiveList();
-  renderArchiveContents([]);
-};
-
-const renderArchiveList = () => {
-  const list = document.getElementById("archives-list");
-  if (!list) return;
-  list.innerHTML = "";
-  state.archives.list.forEach((archive) => {
-    const item = document.createElement("li");
-    item.className = "archive-item";
-    if (archive === state.archives.selected) item.classList.add("archive-item--active");
-    item.textContent = archive;
-    item.addEventListener("click", () => {
-      state.archives.selected = archive;
-      state.archives.selectedFile = null;
-      renderArchiveList();
-      // Clear current preview and contents
-      renderArchiveContents([]);
-      const preview = document.getElementById('archive-preview');
-      if (preview) preview.innerHTML = '<div class="muted">Select a file to view.</div>';
-      updateArchiveButtons();
-    });
-    list.appendChild(item);
   });
-  updateArchiveButtons();
-};
-
-const updateArchiveButtons = () => {
-  const unlock = document.getElementById('archive-unlock');
-  const del = document.getElementById('archive-delete');
-  const dl = document.getElementById('archive-download');
-  const has = !!state.archives.selected;
-  if (unlock) unlock.disabled = !has;
-  if (del) del.disabled = !has;
-  if (dl) dl.disabled = !has;
-};
-
-const renderArchiveContents = (files) => {
-  const list = document.getElementById("archives-contents");
-  if (!list) return;
-  list.innerHTML = "";
-  files.forEach((file) => {
-    const item = document.createElement("li");
-    item.className = "archive-item";
-    if (file === state.archives.selectedFile) item.classList.add("archive-item--active");
-
-    const row = document.createElement("div");
-    row.className = "archive-row";
-
-    const name = document.createElement("span");
-    name.className = "archive-file-name";
-    name.textContent = file.split("/").pop();
-    name.title = file;
-    name.style.cursor = "pointer";
-    name.addEventListener("click", () => { state.archives.selectedFile = file; viewArchiveFile(file); renderArchiveContents(files); });
-
-    // Clicking the file name will select and open it (prompts for password if needed)
-    row.append(name);
-    item.appendChild(row);
-    list.appendChild(item);
-  });
-
-  const preview = document.getElementById("archive-preview");
-  if (preview) preview.innerHTML = '<div class="muted">Select a file to view.</div>';
-};
-
-const ARCHIVE_PW_TTL_MS = 10 * 60 * 1000; // 10 minutes
-
-// Cache structure: { <archiveName>: { pw: string, expiresAt: number } }
-state.archives.passwordCache = {};
-
-const cacheArchivePassword = (archiveName, pw) => {
-  if (!archiveName || !pw) return;
-  state.archives.passwordCache[archiveName] = { pw, expiresAt: Date.now() + ARCHIVE_PW_TTL_MS };
-};
-
-// Unlock archive explicitly (prompts and caches password for TTL)
-const unlockArchive = async () => {
-  if (!state.archives.selected) { await showMessageModal('No archive selected', 'Select an archive to unlock.'); return; }
-  const name = state.archives.selected;
-  const unlockBtn = document.getElementById('archive-unlock');
-  if (unlockBtn) unlockBtn.disabled = true;
-  try {
-    const pw = await getArchivePassword(name);
-    if (!pw) return;
-    await showMessageModal('Unlocked', `${name} unlocked for 10 minutes.`);
-    // After unlocking, load the archive contents into the list
-    await loadArchiveContents();
-  } catch (err) {
-    console.error('unlockArchive error', err);
-    await showMessageModal('Error', 'Unable to unlock archive. Try again.');
-  } finally {
-    if (unlockBtn) unlockBtn.disabled = false;
-  }
-};
-
-const getCachedArchivePassword = (archiveName) => {
-  const entry = state.archives.passwordCache[archiveName];
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
-    delete state.archives.passwordCache[archiveName];
-    return null;
-  }
-  return entry.pw;
-};
-
-const showArchivePasswordPrompt = async (archiveName) => {
-  // Ensure authenticated first
-  const authOk = await showAuthModal();
-  if (!authOk) return null;
-  return new Promise((resolve) => {
-    const modal = document.getElementById('archive-password-modal');
-    const form = document.getElementById('archive-password-form');
-    const input = document.getElementById('archive-prompt-password');
-    const close = document.getElementById('archive-password-close');
-    const cancel = document.getElementById('archive-password-cancel');
-    if (!modal || !form || !input) return resolve(null);
-    input.value = '';
-    initPasswordToggles();
-    modal.classList.remove('hidden');
-    input.focus();
-    const cleanup = () => {
-      modal.classList.add('hidden');
-      form.removeEventListener('submit', onSubmit);
-      if (close) close.removeEventListener('click', onCancel);
-      if (cancel) cancel.removeEventListener('click', onCancel);
-    };
-    const onSubmit = (e) => {
-      e.preventDefault();
-      const val = input.value;
-      cleanup();
-      resolve(val);
-    };
-    const onCancel = (e) => {
-      e && e.preventDefault();
-      cleanup();
-      resolve(null);
-    };
-    form.addEventListener('submit', onSubmit);
-    if (close) close.addEventListener('click', onCancel);
-    if (cancel) cancel.addEventListener('click', onCancel);
+  columnCards
+    .filter((card) => !seen.has(card.uuid))
+    .sort(sortByOrder)
+    .forEach((card) => ordered.push(card));
+  ordered.forEach((card, index) => {
+    card.order = index + 1;
   });
 };
 
-// Get archive password, checking cache first and caching after prompt
-const getArchivePassword = async (archiveName) => {
-  if (!archiveName) return null;
-  const cached = getCachedArchivePassword(archiveName);
-  if (cached) return cached;
-  const pw = await showArchivePasswordPrompt(archiveName);
-  if (pw) cacheArchivePassword(archiveName, pw);
-  return pw;
-};
-
-// Confirm delete modal: asks for program password and returns it, or null on cancel
-const showDeleteArchiveModal = (archiveName) => {
-  return new Promise((resolve) => {
-    const modal = document.getElementById('archive-delete-modal');
-    const form = document.getElementById('archive-delete-form');
-    const input = document.getElementById('archive-delete-password');
-    const close = document.getElementById('archive-delete-close');
-    const cancel = document.getElementById('archive-delete-cancel');
-    const message = document.getElementById('archive-delete-message');
-    if (!modal || !form || !input || !message) return resolve(null);
-    message.textContent = `Delete '${archiveName}' — this action cannot be undone.`;
-    input.value = '';
-    initPasswordToggles();
-    modal.classList.remove('hidden');
-    input.focus();
-    const cleanup = () => {
-      modal.classList.add('hidden');
-      form.removeEventListener('submit', onSubmit);
-      if (close) close.removeEventListener('click', onCancel);
-      if (cancel) cancel.removeEventListener('click', onCancel);
-    };
-    const onSubmit = (e) => {
-      e.preventDefault();
-      const val = input.value;
-      cleanup();
-      resolve(val);
-    };
-    const onCancel = (e) => {
-      e && e.preventDefault();
-      cleanup();
-      resolve(null);
-    };
-    form.addEventListener('submit', onSubmit);
-    if (close) close.addEventListener('click', onCancel);
-    if (cancel) cancel.addEventListener('click', onCancel);
-  });
-};
-
-// Small modal to show result messages
-const showMessageModal = (title, message) => {
-  return new Promise((resolve) => {
-    const modal = document.getElementById('action-result-modal');
-    if (!modal) return resolve();
-    const t = document.getElementById('action-result-title');
-    const m = document.getElementById('action-result-message');
-    const ok = document.getElementById('action-result-ok');
-    const close = document.getElementById('action-result-close');
-    t.textContent = title || '';
-    m.textContent = message || '';
-    modal.classList.remove('hidden');
-    const cleanup = () => {
-      modal.classList.add('hidden');
-      ok.removeEventListener('click', onClose);
-      if (close) close.removeEventListener('click', onClose);
-    };
-    const onClose = (e) => {
-      e && e.preventDefault();
-      cleanup();
-      resolve();
-    };
-    ok.addEventListener('click', onClose);
-    if (close) close.addEventListener('click', onClose);
-  });
-};
-
-const viewArchiveFile = async (internalPath) => {
-  const password = await getArchivePassword(state.archives.selected);
-  if (!password) return;
-  const response = await apiFetch(`/api/archive/${state.archives.selected}/file`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ archive_password: password, internal_path: internalPath }),
-  });
-  if (!response.ok) {
-    await showMessageModal('Error', 'Unable to load file.');
-    return;
-  }
-  const text = await response.text();
-  state.archives.selectedFile = internalPath;
-  renderArchiveContents(state.archives.files);
-  renderArchivePreview(internalPath, text);
-};
-
-const renderArchivePreview = (internalPath, text) => {
-  const preview = document.getElementById("archive-preview");
-  if (!preview) return;
-  preview.innerHTML = "";
+const renderKanbanCard = (cardData) => {
+  const card = document.createElement("div");
+  card.className = "kanban-card";
+  card.draggable = true;
+  card.dataset.cardId = cardData.uuid;
 
   const header = document.createElement("div");
-  header.className = "preview-header";
-  const title = document.createElement("h3");
-  title.textContent = internalPath.split("/").pop();
-  const actions = document.createElement("div");
-  actions.className = "preview-actions";
+  header.className = "kanban-card__header";
 
-  const copyBtn = document.createElement("button");
-  copyBtn.className = "button button--ghost";
-  copyBtn.textContent = "Copy";
-  copyBtn.addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      copyBtn.textContent = "Copied";
-      setTimeout(() => (copyBtn.textContent = "Copy"), 1200);
-    } catch (err) {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      ta.remove();
-      copyBtn.textContent = "Copied";
-      setTimeout(() => (copyBtn.textContent = "Copy"), 1200);
-    }
+  const title = document.createElement("div");
+  title.className = "kanban-card__title";
+  title.textContent = cardData.candidate_name || "Unnamed Candidate";
+
+  const piiButton = document.createElement("button");
+  piiButton.type = "button";
+  piiButton.className = "kanban-card__pii";
+  piiButton.textContent = "+ PII";
+  piiButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openPiiModal(cardData);
+  });
+  piiButton.addEventListener("mousedown", (event) => {
+    event.stopPropagation();
   });
 
-  const dlBtn = document.createElement("button");
-  dlBtn.className = "button button--ghost";
-  dlBtn.textContent = "Download";
-  dlBtn.addEventListener("click", () => {
-    const blob = new Blob([text], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = internalPath.split("/").pop();
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+  header.append(title, piiButton);
+
+  const meta = document.createElement("div");
+  meta.className = "kanban-card__meta";
+
+  const row = document.createElement("div");
+  row.className = "kanban-card__row";
+  const icims = document.createElement("span");
+  const icimsLabel = document.createElement("span");
+  icimsLabel.className = "kanban-card__label";
+  icimsLabel.textContent = "ICIMS:";
+  icims.append(icimsLabel, document.createTextNode(` ${cardData.icims_id || "—"}`));
+  row.appendChild(icims);
+  if (cardData.employee_id) {
+    const emp = document.createElement("span");
+    const empLabel = document.createElement("span");
+    empLabel.className = "kanban-card__label";
+    empLabel.textContent = "Employee:";
+    emp.append(empLabel, document.createTextNode(` ${cardData.employee_id}`));
+    row.appendChild(emp);
+  }
+
+  const jobRow = document.createElement("div");
+  jobRow.className = "kanban-card__row";
+  const jobText = [cardData.job_id, cardData.job_name].filter(Boolean).join(" · ");
+  const jobSpan = document.createElement("span");
+  const jobLabel = document.createElement("span");
+  jobLabel.className = "kanban-card__label";
+  jobLabel.textContent = "Job:";
+  jobSpan.append(jobLabel, document.createTextNode(` ${jobText || "—"}`));
+  const managerSpan = document.createElement("span");
+  const managerLabel = document.createElement("span");
+  managerLabel.className = "kanban-card__label";
+  managerLabel.textContent = "Manager:";
+  managerSpan.append(managerLabel, document.createTextNode(` ${cardData.manager || "—"}`));
+  jobRow.append(jobSpan, managerSpan);
+
+  const uuid = document.createElement("div");
+  uuid.className = "kanban-card__uuid";
+  uuid.textContent = cardData.uuid || "";
+
+  meta.append(row, jobRow);
+  card.append(header, meta, uuid);
+
+  card.addEventListener("dragstart", (event) => {
+    state.kanban.draggingCardId = cardData.uuid;
+    card.classList.add("dragging");
+    event.dataTransfer.setData("text/plain", cardData.uuid);
+    event.dataTransfer.effectAllowed = "move";
   });
 
-  actions.append(copyBtn, dlBtn);
-  header.append(title, actions);
-  preview.appendChild(header);
-
-  const lines = text.split(/\r?\n/);
-  let section = "File";
-  let buffer = [];
-  const sections = [];
-  lines.forEach((line) => {
-    const m = line.match(/^==\s*(.+?)\s*==$/);
-    if (m) {
-      if (buffer.length) sections.push({ section, content: buffer.join("\n") });
-      section = m[1];
-      buffer = [];
-    } else {
-      buffer.push(line);
-    }
+  card.addEventListener("dragend", () => {
+    state.kanban.draggingCardId = null;
+    card.classList.remove("dragging");
   });
-  if (buffer.length) sections.push({ section, content: buffer.join("\n") });
 
-  sections.forEach((s) => {
-    const hdr = document.createElement("div");
-    hdr.className = "archive-section-title";
-    hdr.textContent = s.section;
-    const pre = document.createElement("pre");
-    pre.className = "archive-section-body";
-    pre.textContent = s.content;
-    preview.appendChild(hdr);
-    preview.appendChild(pre);
+  card.addEventListener("click", () => {
+    if (state.kanban.draggingCardId) return;
+    openCandidateModal("edit", cardData.column_id, cardData);
+  });
+
+  return card;
+};
+
+const renderKanbanBoard = () => {
+  const page = $("page-dashboard");
+  if (!page || !page.classList.contains("page--active")) return;
+  const board = $("kanban-board");
+  const empty = $("kanban-empty");
+  if (!board || !empty) return;
+
+  const columns = [...state.kanban.columns].sort(sortByOrder);
+  const hasColumns = columns.length > 0;
+  empty.classList.toggle("hidden", hasColumns);
+  board.innerHTML = "";
+
+  columns.forEach((column) => {
+    const columnEl = document.createElement("div");
+    columnEl.className = "kanban__column";
+    columnEl.dataset.columnId = column.id;
+
+    const header = document.createElement("div");
+    header.className = "kanban__column-header";
+    const title = document.createElement("div");
+    title.className = "kanban__column-title";
+    title.textContent = column.name;
+    const addBtn = document.createElement("button");
+    addBtn.className = "icon-button";
+    addBtn.type = "button";
+    addBtn.textContent = "+";
+    addBtn.addEventListener("click", () => openCandidateModal("add", column.id));
+    header.append(title, addBtn);
+
+    const body = document.createElement("div");
+    body.className = "kanban__column-body";
+    body.dataset.columnId = column.id;
+    body.addEventListener("dragover", (event) => {
+      if (!state.kanban.draggingCardId) return;
+      event.preventDefault();
+      body.classList.add("is-over");
+      event.dataTransfer.dropEffect = "move";
+      const afterElement = getDragAfterElement(body, event.clientY);
+      const draggingEl = document.querySelector(
+        `.kanban-card[data-card-id="${state.kanban.draggingCardId}"]`
+      );
+      if (draggingEl) {
+        if (afterElement == null) {
+          body.appendChild(draggingEl);
+        } else {
+          body.insertBefore(draggingEl, afterElement);
+        }
+      }
+    });
+    body.addEventListener("dragleave", () => {
+      body.classList.remove("is-over");
+    });
+    body.addEventListener("drop", async (event) => {
+      event.preventDefault();
+      body.classList.remove("is-over");
+      const cardId = event.dataTransfer.getData("text/plain");
+      if (!cardId) return;
+      const orderedIds = Array.from(body.querySelectorAll(".kanban-card")).map(
+        (el) => el.dataset.cardId
+      );
+      await moveCardToColumn(cardId, column.id, orderedIds);
+    });
+
+    const cards = state.kanban.cards
+      .filter((card) => card.column_id === column.id)
+      .sort(sortByOrder);
+
+    cards.forEach((cardData) => {
+      body.appendChild(renderKanbanCard(cardData));
+    });
+
+    columnEl.append(header, body);
+    board.appendChild(columnEl);
   });
 };
 
-const loadArchiveContents = async () => {
-  if (!state.archives.selected) {
-    await showMessageModal('No archive selected', 'Select an archive first.');
-    return;
+const renderKanbanSettings = () => {
+  const list = $("kanban-columns-list");
+  const removeBtn = $("settings-remove-column");
+  if (!list) return;
+  list.innerHTML = "";
+  const columns = [...state.kanban.columns].sort(sortByOrder);
+  if (!columns.length) {
+    const empty = document.createElement("div");
+    empty.className = "muted";
+    empty.textContent = "No columns yet. Add one to start building your board.";
+    list.appendChild(empty);
   }
-  const password = await getArchivePassword(state.archives.selected);
-  if (!password) return;
-  const response = await apiFetch(`/api/archive/${state.archives.selected}/contents`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ archive_password: password }),
+  columns.forEach((column) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "kanban-chip";
+    chip.textContent = column.name;
+    chip.dataset.columnId = column.id;
+    if (state.kanban.selectedColumnId === column.id) {
+      chip.classList.add("kanban-chip--active");
+    }
+    chip.addEventListener("click", () => {
+      state.kanban.selectedColumnId = column.id;
+      renderKanbanSettings();
+    });
+    list.appendChild(chip);
   });
-  if (!response.ok) {
-    await showMessageModal('Error', 'Unable to load archive contents.');
-    return;
-  }
-  const payload = await response.json();
-  state.archives.files = payload.files || [];
-  renderArchiveContents(state.archives.files);
+  if (removeBtn) removeBtn.disabled = !state.kanban.selectedColumnId;
 };
 
-const downloadArchiveFile = async (internalPath) => {
-  const password = await getArchivePassword(state.archives.selected);
-  if (!password) return;
-  const response = await apiFetch(`/api/archive/${state.archives.selected}/file`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ archive_password: password, internal_path: internalPath }),
-  });
-  if (!response.ok) {
-    await showMessageModal('Error', 'Unable to download file.');
+const loadKanban = async () => {
+  const payload = await workflowApi.kanbanGet();
+  state.kanban.columns = payload.columns || [];
+  state.kanban.cards = payload.cards || [];
+  state.kanban.loaded = true;
+  renderKanbanBoard();
+  renderKanbanSettings();
+};
+
+const openAddColumnModal = () => {
+  const modal = $("add-column-modal");
+  const input = $("add-column-name");
+  if (!modal || !input) return;
+  input.value = "";
+  modal.classList.remove("hidden");
+  input.focus();
+};
+
+const closeAddColumnModal = () => {
+  const modal = $("add-column-modal");
+  if (modal) modal.classList.add("hidden");
+};
+
+const handleAddColumnSubmit = async (event) => {
+  event.preventDefault();
+  const input = $("add-column-name");
+  if (!input) return;
+  const name = input.value.trim();
+  if (!name) return;
+  const payload = await workflowApi.kanbanAddColumn(name);
+  state.kanban.columns = payload.columns || state.kanban.columns;
+  closeAddColumnModal();
+  renderKanbanBoard();
+  renderKanbanSettings();
+};
+
+const removeSelectedColumn = async () => {
+  const columnId = state.kanban.selectedColumnId;
+  if (!columnId) return;
+  const payload = await workflowApi.kanbanRemoveColumn(columnId);
+  state.kanban.columns = payload.columns || [];
+  state.kanban.cards = payload.cards || [];
+  state.kanban.selectedColumnId = null;
+  renderKanbanBoard();
+  renderKanbanSettings();
+};
+
+const openCandidateModal = (mode, columnId, cardData = null) => {
+  const modal = $("candidate-modal");
+  if (!modal) return;
+  const title = $("candidate-modal-title");
+  const subtitle = $("candidate-modal-subtitle");
+  const submit = $("candidate-submit");
+  const nameInput = $("candidate-name");
+  const icimsInput = $("candidate-icims");
+  const empInput = $("candidate-employee");
+  const jobIdInput = $("candidate-job-id");
+  const jobNameInput = $("candidate-job-name");
+  const jobLocationInput = $("candidate-job-location");
+  const managerInput = $("candidate-manager");
+  const branchSelect = $("candidate-branch");
+  const branchOther = $("candidate-branch-other");
+
+  state.kanban.activeColumnId = columnId;
+  state.kanban.editingCardId = mode === "edit" ? (cardData && cardData.uuid) : null;
+
+  if (title) title.textContent = mode === "edit" ? "Edit Candidate" : "Add Candidate";
+  if (submit) submit.textContent = mode === "edit" ? "Save Changes" : "Add Candidate";
+  if (subtitle) {
+    const columnName = getColumnName(columnId);
+    subtitle.textContent = columnName ? `Column: ${columnName}` : "";
+  }
+
+  const fill = (input, value) => {
+    if (input) input.value = value || "";
+  };
+
+  if (mode === "edit" && cardData) {
+    fill(nameInput, cardData.candidate_name);
+    fill(icimsInput, cardData.icims_id);
+    fill(empInput, cardData.employee_id);
+    fill(jobIdInput, cardData.job_id);
+    fill(jobNameInput, cardData.job_name);
+    fill(jobLocationInput, cardData.job_location);
+    fill(managerInput, cardData.manager);
+    if (branchSelect) {
+      const branchValue = cardData.branch || "";
+      const isOther = !["Salem", "Portland", "Other", ""].includes(branchValue);
+      branchSelect.value = isOther ? "Other" : branchValue;
+      if (branchOther) {
+        branchOther.classList.toggle("hidden", !isOther && branchSelect.value !== "Other");
+        branchOther.value = isOther ? branchValue : "";
+      }
+    }
+  } else {
+    fill(nameInput, "");
+    fill(icimsInput, "");
+    fill(empInput, "");
+    fill(jobIdInput, "");
+    fill(jobNameInput, "");
+    fill(jobLocationInput, "");
+    fill(managerInput, "");
+    if (branchSelect) branchSelect.value = "";
+    if (branchOther) {
+      branchOther.value = "";
+      branchOther.classList.add("hidden");
+    }
+  }
+
+  modal.classList.remove("hidden");
+  if (nameInput) nameInput.focus();
+};
+
+const closeCandidateModal = () => {
+  const modal = $("candidate-modal");
+  if (modal) modal.classList.add("hidden");
+  state.kanban.activeColumnId = null;
+  state.kanban.editingCardId = null;
+};
+
+const getPossessiveName = (name) => {
+  const trimmed = (name || "").trim();
+  if (!trimmed) return "Candidate's Personal Information";
+  const suffix = trimmed.toLowerCase().endsWith("s") ? "'" : "'s";
+  return `${trimmed}${suffix} Personal Information`;
+};
+
+const toggleLicenseSections = (value) => {
+  const ma = $("pii-license-ma");
+  const nh = $("pii-license-nh");
+  const me = $("pii-license-me");
+  if (ma) ma.classList.add("hidden");
+  if (nh) nh.classList.add("hidden");
+  if (me) me.classList.add("hidden");
+  if (value === "MA CORI" && ma) ma.classList.remove("hidden");
+  if (value === "NH GC" && nh) nh.classList.remove("hidden");
+  if (value === "ME GC" && me) me.classList.remove("hidden");
+};
+
+const toggleBackgroundDate = (value) => {
+  const dateInput = $("pii-background-date");
+  if (!dateInput) return;
+  if (value) {
+    dateInput.classList.remove("hidden");
+  } else {
+    dateInput.classList.add("hidden");
+    dateInput.value = "";
+  }
+};
+
+const updateBackgroundMvrFlag = (value) => {
+  const flag = $("pii-background-mvr");
+  if (!flag) return;
+  if (value && value.toLowerCase().includes("mvr")) {
+    flag.value = "2";
+  } else {
+    flag.value = "1";
+  }
+};
+
+const openPiiModal = async (cardData) => {
+  const modal = $("pii-modal");
+  if (!modal || !cardData) return;
+  const title = $("pii-modal-title");
+  state.kanban.piiCandidateId = cardData.uuid;
+
+  let result = null;
+  try {
+    result = await workflowApi.piiGet(cardData.uuid);
+  } catch (error) {
+    await showMessageModal(
+      "PII Unavailable",
+      "PII handlers are not available. Please fully quit and relaunch the app."
+    );
     return;
   }
-  const blob = await response.blob();
+  const row = (result && result.row) || {};
+  const displayName = result && result.candidateName ? result.candidateName : cardData.candidate_name;
+
+  if (title) title.textContent = getPossessiveName(displayName);
+
+  const setValue = (id, value) => {
+    const input = $(id);
+    if (input) input.value = value || "";
+  };
+
+  setValue("pii-contact-phone", row["Contact Phone"]);
+  setValue("pii-contact-email", row["Contact Email"]);
+  setValue("pii-background-provider", row["Background Provider"]);
+  setValue("pii-background-date", row["Background Cleared Date"]);
+  setValue("pii-background-mvr", row["Background MVR Flag"] || "1");
+  setValue("pii-license-type", row["License Type"]);
+  setValue("pii-cori-status", row["MA CORI Status"]);
+  setValue("pii-cori-date", row["MA CORI Date"]);
+  setValue("pii-nh-status", row["NH GC Status"]);
+  setValue("pii-nh-expiration", row["NH GC Expiration Date"]);
+  setValue("pii-nh-id", row["NH GC ID Number"]);
+  setValue("pii-me-status", row["ME GC Status"]);
+  setValue("pii-me-expiration", row["ME GC Expiration Date"]);
+  setValue("pii-bank-name", row["Bank Name"]);
+  setValue("pii-account-type", row["Account Type"]);
+  setValue("pii-routing", row["Routing Number"]);
+  setValue("pii-account", row["Account Number"]);
+  setValue("pii-shirt", row["Shirt Size"]);
+  setValue("pii-pants", row["Pants Size"]);
+  setValue("pii-boots", row["Boots Size"]);
+  setValue("pii-emergency-name", row["Emergency Contact Name"]);
+  setValue("pii-emergency-relationship", row["Emergency Contact Relationship"]);
+  setValue("pii-emergency-phone", row["Emergency Contact Phone"]);
+  setValue("pii-additional-details", row["Additional Details"]);
+
+  const providerValue = row["Background Provider"] || "";
+  toggleBackgroundDate(providerValue);
+  updateBackgroundMvrFlag(providerValue);
+  toggleLicenseSections(row["License Type"]);
+
+  modal.classList.remove("hidden");
+};
+
+const closePiiModal = () => {
+  const modal = $("pii-modal");
+  if (modal) modal.classList.add("hidden");
+  state.kanban.piiCandidateId = null;
+};
+
+const collectPiiPayload = () => {
+  const value = (id) => ($(id) ? $(id).value.trim() : "");
+  return {
+    "Contact Phone": value("pii-contact-phone"),
+    "Contact Email": value("pii-contact-email"),
+    "Background Provider": value("pii-background-provider"),
+    "Background Cleared Date": value("pii-background-date"),
+    "Background MVR Flag": value("pii-background-mvr") || "1",
+    "License Type": value("pii-license-type"),
+    "MA CORI Status": value("pii-cori-status"),
+    "MA CORI Date": value("pii-cori-date"),
+    "NH GC Status": value("pii-nh-status"),
+    "NH GC Expiration Date": value("pii-nh-expiration"),
+    "NH GC ID Number": value("pii-nh-id"),
+    "ME GC Status": value("pii-me-status"),
+    "ME GC Expiration Date": value("pii-me-expiration"),
+    "Bank Name": value("pii-bank-name"),
+    "Account Type": value("pii-account-type"),
+    "Routing Number": value("pii-routing"),
+    "Account Number": value("pii-account"),
+    "Shirt Size": value("pii-shirt"),
+    "Pants Size": value("pii-pants"),
+    "Boots Size": value("pii-boots"),
+    "Emergency Contact Name": value("pii-emergency-name"),
+    "Emergency Contact Relationship": value("pii-emergency-relationship"),
+    "Emergency Contact Phone": value("pii-emergency-phone"),
+    "Additional Details": value("pii-additional-details"),
+  };
+};
+
+const validatePiiPayload = async (payload) => {
+  const phoneFields = [
+    { label: "Contact Phone", value: payload["Contact Phone"] },
+    { label: "Emergency Contact Phone", value: payload["Emergency Contact Phone"] },
+    { label: "Background Cleared Date", value: payload["Background Cleared Date"] },
+    { label: "MA CORI Date", value: payload["MA CORI Date"] },
+    { label: "NH GC Expiration Date", value: payload["NH GC Expiration Date"] },
+    { label: "ME GC Expiration Date", value: payload["ME GC Expiration Date"] },
+  ];
+
+  for (const field of phoneFields) {
+    if (field.value && !isPhoneLikeValid(field.value)) {
+      await showMessageModal("Invalid Format", `${field.label} must be in 123-123-1234 format.`);
+      return false;
+    }
+  }
+
+  if (payload["Contact Email"]) {
+    const emailInput = $("pii-contact-email");
+    if (emailInput && !emailInput.checkValidity()) {
+      await showMessageModal("Invalid Email", "Please enter a valid email address.");
+      return false;
+    }
+  }
+
+  if (payload["Routing Number"] && !/^\d{9}$/.test(payload["Routing Number"])) {
+    await showMessageModal("Invalid Routing Number", "Routing Number must be 9 digits.");
+    return false;
+  }
+
+  if (payload["Account Number"] && !/^\d{20}$/.test(payload["Account Number"])) {
+    await showMessageModal("Invalid Account Number", "Account Number must be 20 digits.");
+    return false;
+  }
+
+  return true;
+};
+
+const handlePiiSubmit = async (event) => {
+  event.preventDefault();
+  const candidateId = state.kanban.piiCandidateId;
+  if (!candidateId) return;
+  const payload = collectPiiPayload();
+  const ok = await validatePiiPayload(payload);
+  if (!ok) return;
+  try {
+    await workflowApi.piiSave(candidateId, payload);
+  } catch (error) {
+    await showMessageModal(
+      "Save Failed",
+      "Unable to save PII. Please fully quit and relaunch the app."
+    );
+    return;
+  }
+  closePiiModal();
+};
+
+const buildCandidatePayload = () => {
+  const nameInput = $("candidate-name");
+  const icimsInput = $("candidate-icims");
+  const empInput = $("candidate-employee");
+  const jobIdInput = $("candidate-job-id");
+  const jobNameInput = $("candidate-job-name");
+  const jobLocationInput = $("candidate-job-location");
+  const managerInput = $("candidate-manager");
+  const branchSelect = $("candidate-branch");
+  const branchOther = $("candidate-branch-other");
+
+  const branchValue = branchSelect && branchSelect.value === "Other"
+    ? (branchOther && branchOther.value.trim()) || "Other"
+    : (branchSelect && branchSelect.value) || "";
+
+  return {
+    column_id: state.kanban.activeColumnId,
+    candidate_name: nameInput ? nameInput.value.trim() : "",
+    icims_id: icimsInput ? icimsInput.value.trim() : "",
+    employee_id: empInput ? empInput.value.trim() : "",
+    job_id: jobIdInput ? jobIdInput.value.trim() : "",
+    job_name: jobNameInput ? jobNameInput.value.trim() : "",
+    job_location: jobLocationInput ? jobLocationInput.value.trim() : "",
+    manager: managerInput ? managerInput.value.trim() : "",
+    branch: branchValue,
+  };
+};
+
+const handleCandidateSubmit = async (event) => {
+  event.preventDefault();
+  const payload = buildCandidatePayload();
+  if (!payload.column_id) {
+    await showMessageModal("Missing Column", "Select a column before adding a candidate.");
+    return;
+  }
+  if (!payload.candidate_name) {
+    await showMessageModal("Missing Name", "Candidate Name is required.");
+    return;
+  }
+
+  if (state.kanban.editingCardId) {
+    const data = await workflowApi.kanbanUpdateCard(state.kanban.editingCardId, payload);
+    state.kanban.cards = data.cards || state.kanban.cards;
+  } else {
+    const data = await workflowApi.kanbanAddCard(payload);
+    if (data.card) {
+      state.kanban.cards.push(data.card);
+    } else if (data.cards) {
+      state.kanban.cards = data.cards;
+    }
+  }
+  closeCandidateModal();
+  renderKanbanBoard();
+};
+
+const persistColumnOrder = async (columnId) => {
+  if (!columnId) return;
+  const orderedIds = getOrderedIdsForColumn(columnId);
+  const data = await workflowApi.kanbanReorderColumn(columnId, orderedIds);
+  if (data.cards) state.kanban.cards = data.cards;
+};
+
+const moveCardToColumn = async (cardId, columnId, orderedIds = null) => {
+  const card = state.kanban.cards.find((item) => item.uuid === cardId);
+  if (!card) return;
+  const fromColumnId = card.column_id;
+  const sameColumn = fromColumnId === columnId;
+  if (sameColumn && !orderedIds) return;
+
+  if (!sameColumn) {
+    card.column_id = columnId;
+  }
+
+  if (orderedIds && orderedIds.length) {
+    applyOrderToColumn(columnId, orderedIds);
+  } else if (!sameColumn) {
+    const maxOrder = Math.max(
+      0,
+      ...state.kanban.cards
+        .filter((item) => item.column_id === columnId)
+        .map((item) => item.order || 0)
+    );
+    card.order = maxOrder + 1;
+  }
+
+  if (!sameColumn && fromColumnId) {
+    applyOrderToColumn(fromColumnId, getOrderedIdsForColumn(fromColumnId));
+  }
+
+  renderKanbanBoard();
+
+  try {
+    if (!sameColumn) {
+      await workflowApi.kanbanUpdateCard(cardId, { column_id: columnId });
+    }
+    await persistColumnOrder(columnId);
+    if (!sameColumn && fromColumnId) {
+      await persistColumnOrder(fromColumnId);
+    }
+  } catch (error) {
+    console.error("Move card error", error);
+    await loadKanban();
+  }
+};
+
+const initCandidateInputs = () => {
+  const nameInput = $("candidate-name");
+  const jobLocationInput = $("candidate-job-location");
+  const managerInput = $("candidate-manager");
+  const branchOther = $("candidate-branch-other");
+  const icimsInput = $("candidate-icims");
+  const empInput = $("candidate-employee");
+  const branchSelect = $("candidate-branch");
+
+  const letterInputs = [nameInput, jobLocationInput, managerInput, branchOther].filter(Boolean);
+  letterInputs.forEach((input) => {
+    input.addEventListener("input", () => {
+      input.value = sanitizeLetters(input.value);
+    });
+  });
+
+  const numericInputs = [icimsInput, empInput].filter(Boolean);
+  numericInputs.forEach((input) => {
+    input.addEventListener("input", () => {
+      input.value = sanitizeNumbers(input.value).slice(0, 12);
+    });
+  });
+
+  if (branchSelect && branchOther) {
+    branchSelect.addEventListener("change", () => {
+      if (branchSelect.value === "Other") {
+        branchOther.classList.remove("hidden");
+      } else {
+        branchOther.classList.add("hidden");
+        branchOther.value = "";
+      }
+    });
+  }
+};
+
+const initPiiInputs = () => {
+  const contactPhone = $("pii-contact-phone");
+  const backgroundDate = $("pii-background-date");
+  const coriDate = $("pii-cori-date");
+  const nhExpiration = $("pii-nh-expiration");
+  const meExpiration = $("pii-me-expiration");
+  const emergencyPhone = $("pii-emergency-phone");
+  const dateLikeInputs = [contactPhone, backgroundDate, coriDate, nhExpiration, meExpiration, emergencyPhone].filter(Boolean);
+  dateLikeInputs.forEach((input) => {
+    input.addEventListener("input", () => {
+      input.value = formatPhoneLike(input.value);
+    });
+  });
+
+  const bankName = $("pii-bank-name");
+  const emergencyName = $("pii-emergency-name");
+  const emergencyRelationship = $("pii-emergency-relationship");
+  [bankName, emergencyName, emergencyRelationship].filter(Boolean).forEach((input) => {
+    input.addEventListener("input", () => {
+      input.value = sanitizeLetters(input.value);
+    });
+  });
+
+  const alphaNumInputs = [$("pii-shirt"), $("pii-pants"), $("pii-boots"), $("pii-nh-id")].filter(Boolean);
+  alphaNumInputs.forEach((input) => {
+    input.addEventListener("input", () => {
+      input.value = sanitizeAlphaNum(input.value);
+    });
+  });
+
+  const routing = $("pii-routing");
+  if (routing) {
+    routing.addEventListener("input", () => {
+      routing.value = sanitizeNumbers(routing.value).slice(0, 9);
+    });
+  }
+
+  const account = $("pii-account");
+  if (account) {
+    account.addEventListener("input", () => {
+      account.value = sanitizeNumbers(account.value).slice(0, 20);
+    });
+  }
+
+  const backgroundProvider = $("pii-background-provider");
+  if (backgroundProvider) {
+    backgroundProvider.addEventListener("change", () => {
+      toggleBackgroundDate(backgroundProvider.value);
+      updateBackgroundMvrFlag(backgroundProvider.value);
+    });
+    backgroundProvider.addEventListener("blur", () => {
+      updateBackgroundMvrFlag("");
+    });
+  }
+
+  const licenseType = $("pii-license-type");
+  if (licenseType) {
+    licenseType.addEventListener("change", () => {
+      toggleLicenseSections(licenseType.value);
+    });
+  }
+};
+
+const openWeeklyTracker = async () => {
+  const panel = $("weekly-panel");
+  const form = $("weekly-form");
+  const range = $("weekly-range");
+  if (!panel || !form) return;
+  const data = await workflowApi.weeklyGet();
+  form.innerHTML = "";
+  if (range) {
+    range.textContent = `Week of ${data.week_start} to ${data.week_end}`;
+  }
+  const days = ["Friday", "Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"];
+  const grid = document.createElement("div");
+  grid.className = "weekly__grid";
+  days.forEach((day) => {
+    const info = data.entries && data.entries[day] ? data.entries[day] : { start: "", end: "", content: "" };
+    const container = document.createElement("div");
+    container.className = "weekly__day";
+
+    const header = document.createElement("div");
+    header.className = "weekly__day-header";
+    const title = document.createElement("div");
+    title.className = "weekly__day-title";
+    title.textContent = day;
+
+    const timeWrap = document.createElement("div");
+    timeWrap.className = "weekly__time";
+    const startInput = document.createElement("input");
+    startInput.type = "text";
+    startInput.name = `${day}__start`;
+    startInput.placeholder = "Start";
+    startInput.value = info.start || "";
+    const endInput = document.createElement("input");
+    endInput.type = "text";
+    endInput.name = `${day}__end`;
+    endInput.placeholder = "End";
+    endInput.value = info.end || "";
+    timeWrap.append(startInput, endInput);
+    header.append(title, timeWrap);
+
+    const textarea = document.createElement("textarea");
+    textarea.name = `${day}__content`;
+    textarea.placeholder = "";
+    textarea.value = info.content || "";
+
+    container.append(header, textarea);
+    grid.appendChild(container);
+  });
+  form.appendChild(grid);
+  panel.classList.remove("hidden");
+  panel.setAttribute("aria-hidden", "false");
+  state.flyouts.weekly = true;
+};
+
+const closeWeeklyTracker = () => {
+  const panel = $("weekly-panel");
+  if (panel) {
+    panel.classList.add("hidden");
+    panel.setAttribute("aria-hidden", "true");
+  }
+  state.flyouts.weekly = false;
+};
+
+const toggleWeeklyTracker = () => {
+  if (state.flyouts.weekly) {
+    closeWeeklyTracker();
+  } else {
+    openWeeklyTracker();
+  }
+};
+
+const saveWeeklyTracker = async (event) => {
+  event.preventDefault();
+  const form = $("weekly-form");
+  if (!form) return;
+  const entries = {};
+  Array.from(form.elements).forEach((element) => {
+    const [day, field] = element.name.split("__");
+    if (!day || !field) return;
+    entries[day] = entries[day] || { content: "", start: "", end: "" };
+    entries[day][field] = element.value;
+  });
+  await workflowApi.weeklySave(entries);
+  closeWeeklyTracker();
+};
+
+const downloadWeeklySummary = async () => {
+  const summary = await workflowApi.weeklySummary();
+  if (!summary || !summary.content) return;
+  const blob = new Blob([summary.content], { type: "text/plain" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = internalPath.split("/").pop();
+  link.download = summary.filename || "weekly_summary.txt";
   document.body.appendChild(link);
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
 };
 
-const downloadArchive = async () => {
-  if (!state.archives.selected) { await showMessageModal('No archive selected', 'Select an archive to download.'); return; }
-  const authOk = await showAuthModal();
-  if (!authOk) return;
-  window.location.href = `/api/archive/${encodeURIComponent(state.archives.selected)}/download`;
+const openTodoPanel = () => {
+  const panel = $("todo-panel");
+  if (!panel) return;
+  panel.classList.remove("hidden");
+  panel.setAttribute("aria-hidden", "false");
+  state.flyouts.todo = true;
 };
 
-const deleteArchive = async () => {
-  if (!state.archives.selected) {
-    await showMessageModal('No archive selected', 'Select an archive to delete.');
+const closeTodoPanel = () => {
+  const panel = $("todo-panel");
+  if (!panel) return;
+  panel.classList.add("hidden");
+  panel.setAttribute("aria-hidden", "true");
+  state.flyouts.todo = false;
+};
+
+const toggleTodoPanel = () => {
+  if (state.flyouts.todo) {
+    closeTodoPanel();
+  } else {
+    openTodoPanel();
+  }
+};
+
+const getWeekdayName = (dateString) => {
+  const date = dateString ? new Date(dateString) : new Date();
+  const names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  return names[date.getDay()];
+};
+
+const appendTodoToWeekly = async (todo) => {
+  try {
+    const data = await workflowApi.weeklyGet();
+    const entries = data.entries || {};
+    const dayName = getWeekdayName(todo.createdAt);
+    const entry = entries[dayName] || { content: "", start: "", end: "" };
+    const content = entry.content || "";
+    const line = todo.text || "";
+    if (!line) return;
+    if (!content.includes(line)) {
+      const separator = content && !content.endsWith("\n") ? "\n" : "";
+      entry.content = `${content}${separator}${line}`;
+    }
+    entries[dayName] = entry;
+    await workflowApi.weeklySave(entries);
+  } catch (error) {
+    console.error("Unable to append todo to weekly tracker", error);
+  }
+};
+
+const renderTodoList = () => {
+  const todoList = $("todo-list");
+  if (!todoList) return;
+  todoList.innerHTML = "";
+  state.todos.forEach((todo, idx) => {
+    const li = document.createElement("li");
+    li.className = "todo-item";
+    if (todo.done) li.classList.add("todo-item--done");
+
+    const text = document.createElement("div");
+    text.className = "todo-text";
+    text.textContent = todo.text;
+
+    const actions = document.createElement("div");
+    actions.className = "todo-actions";
+
+    const completeBtn = document.createElement("button");
+    completeBtn.className = "todo-complete";
+    completeBtn.textContent = todo.done ? "Completed" : "Complete";
+    completeBtn.dataset.idx = idx;
+    if (todo.done) completeBtn.disabled = true;
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "todo-delete";
+    deleteBtn.textContent = "Delete";
+    deleteBtn.dataset.idx = idx;
+
+    actions.append(completeBtn, deleteBtn);
+    li.append(text, actions);
+    todoList.appendChild(li);
+  });
+};
+
+const loadTodos = async () => {
+  state.todos = (await workflowApi.todosGet()) || [];
+  renderTodoList();
+};
+
+const saveTodos = async () => {
+  await workflowApi.todosSave(state.todos);
+};
+
+const setupTodoUI = () => {
+  const todoList = $("todo-list");
+  if (!todoList) return;
+  const todoToggle = $("todo-toggle");
+  if (todoToggle) todoToggle.addEventListener("click", toggleTodoPanel);
+  const todoClose = $("todo-close");
+  if (todoClose) todoClose.addEventListener("click", closeTodoPanel);
+
+  const todoForm = $("todo-form");
+  if (todoForm) {
+    todoForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const input = $("todo-input");
+      const text = input.value.trim();
+      if (!text) return;
+      state.todos.push({ text, done: false, createdAt: new Date().toISOString() });
+      input.value = "";
+      renderTodoList();
+      saveTodos();
+    });
+  }
+
+  todoList.addEventListener("click", async (e) => {
+    const target = e.target;
+    if (!(target instanceof HTMLElement)) return;
+    if (target.classList.contains("todo-complete")) {
+      const idx = Number(target.dataset.idx);
+      const todo = state.todos[idx];
+      if (!todo || todo.done) return;
+      todo.done = true;
+      renderTodoList();
+      await saveTodos();
+      await appendTodoToWeekly(todo);
+      return;
+    }
+    if (target.classList.contains("todo-delete")) {
+      const idx = Number(target.dataset.idx);
+      state.todos.splice(idx, 1);
+      renderTodoList();
+      await saveTodos();
+    }
+  });
+};
+
+const renderDatabaseTableSelect = () => {
+  const select = $("db-table-select");
+  if (!select) return;
+  select.innerHTML = "";
+  state.data.tables.forEach((table) => {
+    const option = document.createElement("option");
+    option.value = table.id;
+    option.textContent = `${table.name} (${table.count})`;
+    select.appendChild(option);
+  });
+  if (state.data.tableId) {
+    select.value = state.data.tableId;
+  }
+};
+
+const getFilteredDatabaseRows = () => {
+  const query = state.data.query.trim().toLowerCase();
+  if (!query) return state.data.rows;
+  return state.data.rows.filter((row) =>
+    state.data.columns.some((col) => {
+      const value = row[col];
+      return String(value ?? "").toLowerCase().includes(query);
+    })
+  );
+};
+
+const updateDatabaseMeta = (filteredCount) => {
+  const meta = $("db-table-meta");
+  if (!meta) return;
+  const total = state.data.rows.length;
+  meta.textContent = `${filteredCount} of ${total} rows`;
+};
+
+const updateDbDeleteButton = () => {
+  const btn = $("db-delete");
+  if (!btn) return;
+  btn.disabled = state.data.selectedRowIds.size === 0;
+};
+
+const renderDatabaseTable = () => {
+  const table = $("db-table");
+  if (!table) return;
+  const thead = table.querySelector("thead");
+  const tbody = table.querySelector("tbody");
+  if (!thead || !tbody) return;
+
+  const rows = getFilteredDatabaseRows();
+  const visibleIds = new Set(rows.map((row) => row.__rowId));
+  state.data.selectedRowIds = new Set(
+    [...state.data.selectedRowIds].filter((id) => visibleIds.has(id))
+  );
+
+  thead.innerHTML = "";
+  tbody.innerHTML = "";
+
+  const headerRow = document.createElement("tr");
+  const selectTh = document.createElement("th");
+  const selectAll = document.createElement("input");
+  selectAll.type = "checkbox";
+  selectAll.className = "table-checkbox";
+  selectAll.dataset.selectAll = "1";
+  selectAll.checked = rows.length > 0 && rows.every((row) => state.data.selectedRowIds.has(row.__rowId));
+  selectTh.appendChild(selectAll);
+  headerRow.appendChild(selectTh);
+
+  state.data.columns.forEach((col) => {
+    const th = document.createElement("th");
+    th.textContent = col;
+    headerRow.appendChild(th);
+  });
+  thead.appendChild(headerRow);
+
+  if (!rows.length) {
+    const emptyRow = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = state.data.columns.length + 1;
+    td.className = "data-table__empty";
+    td.textContent = "No rows found.";
+    emptyRow.appendChild(td);
+    tbody.appendChild(emptyRow);
+    updateDatabaseMeta(0);
+    updateDbDeleteButton();
     return;
   }
-  const name = state.archives.selected;
-  // Ask for program password via our confirm modal
-  const confirmBtn = document.getElementById('archive-delete-confirm');
-  const pw = await showDeleteArchiveModal(name);
-  if (!pw) return; // cancelled
-  if (confirmBtn) confirmBtn.disabled = true;
-  try {
-    // Attempt program login with provided password
-    const loginResp = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: pw }),
-    });
-    if (!loginResp.ok) {
-      const body = await loginResp.json().catch(() => ({}));
-      await showMessageModal('Authentication failed', (body && body.detail) || 'Incorrect program password.');
-      return;
-    }
 
-    // Now call delete endpoint
-    const response = await apiFetch(`/api/archive/${encodeURIComponent(name)}`, { method: 'DELETE' });
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      await showMessageModal('Delete failed', (body && body.detail) || 'Unable to delete archive.');
-      return;
-    }
-    await showMessageModal('Deleted', `${name} was deleted. This action cannot be undone.`);
-    loadArchivesList();
-  } catch (err) {
-    console.error('Delete error', err);
-    await showMessageModal('Error', 'Unable to delete archive. Try again.');
-  } finally {
-    if (confirmBtn) confirmBtn.disabled = false;
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    const selectTd = document.createElement("td");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "table-checkbox db-row-checkbox";
+    checkbox.dataset.rowId = row.__rowId;
+    checkbox.checked = state.data.selectedRowIds.has(row.__rowId);
+    selectTd.appendChild(checkbox);
+    tr.appendChild(selectTd);
+
+    state.data.columns.forEach((col) => {
+      const td = document.createElement("td");
+      const value = row[col];
+      td.textContent = value === null || value === undefined ? "" : String(value);
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+
+  updateDatabaseMeta(rows.length);
+  updateDbDeleteButton();
+};
+
+const loadDatabaseTable = async (tableId) => {
+  if (!tableId) return;
+  let table = null;
+  try {
+    table = await workflowApi.dbGetTable(tableId);
+  } catch (error) {
+    await showMessageModal(
+      "Database Unavailable",
+      "Database handlers are not available. Please fully quit and relaunch the app."
+    );
+    return;
   }
+  state.data.tableId = table.id;
+  state.data.columns = table.columns || [];
+  state.data.rows = table.rows || [];
+  state.data.selectedRowIds = new Set();
+  renderDatabaseTableSelect();
+  renderDatabaseTable();
+};
+
+const loadDatabaseTables = async () => {
+  let tables = [];
+  try {
+    tables = (await workflowApi.dbListTables()) || [];
+  } catch (error) {
+    await showMessageModal(
+      "Database Unavailable",
+      "Database handlers are not available. Please fully quit and relaunch the app."
+    );
+    return;
+  }
+  state.data.tables = tables;
+  if (!tables.some((table) => table.id === state.data.tableId)) {
+    state.data.tableId = tables.length ? tables[0].id : null;
+  }
+  renderDatabaseTableSelect();
+  if (state.data.tableId) {
+    await loadDatabaseTable(state.data.tableId);
+  }
+};
+
+const handleDatabaseDelete = async () => {
+  if (!state.data.tableId || state.data.selectedRowIds.size === 0) return;
+  const ids = Array.from(state.data.selectedRowIds);
+  try {
+    await workflowApi.dbDeleteRows(state.data.tableId, ids);
+  } catch (error) {
+    await showMessageModal(
+      "Delete Failed",
+      "Unable to delete rows. Please fully quit and relaunch the app."
+    );
+    return;
+  }
+  await loadDatabaseTables();
+  if (["kanban_columns", "kanban_cards", "candidate_data"].includes(state.data.tableId)) {
+    await loadKanban();
+  }
+};
+
+const setupFlyoutDismiss = () => {
+  document.addEventListener("click", (event) => {
+    const weeklyPanel = $("weekly-panel");
+    const weeklyButton = $("weekly-toggle");
+    if (state.flyouts.weekly && weeklyPanel && weeklyButton) {
+      if (!weeklyPanel.contains(event.target) && !weeklyButton.contains(event.target)) {
+        closeWeeklyTracker();
+      }
+    }
+    const todoPanel = $("todo-panel");
+    const todoButton = $("todo-toggle");
+    if (state.flyouts.todo && todoPanel && todoButton) {
+      if (!todoPanel.contains(event.target) && !todoButton.contains(event.target)) {
+        closeTodoPanel();
+      }
+    }
+  });
 };
 
 const switchPage = (page) => {
   if (!page) return;
-  const target = document.getElementById(`page-${page}`) ? page : "dashboard";
+  const target = $(`page-${page}`) ? page : "dashboard";
   state.page = target;
   document.querySelectorAll(".page").forEach((section) => {
     section.classList.toggle("page--active", section.id === `page-${target}`);
@@ -2236,626 +1419,156 @@ const switchPage = (page) => {
   document.querySelectorAll(".nav-item").forEach((btn) => {
     btn.classList.toggle("nav-item--active", btn.dataset.page === target);
   });
-  updateDetailsPanel();
-  if (target === "archives") {
-    loadArchivesList();
+  if (target === "dashboard") {
+    renderKanbanBoard();
+  }
+  if (target === "settings") {
+    renderKanbanSettings();
   }
   if (target === "database") {
-    loadDatabaseData();
+    loadDatabaseTables();
   }
-};
-
-const removeCandidate = async () => {
-  if (!state.activeUid) return;
-  if (!confirm("Remove this candidate?")) return;
-  const response = await apiFetch(`/api/people/${state.activeUid}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ Removed: true }),
-  });
-  if (!response.ok) {
-    alert("Unable to remove candidate.");
-    return;
-  }
-  state.activeUid = null;
-  updateCardSelection();
-  updateDetailsPanel();
-  loadData();
 };
 
 const setupEventListeners = () => {
-  const addButton = document.getElementById("add-candidate");
-  const cancelButton = document.getElementById("edit-cancel");
-  const detailsArchive = document.getElementById("details-archive");
-  const detailsRemove = document.getElementById("details-remove");
-  const form = document.getElementById("candidate-form");
-  const searchInput = document.getElementById("search-input");
-  const branchFilter = document.getElementById("branch-filter");
-  const exportButton = document.getElementById("export-csv");
-  const weeklyButton = document.getElementById("weekly-tracker");
-  const weeklyPanelClose = document.getElementById("weekly-panel-close");
-  const weeklyPanelSave = document.getElementById("weekly-panel-save");
-  const weeklyPanelExport = document.getElementById("weekly-panel-export");
-  const todoButton = document.getElementById("todo-tracker");
-  const todoAddBtn = document.getElementById("todo-add");
-  const todoInput = document.getElementById("todo-input");
-  const archiveModalClose = document.getElementById("archive-close");
-  const archiveModalCancel = document.getElementById("archive-cancel");
-  const archiveForm = document.getElementById("archive-form");
-  const archivesLoad = document.getElementById("archives-load");
-  const archiveUnlock = document.getElementById("archive-unlock");
-  const archiveDeleteBtn = document.getElementById("archive-delete");
-  const archiveDownloadBtn = document.getElementById("archive-download");
-  const authForm = document.getElementById("auth-form");
-  const authClose = document.getElementById('auth-close');
-  const detailsEdit = document.getElementById("details-edit");
-  const neoClose = document.getElementById("neo-close");
-  const neoCancel = document.getElementById("neo-cancel");
-  const neoMove = document.getElementById("neo-move");
-  const neoRemoveBtn = document.getElementById("neo-remove");
-  const sidebarToggle = document.getElementById("sidebar-toggle");
-  const board = document.querySelector(".board");
+  const sidebarToggle = $("sidebar-toggle");
+  if (sidebarToggle) {
+    sidebarToggle.addEventListener("click", () => {
+      const appEl = document.querySelector(".app");
+      const mini = document.querySelector(".sidebar__mini");
+      const isCollapsed = appEl.classList.toggle("app--sidebar-collapsed");
+      if (mini) {
+        mini.setAttribute("aria-hidden", isCollapsed ? "false" : "true");
+        mini.querySelectorAll(".nav-item--mini").forEach((btn) => {
+          if (isCollapsed) btn.removeAttribute("tabindex");
+          else btn.setAttribute("tabindex", "-1");
+        });
+      }
+    });
+  }
 
-  console.log('setupEventListeners: addButton present?', !!addButton);
-  if (addButton) addButton.addEventListener("click", () => openEditPage().catch(err => { console.error('openEditPage error', err); alert('Unable to open editor. Check console for details.'); }));
-  if (cancelButton) cancelButton.addEventListener("click", closeEditPage);
-  const modalClose = document.getElementById("modal-close");
-  const editModalOverlay = document.querySelector("#edit-modal .modal__overlay");
-  if (modalClose) modalClose.addEventListener("click", closeEditPage);
-  if (editModalOverlay) editModalOverlay.addEventListener("click", closeEditPage);
-  if (detailsEdit) detailsEdit.addEventListener("click", () => openEditPage(state.activeUid));
-  if (sidebarToggle) sidebarToggle.addEventListener('click', () => {
-    const appEl = document.querySelector('.app');
-    const mini = document.querySelector('.sidebar__mini');
-    const isCollapsed = appEl.classList.toggle('app--sidebar-collapsed');
-    if (mini) {
-      // When collapsed show the mini, otherwise hide it
-      mini.setAttribute('aria-hidden', isCollapsed ? 'false' : 'true');
-      // Manage focusability of children to avoid aria-hidden focused element warnings
-      mini.querySelectorAll('.nav-item--mini').forEach((btn) => {
-        if (isCollapsed) btn.removeAttribute('tabindex'); else btn.setAttribute('tabindex', '-1');
-      });
-    }
-  });
-  if (detailsArchive) detailsArchive.addEventListener("click", openArchiveModal);
-  if (detailsRemove) detailsRemove.addEventListener("click", removeCandidate);
-  if (form) form.addEventListener("submit", saveCandidate);
-  if (searchInput) {
-    searchInput.addEventListener("input", (event) => {
-      state.filters.search = event.target.value;
-      loadData();
-    });
-  }
-  if (branchFilter) {
-    branchFilter.addEventListener("change", (event) => {
-      state.filters.branch = event.target.value;
-      loadData();
-    });
-  }
-  if (weeklyButton) weeklyButton.addEventListener("click", openWeeklyTracker);
-  const weeklyMini = document.getElementById('weekly-tracker-mini');
-  if (weeklyMini) weeklyMini.addEventListener('click', openWeeklyTracker);
-  if (weeklyPanelClose) weeklyPanelClose.addEventListener("click", closeWeeklyTracker);
-  if (weeklyPanelSave) weeklyPanelSave.addEventListener("click", saveWeeklyTracker);
-  if (weeklyPanelExport) {
-    weeklyPanelExport.addEventListener("click", () => {
-      window.location.href = "/api/weekly/summary";
-    });
-  }
-  // Todo panel event listeners
-  if (todoButton) todoButton.addEventListener("click", openTodoPanel);
-  const todoMini = document.getElementById('todo-tracker-mini');
-  if (todoMini) todoMini.addEventListener('click', openTodoPanel);
-  if (todoAddBtn) todoAddBtn.addEventListener("click", addTodo);
-  if (todoInput) {
-    todoInput.addEventListener("keypress", (e) => {
-      if (e.key === "Enter") addTodo();
-    });
-  }
-  if (archiveModalClose) archiveModalClose.addEventListener("click", closeArchiveModal);
-  if (archiveModalCancel) archiveModalCancel.addEventListener("click", closeArchiveModal);
-  if (archiveForm) archiveForm.addEventListener("submit", submitArchive);
-  if (archivesLoad) archivesLoad.addEventListener("click", loadArchiveContents);
-  if (archiveUnlock) archiveUnlock.addEventListener('click', unlockArchive);
-  if (archiveDeleteBtn) archiveDeleteBtn.addEventListener('click', deleteArchive);
-  if (archiveDownloadBtn) archiveDownloadBtn.addEventListener('click', downloadArchive);
+  const addColumnHeader = $("add-column-header");
+  const addColumnSettings = $("settings-add-column");
+  const removeColumnSettings = $("settings-remove-column");
+  const addColumnForm = $("add-column-form");
+  const addColumnClose = $("add-column-close");
+  const addColumnCancel = $("add-column-cancel");
+  const candidateForm = $("candidate-form");
+  const candidateClose = $("candidate-close");
+  const candidateCancel = $("candidate-cancel");
+  const piiForm = $("pii-form");
+  const piiClose = $("pii-close");
+  const piiCancel = $("pii-cancel");
+
+  if (addColumnHeader) addColumnHeader.addEventListener("click", openAddColumnModal);
+  if (addColumnSettings) addColumnSettings.addEventListener("click", openAddColumnModal);
+  if (removeColumnSettings) removeColumnSettings.addEventListener("click", removeSelectedColumn);
+  if (addColumnForm) addColumnForm.addEventListener("submit", handleAddColumnSubmit);
+  if (addColumnClose) addColumnClose.addEventListener("click", closeAddColumnModal);
+  if (addColumnCancel) addColumnCancel.addEventListener("click", closeAddColumnModal);
+  if (candidateForm) candidateForm.addEventListener("submit", handleCandidateSubmit);
+  if (candidateClose) candidateClose.addEventListener("click", closeCandidateModal);
+  if (candidateCancel) candidateCancel.addEventListener("click", closeCandidateModal);
+  if (piiForm) piiForm.addEventListener("submit", handlePiiSubmit);
+  if (piiClose) piiClose.addEventListener("click", closePiiModal);
+  if (piiCancel) piiCancel.addEventListener("click", closePiiModal);
+
+  const weeklyButton = $("weekly-toggle");
+  const weeklyClose = $("weekly-close");
+  const weeklyCancel = $("weekly-cancel");
+  const weeklyForm = $("weekly-form");
+  const weeklyExport = $("weekly-export");
+  if (weeklyButton) weeklyButton.addEventListener("click", toggleWeeklyTracker);
+  if (weeklyClose) weeklyClose.addEventListener("click", closeWeeklyTracker);
+  if (weeklyCancel) weeklyCancel.addEventListener("click", closeWeeklyTracker);
+  if (weeklyForm) weeklyForm.addEventListener("submit", saveWeeklyTracker);
+  if (weeklyExport) weeklyExport.addEventListener("click", downloadWeeklySummary);
+
+  const authForm = $("auth-form");
+  const authClose = $("auth-close");
   if (authForm) authForm.addEventListener("submit", handleAuthSubmit);
-  if (authClose) authClose.addEventListener('click', hideAuthModal);
-  const changeBtn = document.getElementById('change-password-button');
-  const changeModalClose = document.getElementById('change-password-close');
-  const changeForm = document.getElementById('change-password-form');
-  if (changeBtn) changeBtn.addEventListener('click', showChangePasswordModal);
-  if (changeModalClose) changeModalClose.addEventListener('click', hideChangePasswordModal);
-  if (changeForm) changeForm.addEventListener('submit', handleChangePasswordSubmit);
-  if (neoClose) neoClose.addEventListener("click", hideNeoModal);
-  if (neoCancel) neoCancel.addEventListener("click", hideNeoModal);
-  if (neoMove) neoMove.addEventListener("click", neoMoveToInProgress);
-  if (neoRemoveBtn) neoRemoveBtn.addEventListener("click", neoRemoveCandidate);
-  if (detailsEdit) {
-    detailsEdit.addEventListener("click", () => {
-      if (state.activeUid) openEditPage(state.activeUid);
+  if (authClose) authClose.addEventListener("click", hideAuthModal);
+
+  const changeBtn = $("change-password-button");
+  const changeModalClose = $("change-password-close");
+  const changeForm = $("change-password-form");
+  if (changeBtn) changeBtn.addEventListener("click", showChangePasswordModal);
+  if (changeModalClose) changeModalClose.addEventListener("click", hideChangePasswordModal);
+  if (changeForm) changeForm.addEventListener("submit", handleChangePasswordSubmit);
+
+  const dbSearch = $("db-search");
+  const dbDelete = $("db-delete");
+  const dbSelect = $("db-table-select");
+  const dbTable = $("db-table");
+  if (dbSearch) {
+    dbSearch.addEventListener("input", () => {
+      state.data.query = dbSearch.value;
+      renderDatabaseTable();
     });
   }
-  if (board) {
-    board.addEventListener("click", () => {
-      // Close any open flyout panels when clicking on board
-      closeAllFlyoutPanels();
-      if (!state.activeUid) return;
-      state.activeUid = null;
-      updateCardSelection();
-      updateDetailsPanel();
+  if (dbDelete) dbDelete.addEventListener("click", handleDatabaseDelete);
+  if (dbSelect) {
+    dbSelect.addEventListener("change", async () => {
+      state.data.query = "";
+      if (dbSearch) dbSearch.value = "";
+      await loadDatabaseTable(dbSelect.value);
     });
   }
+  if (dbTable) {
+    dbTable.addEventListener("change", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement)) return;
+      if (target.dataset.selectAll) {
+        if (target.checked) {
+          state.data.selectedRowIds = new Set(getFilteredDatabaseRows().map((row) => row.__rowId));
+        } else {
+          state.data.selectedRowIds = new Set();
+        }
+        renderDatabaseTable();
+        return;
+      }
+      if (target.classList.contains("db-row-checkbox")) {
+        const rowId = target.dataset.rowId;
+        if (!rowId) return;
+        if (target.checked) {
+          state.data.selectedRowIds.add(rowId);
+        } else {
+          state.data.selectedRowIds.delete(rowId);
+        }
+        updateDbDeleteButton();
+      }
+    });
+  }
+
   document.querySelectorAll(".nav-item").forEach((button) => {
     button.addEventListener("click", () => switchPage(button.dataset.page));
   });
-  
-  // Database viewer event listeners
-  const tableSelector = document.getElementById('table-selector');
-  const exportCsvBtn = document.getElementById('export-csv');
-  
-  if (tableSelector) {
-    tableSelector.addEventListener('change', async (event) => {
-      state.database.selectedTable = event.target.value;
-      await loadDatabaseData();
-      renderDatabaseViewer();
-    });
-  }
-  
-  if (exportCsvBtn) {
-    exportCsvBtn.addEventListener('click', exportDatabaseToCsv);
-  }
 };
 
-const openWeeklyTracker = async () => {
-  const panel = document.getElementById("weekly-panel");
-  const body = document.getElementById("weekly-panel-body");
-  const rangeEl = document.getElementById("weekly-panel-range");
-  if (!panel || !body) return;
-
-  const response = await apiFetch("/api/weekly/current");
-  if (!response.ok) {
-    alert("Unable to load weekly tracker.");
+const initApp = async () => {
+  if (!workflowApi) {
+    await showMessageModal("Error", "Electron preload is unavailable.");
     return;
   }
-  const data = await response.json();
-  state.weeklyData = data; // Store for todo integration
+  initPasswordToggles();
+  observeNewPasswordFields();
+  setupEventListeners();
+  setupFlyoutDismiss();
+  setupTodoUI();
+  initCandidateInputs();
+  initPiiInputs();
 
-  body.innerHTML = "";
-  if (rangeEl) {
-    rangeEl.textContent = `Week of ${data.week_start} to ${data.week_end}`;
+  const status = await workflowApi.authStatus();
+  state.auth = status;
+  if (!status.authenticated) {
+    const ok = await showAuthModal();
+    if (!ok) return;
   }
 
-  // Render days in a scrollable list format matching details panel style
-  const days = ["Friday","Saturday","Sunday","Monday","Tuesday","Wednesday","Thursday"];
-  const daysContainer = document.createElement('div');
-  daysContainer.className = 'weekly__days-list';
-
-  days.forEach((day) => {
-    const info = (data.entries && data.entries[day]) ? data.entries[day] : { start: '', end: '', content: '' };
-
-    const daySection = document.createElement("div");
-    daySection.className = "weekly__day-section";
-    daySection.dataset.day = day;
-
-    const header = document.createElement("div");
-    header.className = "weekly__day-header-bar";
-
-    const title = document.createElement("div");
-    title.className = "weekly__day-title-bar";
-    title.textContent = day;
-
-    const timeWrap = document.createElement("div");
-    timeWrap.className = "weekly__time-inline";
-
-    const startInput = document.createElement("input");
-    startInput.type = "text";
-    startInput.name = `${day}__start`;
-    startInput.placeholder = "Start";
-    startInput.value = info.start || "";
-    startInput.className = "weekly__time-input";
-
-    const endInput = document.createElement("input");
-    endInput.type = "text";
-    endInput.name = `${day}__end`;
-    endInput.placeholder = "End";
-    endInput.value = info.end || "";
-    endInput.className = "weekly__time-input";
-
-    timeWrap.append(startInput, document.createTextNode(" - "), endInput);
-    header.append(title, timeWrap);
-
-    const textarea = document.createElement("textarea");
-    textarea.name = `${day}__content`;
-    textarea.placeholder = "What did you work on?";
-    textarea.value = info.content || "";
-    textarea.className = "weekly__day-textarea";
-
-    daySection.append(header, textarea);
-    daysContainer.appendChild(daySection);
-  });
-
-  body.appendChild(daysContainer);
-
-  // Apply any pending todo entries to the weekly tracker
-  applyPendingTodosToWeeklyTracker();
-
-  // Use toggleFlyoutPanel to handle the flyout behavior
-  toggleFlyoutPanel('weekly');
+  switchPage("dashboard");
+  await loadKanban();
+  await loadTodos();
 };
 
-const closeWeeklyTracker = () => {
-  const panel = document.getElementById("weekly-panel");
-  if (panel) _hideFlyoutPanel(panel);
-  if (state.flyoutPanel === 'weekly') state.flyoutPanel = null;
-};
-
-const saveWeeklyTracker = async () => {
-  const body = document.getElementById("weekly-panel-body");
-  if (!body) return;
-
-  const entries = {};
-  body.querySelectorAll('input, textarea').forEach((element) => {
-    const [day, field] = element.name.split("__");
-    if (!day || !field) return;
-    entries[day] = entries[day] || { content: "", start: "", end: "" };
-    entries[day][field] = element.value;
-  });
-
-  const response = await apiFetch("/api/weekly/current", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ entries }),
-  });
-  if (!response.ok) {
-    alert("Unable to save weekly tracker.");
-    return;
-  }
-  closeWeeklyTracker();
-};
-
-/* --- Todo List Panel Functions --- */
-
-const getTodayName = () => {
-  const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  return days[new Date().getDay()];
-};
-
-const openTodoPanel = () => {
-  renderTodoList();
-  toggleFlyoutPanel('todo');
-};
-
-const renderTodoList = () => {
-  const listEl = document.getElementById("todo-list");
-  if (!listEl) return;
-
-  listEl.innerHTML = "";
-
-  if (state.todos.length === 0) {
-    const emptyMsg = document.createElement("li");
-    emptyMsg.className = "todo__item todo__item--empty";
-    emptyMsg.textContent = "No tasks yet. Add one above!";
-    listEl.appendChild(emptyMsg);
-    return;
-  }
-
-  state.todos.forEach((todo, index) => {
-    const item = document.createElement("li");
-    item.className = `todo__item ${todo.completed ? 'todo__item--completed' : ''}`;
-    item.dataset.index = index;
-
-    const text = document.createElement("span");
-    text.className = "todo__item-text";
-    text.textContent = todo.text;
-
-    const actions = document.createElement("div");
-    actions.className = "todo__item-actions";
-
-    // Complete button (checkmark)
-    const completeBtn = document.createElement("button");
-    completeBtn.className = "todo__btn";
-    completeBtn.innerHTML = todo.completed ? "✅" : "⬜";
-    completeBtn.title = todo.completed ? "Mark incomplete" : "Mark complete";
-    completeBtn.addEventListener("click", () => toggleTodoComplete(index));
-
-    // Delete button (X)
-    const deleteBtn = document.createElement("button");
-    deleteBtn.className = "todo__btn todo__btn--delete";
-    deleteBtn.innerHTML = "❌";
-    deleteBtn.title = "Delete task";
-    deleteBtn.addEventListener("click", () => deleteTodo(index));
-
-    actions.appendChild(completeBtn);
-    actions.appendChild(deleteBtn);
-    item.append(text, actions);
-    listEl.appendChild(item);
-  });
-};
-
-const addTodo = () => {
-  const input = document.getElementById("todo-input");
-  if (!input) return;
-
-  const text = input.value.trim();
-  if (!text) return;
-
-  state.todos.push({
-    text,
-    completed: false,
-    createdAt: new Date().toISOString(),
-  });
-
-  input.value = "";
-  renderTodoList();
-};
-
-const queueCompletedTodoForWeekly = (taskText) => {
-  const today = getTodayName();
-  if (!state.pendingWeeklyEntries) {
-    state.pendingWeeklyEntries = {};
-  }
-  if (!state.pendingWeeklyEntries[today]) {
-    state.pendingWeeklyEntries[today] = [];
-  }
-  const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  state.pendingWeeklyEntries[today].push(`[${timestamp}] Completed: ${taskText}`);
-};
-
-const applyPendingTodosToWeeklyTracker = () => {
-  const body = document.getElementById("weekly-panel-body");
-  if (!body || !state.pendingWeeklyEntries) return;
-
-  Object.entries(state.pendingWeeklyEntries).forEach(([day, entries]) => {
-    const daySection = body.querySelector(`[data-day="${day}"]`);
-    if (!daySection) return;
-    const textarea = daySection.querySelector('textarea');
-    if (!textarea) return;
-
-    const currentContent = textarea.value.trim();
-    const newContent = entries.join("\n");
-
-    if (currentContent) {
-      textarea.value = currentContent + "\n" + newContent;
-    } else {
-      textarea.value = newContent;
-    }
-  });
-
-  // Clear pending entries after applying
-  state.pendingWeeklyEntries = {};
-};
-
-const toggleTodoComplete = (index) => {
-  const todo = state.todos[index];
-  if (!todo) return;
-
-  const wasCompleted = todo.completed;
-  todo.completed = !todo.completed;
-
-  // If marking as complete (not uncompleting), queue it for weekly tracker
-  if (todo.completed && !wasCompleted) {
-    queueCompletedTodoForWeekly(todo.text);
-    // If weekly panel is open, apply immediately
-    const weeklyPanel = document.getElementById("weekly-panel");
-    if (weeklyPanel && !weeklyPanel.classList.contains("details--hidden")) {
-      applyPendingTodosToWeeklyTracker();
-    }
-  }
-
-  renderTodoList();
-};
-
-const deleteTodo = (index) => {
-  state.todos.splice(index, 1);
-  renderTodoList();
-};
-
-/** Add completed todo to today's weekly tracker entry */
-const addTodoToWeeklyTracker = (taskText) => {
-  const today = getTodayName();
-  const body = document.getElementById("weekly-panel-body");
-
-  if (!body) {
-    // Weekly panel not open, queue for later
-    queueCompletedTodoForWeekly(taskText);
-    return;
-  }
-
-  // Find today's section
-  const todaySection = body.querySelector(`[data-day="${today}"]`);
-  if (!todaySection) {
-    // Weekly panel open but today not found, queue for later
-    queueCompletedTodoForWeekly(taskText);
-    return;
-  }
-
-  // Find the textarea for today
-  const textarea = todaySection.querySelector('textarea');
-  if (!textarea) return;
-
-  // Append the completed task to today's content
-  const currentContent = textarea.value.trim();
-  const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const newEntry = `[${timestamp}] Completed: ${taskText}`;
-
-  if (currentContent) {
-    textarea.value = currentContent + "\n" + newEntry;
-  } else {
-    textarea.value = newEntry;
-  }
-};
-
-// Database Viewer Functions
-const loadDatabaseData = async () => {
-  if (!state.database.selectedTable) {
-    state.database.data = [];
-    return;
-  }
-  
-  state.database.loading = true;
-  renderDatabaseViewer();
-  
-  try {
-    const endpoint = state.database.selectedTable === 'temporary' 
-      ? '/api/database/temporary' 
-      : '/api/database/longterm';
-    
-    const response = await apiFetch(endpoint);
-    if (response.ok) {
-      const result = await response.json();
-      state.database.data = result.data || [];
-    } else {
-      state.database.data = [];
-    }
-  } catch (error) {
-    console.error('Error loading database data:', error);
-    state.database.data = [];
-  } finally {
-    state.database.loading = false;
-    renderDatabaseViewer();
-  }
-};
-
-const renderDatabaseViewer = () => {
-  const tableTitle = document.getElementById('table-title');
-  const tableSubtitle = document.getElementById('table-subtitle');
-  const placeholder = document.getElementById('csv-placeholder');
-  const viewer = document.getElementById('csv-viewer');
-  
-  if (!state.database.selectedTable) {
-    tableTitle.textContent = 'Select a table to view';
-    tableSubtitle.textContent = 'Choose temporary or long-term storage from the dropdown above.';
-    placeholder.classList.remove('hidden');
-    viewer.classList.add('hidden');
-    return;
-  }
-  
-  const tableName = state.database.selectedTable === 'temporary' 
-    ? 'Temporary Storage (Active Onboarding)' 
-    : 'Long-term Storage (Archives)';
-  
-  tableTitle.textContent = tableName;
-  
-  if (state.database.loading) {
-    tableSubtitle.textContent = 'Loading data...';
-    placeholder.classList.remove('hidden');
-    viewer.classList.add('hidden');
-    return;
-  }
-  
-  if (state.database.data.length === 0) {
-    tableSubtitle.textContent = 'No data found in this table.';
-    placeholder.classList.remove('hidden');
-    viewer.classList.add('hidden');
-    return;
-  }
-  
-  tableSubtitle.textContent = `Showing ${state.database.data.length} records`;
-  placeholder.classList.add('hidden');
-  viewer.classList.remove('hidden');
-  
-  // Render CSV table
-  renderCsvTable(state.database.data);
-};
-
-const renderCsvTable = (data) => {
-  const viewer = document.getElementById('csv-viewer');
-  
-  if (!data || data.length === 0) {
-    viewer.innerHTML = '<div class="csv-placeholder"><div>No data to display</div></div>';
-    return;
-  }
-  
-  // Get all unique fields from all records
-  const allFields = new Set();
-  data.forEach(record => {
-    Object.keys(record).forEach(key => allFields.add(key));
-  });
-  
-  const fieldnames = Array.from(allFields).sort();
-  
-  // Create table
-  let tableHtml = '<table class="csv-table"><thead><tr>';
-  fieldnames.forEach(field => {
-    tableHtml += `<th>${field}</th>`;
-  });
-  tableHtml += '</tr></thead><tbody>';
-  
-  data.forEach(record => {
-    tableHtml += '<tr>';
-    fieldnames.forEach(field => {
-      const value = record[field] || '';
-      tableHtml += `<td title="${value}">${value}</td>`;
-    });
-    tableHtml += '</tr>';
-  });
-  
-  tableHtml += '</tbody></table>';
-  viewer.innerHTML = tableHtml;
-};
-
-const exportDatabaseToCsv = async () => {
-  if (!state.database.selectedTable) {
-    alert('Please select a table first');
-    return;
-  }
-  
-  try {
-    const response = await apiFetch('/api/database/export', {
-      method: 'POST',
-      body: JSON.stringify({ table: state.database.selectedTable })
-    });
-    
-    if (response.ok) {
-      const result = await response.json;
-      if (result.content) {
-        // Create download link
-        const blob = new Blob([result.content], { type: 'text/csv' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = result.headers?.['Content-Disposition']?.match(/filename="(.+)"/)?.[1] || 'export.csv';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-      }
-    } else {
-      const error = await response.json();
-      alert(`Export failed: ${error.error}`);
-    }
-  } catch (error) {
-    console.error('Export error:', error);
-    alert('Export failed. Please try again.');
-  }
-};
-
-initTheme();
-setupEventListeners();
-initPasswordToggles();
-observeNewPasswordFields();
-console.log('Initializing app, checking auth status...');
-apiFetch("/api/auth/status")
-  .then((response) => {
-    console.log('Auth status response:', response.ok, response.status);
-    return response.json();
-  })
-  .then((status) => {
-    console.log('Auth status:', status);
-    state.auth = status;
-    if (!status.authenticated) {
-      console.log('Not authenticated, showing auth modal...');
-      showAuthModal();
-      return;
-    }
-    return fetchSchema().then(() => {
-      switchPage("dashboard");
-      return loadData();
-    });
-  })
-  .catch((err) => {
-    console.error('Auth check error:', err);
-    console.log('Showing auth modal due to error...');
-    showAuthModal();
-  });
+initApp();
+})();
