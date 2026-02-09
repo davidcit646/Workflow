@@ -18,11 +18,10 @@ const state = {
     files: [],
   },
   page: "dashboard",
-  exports: {
-    selected: null,
-  },
-  removed: {
-    list: [],
+  database: {
+    selectedTable: "",
+    data: [],
+    loading: false,
   },
   flyoutPanel: null,
   weeklyData: null, // Store weekly data for todo integration
@@ -340,8 +339,18 @@ const updateDetailsPanel = () => {
 
   if (title) title.textContent = person.Name || cardInfo?.name || "Candidate Details";
   if (subtitle) {
-    const subtitleParts = [cardInfo?.manager, cardInfo?.date, person["Job Location"]].filter(Boolean);
-    subtitle.textContent = subtitleParts.join(" • ");
+    const subtitleParts = [];
+    
+    // Add UID first if available
+    if (person.uid) {
+      subtitleParts.push(`ID: ${person.uid}`);
+    }
+    
+    // Add existing subtitle parts
+    subtitleParts.push(cardInfo?.manager, cardInfo?.date, person["Job Location"]);
+    
+    // Filter out empty values and join
+    subtitle.textContent = subtitleParts.filter(Boolean).join(" • ");
   }
   if (status) {
     status.textContent = cardInfo?.status || "";
@@ -650,7 +659,6 @@ const neoRemoveCandidate = async () => {
   updateCardSelection();
   updateDetailsPanel();
   loadData();
-  loadRemovedList();
 };
 
 const renderCard = (item) => {
@@ -662,14 +670,22 @@ const renderCard = (item) => {
   title.className = "card__title";
   title.textContent = item.name;
 
+  // Add UID subtitle if available
+  if (item.uid) {
+    const subtitle = document.createElement("div");
+    subtitle.className = "card__subtitle";
+    subtitle.textContent = `ID: ${item.uid}`;
+    card.append(title, subtitle);
+  } else {
+    card.append(title);
+  }
+
   // Badge: only show when there's a useful status to display
   if (item.status && item.status.trim()) {
     const badge = document.createElement("span");
     badge.className = badgeClass(item.badge);
     badge.textContent = item.status;
-    card.append(title, badge);
-  } else {
-    card.append(title);
+    card.append(badge);
   }
 
   const meta = document.createElement("div");
@@ -794,6 +810,35 @@ const formatSsnInput = (input) => {
   });
 };
 
+const formatPhoneInput = (input) => {
+  input.addEventListener('input', (e) => {
+    let value = e.target.value.replace(/\D/g, ''); // Remove non-digits
+    if (value.length >= 3) {
+      value = value.slice(0, 3) + '-' + value.slice(3);
+    }
+    if (value.length >= 6) {
+      value = value.slice(0, 6) + '-' + value.slice(6, 10);
+    }
+    e.target.value = value;
+  });
+};
+
+const formatRoutingNumberInput = (input) => {
+  input.addEventListener('input', (e) => {
+    let value = e.target.value.replace(/\D/g, ''); // Remove non-digits
+    // Limit to exactly 9 digits
+    e.target.value = value.slice(0, 9);
+  });
+};
+
+const formatAccountNumberInput = (input) => {
+  input.addEventListener('input', (e) => {
+    // Remove all non-digit characters, but allow longer numbers for account numbers
+    let value = e.target.value.replace(/\D/g, '');
+    e.target.value = value;
+  });
+};
+
 const buildField = (field, person) => {
   const wrapper = document.createElement("div");
   wrapper.className = "field";
@@ -844,19 +889,45 @@ const buildField = (field, person) => {
     });
   } else {
     input = document.createElement("input");
-    input.type = "text";
-    // Add auto-formatting for date fields
-    if (/date|exp|dob/i.test(name)) {
-      formatDateInput(input);
+    
+    // Use native date picker for all date fields including expiration and DOB fields
+    if (/(?:^|\b)(?:date|exp|dob)(?:\b|$)/i.test(name)) {
+      input.type = "date";
+    } else {
+      input.type = "text";
     }
     // Add auto-formatting for SSN fields
     if (/ssn|social/i.test(name)) {
       formatSsnInput(input);
     }
+    // Add auto-formatting for phone number fields
+    if (/phone/i.test(name)) {
+      formatPhoneInput(input);
+    }
+    // Add auto-formatting for routing number fields (9 digits only)
+    if (/routing/i.test(name)) {
+      formatRoutingNumberInput(input);
+    }
+    // Add auto-formatting for account number fields (numbers only)
+    if (/account/i.test(name)) {
+      formatAccountNumberInput(input);
+    }
   }
 
   input.name = name;
   input.value = fieldValue(name, person);
+  
+  // Convert date format for native date picker (MM/DD/YYYY -> YYYY-MM-DD)
+  if (input.type === "date" && input.value) {
+    const dateParts = input.value.split('/');
+    if (dateParts.length === 3) {
+      const [mm, dd, yyyy] = dateParts;
+      if (mm.length === 2 && dd.length === 2 && yyyy.length === 4) {
+        input.value = `${yyyy}-${mm}-${dd}`;
+      }
+    }
+  }
+  
   if (placeholder) input.placeholder = placeholder;
 
   wrapper.append(label, input);
@@ -869,14 +940,13 @@ const buildEditCardForm = (person) => {
   const cardId = document.getElementById("card-id");
   const cardJob = document.getElementById("card-job");
   const cardEmergency = document.getElementById("card-emergency");
-  const cardUniforms = document.getElementById("card-uniforms");
   const cardDirectDeposit = document.getElementById("card-direct-deposit");
   const cardBackground = document.getElementById("card-background");
   const cardPostNeo = document.getElementById("card-post-neo");
   const cardNotes = document.getElementById("card-notes");
   const cardAdditional = document.getElementById("card-additional");
   
-  if (!form || !cardContact || !cardId || !cardJob || !cardEmergency || !cardUniforms || 
+  if (!form || !cardContact || !cardId || !cardJob || !cardEmergency || 
       !cardDirectDeposit || !cardBackground || !cardPostNeo || !cardNotes || !cardAdditional || !state.schema) return;
   
   // Clear all cards
@@ -884,12 +954,35 @@ const buildEditCardForm = (person) => {
   cardId.innerHTML = "";
   cardJob.innerHTML = "";
   cardEmergency.innerHTML = "";
-  cardUniforms.innerHTML = "";
   cardDirectDeposit.innerHTML = "";
   cardBackground.innerHTML = "";
   cardPostNeo.innerHTML = "";
   cardNotes.innerHTML = "";
   cardAdditional.innerHTML = "";
+
+  // Add collapsible functionality to all modal cards
+  const makeCardCollapsible = (cardElement) => {
+    const header = cardElement.querySelector('.modal__card-header');
+    if (header && !header.dataset.collapsible) {
+      header.dataset.collapsible = 'true';
+      
+      // Add collapse icon if not already present
+      if (!header.querySelector('.modal__card-collapse-icon')) {
+        const icon = document.createElement('span');
+        icon.className = 'modal__card-collapse-icon';
+        icon.textContent = '▼';
+        header.appendChild(icon);
+      }
+      
+      // Add click handler
+      header.addEventListener('click', () => {
+        cardElement.classList.toggle('collapsed');
+      });
+    }
+  };
+
+  // Apply collapsible functionality to all cards
+  document.querySelectorAll('.modal__card').forEach(makeCardCollapsible);
 
   const contactFields = [
     { name: "Candidate Phone Number", label: "Phone Number", placeholder: "###-###-####", tooltip: "Candidate's phone number. Please include area code, e.g. 603-555-1234." },
@@ -905,6 +998,18 @@ const buildEditCardForm = (person) => {
     { name: "Exp.", label: "Expiration", placeholder: "MM/DD/YYYY", tooltip: "Expiration date of ID." },
     { name: "DOB", label: "DOB", placeholder: "MM/DD/YYYY", tooltip: "Date of Birth." },
     { name: "Social", label: "SSN", placeholder: "###-##-####", tooltip: "Social Security Number." },
+    // Driver's License specific fields
+    { name: "Driver's License Exp", label: "Driver's License Expiration", placeholder: "MM/DD/YYYY", tooltip: "Driver's License expiration date.", idType: "Driver's License" },
+    { name: "Driver's License DOB", label: "Driver's License DOB", placeholder: "MM/DD/YYYY", tooltip: "Date of Birth from Driver's License.", idType: "Driver's License" },
+    // State ID specific fields
+    { name: "State ID Exp", label: "State ID Expiration", placeholder: "MM/DD/YYYY", tooltip: "State ID expiration date.", idType: "State ID" },
+    { name: "State ID DOB", label: "State ID DOB", placeholder: "MM/DD/YYYY", tooltip: "Date of Birth from State ID.", idType: "State ID" },
+    // Passport specific fields
+    { name: "Passport Exp", label: "Passport Expiration", placeholder: "MM/DD/YYYY", tooltip: "Passport expiration date.", idType: "Passport" },
+    { name: "Passport DOB", label: "Passport DOB", placeholder: "MM/DD/YYYY", tooltip: "Date of Birth from Passport.", idType: "Passport" },
+    // Other ID specific fields
+    { name: "Other ID Exp", label: "Other ID Expiration", placeholder: "MM/DD/YYYY", tooltip: "Other ID expiration date.", idType: "Other" },
+    { name: "Other ID DOB", label: "Other ID DOB", placeholder: "MM/DD/YYYY", tooltip: "Date of Birth from Other ID.", idType: "Other" },
   ];
 
   const jobFields = [
@@ -915,10 +1020,24 @@ const buildEditCardForm = (person) => {
   ];
 
   const bgFields = [
-    { name: "Background Completion Date", label: "Background Completion Date", placeholder: "MM/DD/YYYY", tooltip: "Date when background check was completed." },
-    { name: "BG Check Status", label: "Background Check Status", placeholder: "e.g. Clear, Consider, etc.", tooltip: "Overall status of background check." },
-    { name: "MVR", label: "MVR", placeholder: "Motor Vehicle Record status", tooltip: "Motor Vehicle Record check status." },
-    { name: "DOD Clearance", label: "DOD Clearance", placeholder: "e.g. Yes/No or clearance level", tooltip: "Department of Defense clearance status." },
+    { 
+      name: "Background Check Type", 
+      label: "Background Check Type", 
+      tooltip: "Select the type of background check provider",
+      type: "dropdown",
+      options: [
+        "Select a background check type...",
+        "Sterling BG", 
+        "Sterling MVR", 
+        "Accurate"
+      ]
+    },
+    // Common field for all types
+    { name: "Background Date", label: "Background Date", placeholder: "MM/DD/YYYY", tooltip: "Date when background check was completed." },
+    // Sterling MVR specific fields  
+    { name: "Sterling MVR Run", label: "MVR Run", placeholder: "Yes/No", category: "Sterling MVR", tooltip: "Whether MVR has been run or needs to be run" },
+    // Accurate specific fields
+    { name: "Accurate MVR Run", label: "MVR Run", placeholder: "Yes/No", category: "Accurate", tooltip: "Whether MVR has been run or needs to be run" },
   ];
 
   const emergencyFields = [
@@ -975,11 +1094,16 @@ const buildEditCardForm = (person) => {
     // Removed: Scheduled, Onboarding Status, Background Completion Date
   ];
 
-  // Populate Contact Info Card
+  // Populate Contact Info Card with paired fields
+  const contactPair = document.createElement("div");
+  contactPair.className = "field-pair--contact";
+  
   contactFields.forEach((field) => {
     const fieldEl = buildField(field, person);
-    cardContact.appendChild(fieldEl);
+    contactPair.appendChild(fieldEl);
   });
+  
+  cardContact.appendChild(contactPair);
 
   // Populate ID/Licensing Card with conditional fields
   let idTypeSelect = null;
@@ -990,24 +1114,55 @@ const buildEditCardForm = (person) => {
   let passportWrapper = null;
   let expWrapper = null;
   let dobWrapper = null;
+  let idTypeSpecificFields = [];
 
   const syncIdTypeVisibility = () => {
     const value = idTypeSelect?.value || "";
     const showLicense = value === "Driver's License" || value === "State ID";
     const showPassport = value === "Passport";
     
-    // License-specific fields (State, ID No.) - only for driver's license/state ID
-    if (stateLicensePair) stateLicensePair.style.display = showLicense ? "flex" : "none";
+    // License-specific fields (State, ID No.) - show for ALL ID types that use them
+    if (stateLicensePair) {
+      // Show State + ID No. for Driver's License, State ID, and Other
+      const showStateFields = showLicense || value === "Other";
+      stateLicensePair.style.display = showStateFields ? "flex" : "none";
+    }
     
     // Passport-specific field (Passport ID) - only for passport
     if (passportWrapper) passportWrapper.style.display = showPassport ? "flex" : "none";
     
-    // Personal info fields (EXP, DOB) - show for ALL ID types
-    if (expWrapper && value && value !== "Select a type...") expWrapper.style.display = "flex";
-    if (dobWrapper && value && value !== "Select a type...") dobWrapper.style.display = "flex";
-    
     // Other ID field
     if (otherWrapper) otherWrapper.style.display = value === "Other" ? "flex" : "none";
+    
+    // ID-type-specific DOB and EXP fields
+    idTypeSpecificFields.forEach((fieldData) => {
+      if (fieldData.expWrapper && fieldData.dobWrapper) {
+        const showField = value === fieldData.idType && value !== "Select a type...";
+        const dateContainer = fieldData.expWrapper.parentElement;
+        const className = `field-pair--${fieldData.idType.toLowerCase().replace(/\s+/g, '-').replace(/'/g, '')}-dates`;
+        if (dateContainer && dateContainer.classList.contains(className)) {
+          dateContainer.style.display = showField ? "flex" : "none";
+        }
+      }
+    });
+    
+    // Hide generic EXP and DOB fields since we now have ID-type-specific ones
+    if (expWrapper) {
+      const dateContainer = expWrapper.parentElement;
+      if (dateContainer && dateContainer.classList.contains('field-pair--licensing-dates')) {
+        dateContainer.style.display = "none";
+      } else {
+        expWrapper.style.display = "none";
+      }
+    }
+    if (dobWrapper) {
+      const dateContainer = dobWrapper.parentElement;
+      if (dateContainer && dateContainer.classList.contains('field-pair--licensing-dates')) {
+        dateContainer.style.display = "none";
+      } else {
+        dobWrapper.style.display = "none";
+      }
+    }
   };
 
   licensingFields.forEach((field) => {
@@ -1070,17 +1225,66 @@ const buildEditCardForm = (person) => {
       return;
     }
     
+    // Handle ID-type-specific EXP and DOB fields
+    if (field.idType) {
+      const idTypeKey = field.idType.toLowerCase().replace(/\s+/g, '-');
+      let fieldData = idTypeSpecificFields.find(f => f.idType === field.idType);
+      
+      if (!fieldData) {
+        fieldData = { idType: field.idType, expWrapper: null, dobWrapper: null };
+        idTypeSpecificFields.push(fieldData);
+      }
+      
+      if (field.name.includes("Exp")) {
+        fieldData.expWrapper = buildField(field, person);
+        fieldData.expWrapper.style.display = "none";
+        return;
+      }
+      
+      if (field.name.includes("DOB")) {
+        fieldData.dobWrapper = buildField(field, person);
+        fieldData.dobWrapper.style.display = "none";
+        
+        // Create pairing container for EXP + DOB when both are ready
+        if (fieldData.expWrapper) {
+          const datePair = document.createElement("div");
+          datePair.className = `field-pair--${idTypeKey.replace(/'/g, '')}-dates`;
+          datePair.style.display = "none";
+          datePair.appendChild(fieldData.expWrapper);
+          datePair.appendChild(fieldData.dobWrapper);
+          cardId.appendChild(datePair);
+        } else {
+          // Fallback if EXP wasn't processed first
+          cardId.appendChild(fieldData.dobWrapper);
+        }
+        return;
+      }
+    }
+    
+    // Handle generic EXP and DOB fields (keep for backward compatibility but hide by default)
     if (field.name === "Exp.") {
       expWrapper = buildField(field, person);
       expWrapper.style.display = "none";
-      cardId.appendChild(expWrapper);
+      // Don't append yet - wait for DOB to pair
       return;
     }
     
     if (field.name === "DOB") {
       dobWrapper = buildField(field, person);
       dobWrapper.style.display = "none";
-      cardId.appendChild(dobWrapper);
+      
+      // Create pairing container for EXP + DOB
+      if (expWrapper) {
+        const datePair = document.createElement("div");
+        datePair.className = "field-pair--licensing-dates";
+        datePair.style.display = "none";
+        datePair.appendChild(expWrapper);
+        datePair.appendChild(dobWrapper);
+        cardId.appendChild(datePair);
+      } else {
+        // Fallback if EXP wasn't processed first
+        cardId.appendChild(dobWrapper);
+      }
       return;
     }
     
@@ -1091,17 +1295,52 @@ const buildEditCardForm = (person) => {
 
   syncIdTypeVisibility();
 
-  // Populate Job Info Card
+  // Populate Job Info Card with paired fields
+  const jobIdLocationPair = document.createElement("div");
+  jobIdLocationPair.className = "field-pair--job";
+  
+  const managerBranchPair = document.createElement("div");
+  managerBranchPair.className = "field-pair--job";
+  
   jobFields.forEach((field) => {
     const fieldEl = buildField(field, person);
-    cardJob.appendChild(fieldEl);
+    
+    if (field.name === "Job Name") {
+      jobIdLocationPair.appendChild(fieldEl);
+    } else if (field.name === "Job Location") {
+      jobIdLocationPair.appendChild(fieldEl);
+    } else if (field.name === "Manager Name") {
+      managerBranchPair.appendChild(fieldEl);
+    } else if (field.name === "Branch") {
+      managerBranchPair.appendChild(fieldEl);
+    }
   });
+  
+  // Add the paired containers to the card
+  cardJob.appendChild(jobIdLocationPair);
+  cardJob.appendChild(managerBranchPair);
 
-  // Populate Emergency Contact Card
+  // Populate Emergency Contact Card with paired fields
+  const emergencyPair = document.createElement("div");
+  emergencyPair.className = "field-pair--emergency";
+  let phoneField = null;
+  
   emergencyFields.forEach((field) => {
-    const fieldEl = buildField(field, person);
-    cardEmergency.appendChild(fieldEl);
+    if (field.name === "EC Phone Number") {
+      // Phone number stays separate
+      phoneField = buildField(field, person);
+    } else {
+      // Name and Relationship get paired
+      const fieldEl = buildField(field, person);
+      emergencyPair.appendChild(fieldEl);
+    }
   });
+  
+  // Add the paired container first, then phone number
+  cardEmergency.appendChild(emergencyPair);
+  if (phoneField) {
+    cardEmergency.appendChild(phoneField);
+  }
 
   // Populate Uniforms Card (moved to Post NEO)
   uniformsFields.forEach((field) => {
@@ -1109,17 +1348,98 @@ const buildEditCardForm = (person) => {
     cardPostNeo.appendChild(fieldEl);
   });
 
-  // Populate Direct Deposit Card
+  // Populate Direct Deposit Card with paired fields
   directDepositFields.forEach((field) => {
     const fieldEl = buildField(field, person);
-    cardDirectDeposit.appendChild(fieldEl);
+    
+    if (field.name === "Deposit Account Type" || field.name === "Bank Name") {
+      // These stay separate
+      cardDirectDeposit.appendChild(fieldEl);
+    } else if (field.name === "Routing Number") {
+      // Create pairing container for Routing + Account
+      const bankingPair = document.createElement("div");
+      bankingPair.className = "field-pair--banking";
+      bankingPair.appendChild(fieldEl);
+      
+      // Find and add the Account Number field
+      const accountField = directDepositFields.find(f => f.name === "Account Number");
+      if (accountField) {
+        const accountEl = buildField(accountField, person);
+        bankingPair.appendChild(accountEl);
+      }
+      
+      cardDirectDeposit.appendChild(bankingPair);
+    }
+    // Skip Account Number since it's handled above
   });
 
-  // Populate Background Check Card
+  // Populate Background Check Card with conditional fields
+  let bgTypeSelect = null;
+  const bgConditionalFieldWrappers = [];
+  let bgTypeField = null;
+  let bgDateField = null;
+
+  const updateBgConditionalFields = () => {
+    const selectedBgType = bgTypeSelect?.value || "";
+    
+    // Hide all conditional fields initially
+    bgConditionalFieldWrappers.forEach(wrapper => {
+      wrapper.style.display = "none";
+    });
+    
+    // Show fields for the selected background check type
+    if (selectedBgType && selectedBgType !== "Select a background check type...") {
+      bgConditionalFieldWrappers.forEach(wrapper => {
+        const input = wrapper.querySelector('input, textarea, select');
+        if (input && wrapper.dataset.category === selectedBgType) {
+          wrapper.style.display = "flex";
+        }
+      });
+    }
+  };
+
+  // First, collect all conditional fields
   bgFields.forEach((field) => {
-    const fieldEl = buildField(field, person);
-    cardBackground.appendChild(fieldEl);
+    if (field.category) {
+      // Add conditional fields (they'll be hidden/shown based on dropdown selection)
+      const fieldEl = buildField(field, person);
+      fieldEl.style.display = "none"; // Hide initially
+      fieldEl.dataset.category = field.category; // Store category for filtering
+      cardBackground.appendChild(fieldEl);
+      bgConditionalFieldWrappers.push(fieldEl);
+    }
   });
+
+  // Then create and add the paired container for Background Check Type + Background Date
+  const bgPair = document.createElement("div");
+  bgPair.className = "field-pair--background";
+
+  bgFields.forEach((field) => {
+    if (field.name === "Background Check Type") {
+      bgTypeField = buildField(field, person);
+      bgTypeSelect = bgTypeField.querySelector("select");
+      if (bgTypeSelect) {
+        bgTypeSelect.addEventListener("change", updateBgConditionalFields);
+      }
+      bgPair.appendChild(bgTypeField);
+      return;
+    }
+    
+    // Always show Background Date (no category)
+    if (!field.category && field.name === "Background Date") {
+      bgDateField = buildField(field, person);
+      bgPair.appendChild(bgDateField);
+      return;
+    }
+  });
+
+  // Add the paired container to the card (this will be inserted BEFORE the conditional fields)
+  if (bgTypeField && bgDateField) {
+    cardBackground.insertBefore(bgPair, cardBackground.firstChild);
+  }
+
+  // Initialize visibility based on current selection
+  updateBgConditionalFields();
 
   // Populate Notes Card
   notesFields.forEach((field) => {
@@ -1237,26 +1557,31 @@ const closeEditPage = () => {
   switchPage("dashboard");
   updateCardSelection();
   updateDetailsPanel();
+  loadData();
 };
 
 const collectFormData = () => {
   const form = document.getElementById("candidate-form");
   if (!form) return {};
   const data = {};
-  Array.from(form.elements).forEach((element) => {
-    if (!element.name) return;
+  Array.from(form.elements).forEach(element => {
     data[element.name] = element.value;
   });
-  // Normalize NEO date: convert YYYY-MM-DD -> MM/DD/YYYY for compatibility
-  if (data["NEO Scheduled Date"] && data["NEO Scheduled Date"].includes("-")) {
-    const parts = data["NEO Scheduled Date"].split("-");
-    if (parts.length === 3) {
-      const yyyy = parts[0];
-      const mm = parts[1];
-      const dd = parts[2];
-      data["NEO Scheduled Date"] = `${mm}/${dd}/${yyyy}`;
+  
+  // Normalize date fields: convert YYYY-MM-DD -> MM/DD/YYYY for compatibility
+  const dateFields = ["NEO Scheduled Date", "Exp.", "DOB", "Background Completion Date", "CORI Submit Date", "CORI Cleared Date", "NH GC Expiration Date", "ME GC Sent Date", "Driver's License Exp", "Driver's License DOB", "State ID Exp", "State ID DOB", "Passport Exp", "Passport DOB", "Other ID Exp", "Other ID DOB"];
+  dateFields.forEach(fieldName => {
+    if (data[fieldName] && data[fieldName].includes("-")) {
+      const parts = data[fieldName].split("-");
+      if (parts.length === 3) {
+        const yyyy = parts[0];
+        const mm = parts[1];
+        const dd = parts[2];
+        data[fieldName] = `${mm}/${dd}/${yyyy}`;
+      }
     }
-  }
+  });
+  
   return data;
 };
 
@@ -1445,13 +1770,9 @@ const closeArchiveModal = () => {
 const submitArchive = async (event) => {
   event.preventDefault();
   if (!state.activeUid) return;
-  const archivePassword = document.getElementById("archive-password").value;
   const startTime = document.getElementById("archive-start").value;
   const endTime = document.getElementById("archive-end").value;
-  if (!archivePassword) {
-    await showMessageModal('Missing password', 'Please enter an archive password before archiving.');
-    return;
-  }
+  
   // Ensure person has required fields
   const person = state.people.find((p) => p.uid === state.activeUid) || {};
   const name = (person.Name || '').trim();
@@ -1461,26 +1782,29 @@ const submitArchive = async (event) => {
     return;
   }
   try {
-    const response = await apiFetch(`/api/archive/${state.activeUid}`, {
+    const response = await apiFetch(`/api/archive`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        archive_password: archivePassword,
+        uid: state.activeUid,
         start_time: startTime,
         end_time: endTime,
       }),
     });
     if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      const msg = (body && body.detail) ? body.detail : 'Archive failed.';
-      await showMessageModal('Archive failed', msg);
+      const error = await response.text();
+      await showMessageModal('Archive failed', `Unable to archive: ${error}`);
       return;
     }
+    await showMessageModal('Archived', 'Candidate has been archived successfully.');
     closeArchiveModal();
+    state.activeUid = null;
+    updateCardSelection();
+    updateDetailsPanel();
     loadData();
   } catch (err) {
-    console.error('submitArchive error', err);
-    await showMessageModal('Archive failed', 'Network or server error. Check logs.');
+    console.error('Archive error', err);
+    await showMessageModal('Error', 'Unable to archive. Try again.');
   }
 };
 
@@ -1902,119 +2226,6 @@ const deleteArchive = async () => {
   }
 };
 
-const loadExportsList = async () => {
-  const response = await apiFetch("/api/exports/list");
-  if (!response.ok) {
-    alert("Unable to load exports.");
-    return;
-  }
-  const payload = await response.json();
-  const list = document.getElementById("exports-list");
-  const preview = document.getElementById("exports-preview");
-  const deleteButton = document.getElementById("exports-delete");
-  const downloadButton = document.getElementById("download-selected");
-  if (!list) return;
-  list.innerHTML = "";
-  state.exports.selected = null;
-  if (deleteButton) deleteButton.disabled = true;
-  if (downloadButton) downloadButton.disabled = true;
-  (payload.files || []).forEach((file) => {
-    const item = document.createElement("li");
-    item.className = "archive-item";
-    const row = document.createElement("div");
-    row.className = "exports-file";
-    const name = document.createElement("span");
-    name.textContent = file;
-    // Per-row download button removed — use the preview's Download or the topbar Download button
-    row.append(name);
-    item.appendChild(row);
-    item.addEventListener("click", () => {
-      document.querySelectorAll("#exports-list .archive-item").forEach((el) => {
-        el.classList.remove("archive-item--active");
-      });
-      item.classList.add("archive-item--active");
-      state.exports.selected = file;
-      if (deleteButton) deleteButton.disabled = false;
-      if (downloadButton) downloadButton.disabled = false;
-      previewExport(file);
-    });
-    list.appendChild(item);
-  });
-  if (preview) {
-    preview.textContent = "Select a CSV to preview.";
-  }
-};
-
-const loadRemovedList = async () => {
-  const response = await apiFetch("/api/removed");
-  if (!response.ok) {
-    alert("Unable to load removed candidates.");
-    return;
-  }
-  const payload = await response.json();
-  state.removed.list = payload.removed || [];
-  renderRemovedList();
-};
-
-const renderRemovedList = () => {
-  const list = document.getElementById("removed-list");
-  if (!list) return;
-  list.innerHTML = "";
-  if (!state.removed.list.length) {
-    const empty = document.createElement("div");
-    empty.className = "removed-empty";
-    empty.textContent = "No removed candidates.";
-    list.appendChild(empty);
-    return;
-  }
-  state.removed.list.forEach((person) => {
-    const item = document.createElement("li");
-    item.className = "removed-item";
-    const name = document.createElement("strong");
-    name.textContent = person.name || "Unnamed";
-    item.appendChild(name);
-    list.appendChild(item);
-  });
-};
-
-const previewExport = async (file) => {
-  const preview = document.getElementById("exports-preview");
-  if (!preview) return;
-  preview.textContent = "Loading preview...";
-  const response = await apiFetch(`/api/exports/preview?name=${encodeURIComponent(file)}`);
-  if (!response.ok) {
-    preview.textContent = "Unable to load preview.";
-    return;
-  }
-  const payload = await response.json();
-  if (!payload.headers || !payload.rows) {
-    preview.textContent = "No preview available.";
-    return;
-  }
-  const table = document.createElement("table");
-  const thead = document.createElement("thead");
-  const headRow = document.createElement("tr");
-  payload.headers.forEach((header) => {
-    const th = document.createElement("th");
-    th.textContent = header;
-    headRow.appendChild(th);
-  });
-  thead.appendChild(headRow);
-  const tbody = document.createElement("tbody");
-  payload.rows.forEach((row) => {
-    const tr = document.createElement("tr");
-    row.forEach((value) => {
-      const td = document.createElement("td");
-      td.textContent = value;
-      tr.appendChild(td);
-    });
-    tbody.appendChild(tr);
-  });
-  table.append(thead, tbody);
-  preview.innerHTML = "";
-  preview.appendChild(table);
-};
-
 const switchPage = (page) => {
   if (!page) return;
   const target = document.getElementById(`page-${page}`) ? page : "dashboard";
@@ -2026,29 +2237,12 @@ const switchPage = (page) => {
     btn.classList.toggle("nav-item--active", btn.dataset.page === target);
   });
   updateDetailsPanel();
-  if (target === "exports") {
-    loadExportsList();
-  }
   if (target === "archives") {
     loadArchivesList();
   }
-  if (target === "removed") {
-    loadRemovedList();
+  if (target === "database") {
+    loadDatabaseData();
   }
-};
-
-const deleteSelectedExport = async () => {
-  if (!state.exports.selected) return;
-  if (!confirm(`Delete ${state.exports.selected}?`)) return;
-  const response = await apiFetch(
-    `/api/exports/delete?name=${encodeURIComponent(state.exports.selected)}`,
-    { method: "DELETE" }
-  );
-  if (!response.ok) {
-    alert("Unable to delete export.");
-    return;
-  }
-  loadExportsList();
 };
 
 const removeCandidate = async () => {
@@ -2067,12 +2261,6 @@ const removeCandidate = async () => {
   updateCardSelection();
   updateDetailsPanel();
   loadData();
-  loadRemovedList();
-};
-
-const downloadSelectedExport = () => {
-  if (!state.exports.selected) return;
-  window.location.href = `/api/exports/file?name=${encodeURIComponent(state.exports.selected)}`;
 };
 
 const setupEventListeners = () => {
@@ -2100,9 +2288,6 @@ const setupEventListeners = () => {
   const archiveDownloadBtn = document.getElementById("archive-download");
   const authForm = document.getElementById("auth-form");
   const authClose = document.getElementById('auth-close');
-  const exportsRefresh = document.getElementById("exports-refresh");
-  const exportsDelete = document.getElementById("exports-delete");
-  const exportsDownload = document.getElementById("download-selected");
   const detailsEdit = document.getElementById("details-edit");
   const neoClose = document.getElementById("neo-close");
   const neoCancel = document.getElementById("neo-cancel");
@@ -2147,12 +2332,6 @@ const setupEventListeners = () => {
       loadData();
     });
   }
-  if (exportButton) {
-    exportButton.addEventListener("click", () => {
-      window.location.href = "/api/export/csv";
-      setTimeout(loadExportsList, 1200);
-    });
-  }
   if (weeklyButton) weeklyButton.addEventListener("click", openWeeklyTracker);
   const weeklyMini = document.getElementById('weekly-tracker-mini');
   if (weeklyMini) weeklyMini.addEventListener('click', openWeeklyTracker);
@@ -2188,9 +2367,6 @@ const setupEventListeners = () => {
   if (changeBtn) changeBtn.addEventListener('click', showChangePasswordModal);
   if (changeModalClose) changeModalClose.addEventListener('click', hideChangePasswordModal);
   if (changeForm) changeForm.addEventListener('submit', handleChangePasswordSubmit);
-  if (exportsRefresh) exportsRefresh.addEventListener("click", loadExportsList);
-  if (exportsDelete) exportsDelete.addEventListener("click", deleteSelectedExport);
-  if (exportsDownload) exportsDownload.addEventListener("click", downloadSelectedExport);
   if (neoClose) neoClose.addEventListener("click", hideNeoModal);
   if (neoCancel) neoCancel.addEventListener("click", hideNeoModal);
   if (neoMove) neoMove.addEventListener("click", neoMoveToInProgress);
@@ -2213,6 +2389,22 @@ const setupEventListeners = () => {
   document.querySelectorAll(".nav-item").forEach((button) => {
     button.addEventListener("click", () => switchPage(button.dataset.page));
   });
+  
+  // Database viewer event listeners
+  const tableSelector = document.getElementById('table-selector');
+  const exportCsvBtn = document.getElementById('export-csv');
+  
+  if (tableSelector) {
+    tableSelector.addEventListener('change', async (event) => {
+      state.database.selectedTable = event.target.value;
+      await loadDatabaseData();
+      renderDatabaseViewer();
+    });
+  }
+  
+  if (exportCsvBtn) {
+    exportCsvBtn.addEventListener('click', exportDatabaseToCsv);
+  }
 };
 
 const openWeeklyTracker = async () => {
@@ -2491,6 +2683,151 @@ const addTodoToWeeklyTracker = (taskText) => {
     textarea.value = currentContent + "\n" + newEntry;
   } else {
     textarea.value = newEntry;
+  }
+};
+
+// Database Viewer Functions
+const loadDatabaseData = async () => {
+  if (!state.database.selectedTable) {
+    state.database.data = [];
+    return;
+  }
+  
+  state.database.loading = true;
+  renderDatabaseViewer();
+  
+  try {
+    const endpoint = state.database.selectedTable === 'temporary' 
+      ? '/api/database/temporary' 
+      : '/api/database/longterm';
+    
+    const response = await apiFetch(endpoint);
+    if (response.ok) {
+      const result = await response.json();
+      state.database.data = result.data || [];
+    } else {
+      state.database.data = [];
+    }
+  } catch (error) {
+    console.error('Error loading database data:', error);
+    state.database.data = [];
+  } finally {
+    state.database.loading = false;
+    renderDatabaseViewer();
+  }
+};
+
+const renderDatabaseViewer = () => {
+  const tableTitle = document.getElementById('table-title');
+  const tableSubtitle = document.getElementById('table-subtitle');
+  const placeholder = document.getElementById('csv-placeholder');
+  const viewer = document.getElementById('csv-viewer');
+  
+  if (!state.database.selectedTable) {
+    tableTitle.textContent = 'Select a table to view';
+    tableSubtitle.textContent = 'Choose temporary or long-term storage from the dropdown above.';
+    placeholder.classList.remove('hidden');
+    viewer.classList.add('hidden');
+    return;
+  }
+  
+  const tableName = state.database.selectedTable === 'temporary' 
+    ? 'Temporary Storage (Active Onboarding)' 
+    : 'Long-term Storage (Archives)';
+  
+  tableTitle.textContent = tableName;
+  
+  if (state.database.loading) {
+    tableSubtitle.textContent = 'Loading data...';
+    placeholder.classList.remove('hidden');
+    viewer.classList.add('hidden');
+    return;
+  }
+  
+  if (state.database.data.length === 0) {
+    tableSubtitle.textContent = 'No data found in this table.';
+    placeholder.classList.remove('hidden');
+    viewer.classList.add('hidden');
+    return;
+  }
+  
+  tableSubtitle.textContent = `Showing ${state.database.data.length} records`;
+  placeholder.classList.add('hidden');
+  viewer.classList.remove('hidden');
+  
+  // Render CSV table
+  renderCsvTable(state.database.data);
+};
+
+const renderCsvTable = (data) => {
+  const viewer = document.getElementById('csv-viewer');
+  
+  if (!data || data.length === 0) {
+    viewer.innerHTML = '<div class="csv-placeholder"><div>No data to display</div></div>';
+    return;
+  }
+  
+  // Get all unique fields from all records
+  const allFields = new Set();
+  data.forEach(record => {
+    Object.keys(record).forEach(key => allFields.add(key));
+  });
+  
+  const fieldnames = Array.from(allFields).sort();
+  
+  // Create table
+  let tableHtml = '<table class="csv-table"><thead><tr>';
+  fieldnames.forEach(field => {
+    tableHtml += `<th>${field}</th>`;
+  });
+  tableHtml += '</tr></thead><tbody>';
+  
+  data.forEach(record => {
+    tableHtml += '<tr>';
+    fieldnames.forEach(field => {
+      const value = record[field] || '';
+      tableHtml += `<td title="${value}">${value}</td>`;
+    });
+    tableHtml += '</tr>';
+  });
+  
+  tableHtml += '</tbody></table>';
+  viewer.innerHTML = tableHtml;
+};
+
+const exportDatabaseToCsv = async () => {
+  if (!state.database.selectedTable) {
+    alert('Please select a table first');
+    return;
+  }
+  
+  try {
+    const response = await apiFetch('/api/database/export', {
+      method: 'POST',
+      body: JSON.stringify({ table: state.database.selectedTable })
+    });
+    
+    if (response.ok) {
+      const result = await response.json;
+      if (result.content) {
+        // Create download link
+        const blob = new Blob([result.content], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = result.headers?.['Content-Disposition']?.match(/filename="(.+)"/)?.[1] || 'export.csv';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      }
+    } else {
+      const error = await response.json();
+      alert(`Export failed: ${error.error}`);
+    }
+  } catch (error) {
+    console.error('Export error:', error);
+    alert('Export failed. Please try again.');
   }
 };
 

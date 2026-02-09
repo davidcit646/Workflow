@@ -88,15 +88,8 @@ STATUS_FIELDS = ['CORI Status', 'NH GC Status', 'ME GC Status', 'Deposit Account
 BRANCH_OPTIONS = ["All", "Salem", "Portland"]
 
 CSV_EXPORT_FIELDS = [
-    'Scheduled', 'Name', 'Employee ID', 'ICIMS ID', 'Job Name', 'Job Location',
-    'Manager Name', 'Branch', 'NEO Scheduled Date', 'Background Completion Date',
-    'CORI Status', 'CORI Submit Date', 'CORI Cleared Date',
-    'NH GC Status', 'NH GC Expiration Date', 'NH GC ID Number',
-    'ME GC Status', 'ME GC Sent Date', 'MVR', 'DOD Clearance',
-    'Shirt Size', 'Pants Size', 'Boots', 'Deposit Account Type',
-    'Bank Name', 'Routing Number', 'Account Number',
-    'EC First Name', 'EC Last Name', 'EC Relationship', 'EC Phone Number',
-    'Other ID', 'State', 'ID No.', 'Exp.', 'DOB', 'Social', 'Notes'
+    'Name', 'ICIMS ID', 'Employee ID', 'NEO Scheduled Date', 'Manager Name', 
+    'Job Name', 'Job Location', 'Branch', 'Shirt Size', 'Pants Size', 'Notes'
 ]
 
 PERSONAL_ID_FIELDS = ["State", "ID No.", "Exp.", "DOB", "Social"]
@@ -105,9 +98,6 @@ ARCHIVE_SECTIONS = {
     'candidate_info': "Candidate Info",
     'neo_hours': "NEO Hours", 
     'uniform_sizes': "Uniform Sizes",
-    'bank_info': "Bank Info",
-    'personal_id': "Personal ID",
-    'emergency_contact': "Emergency Contact",
     'notes': "Notes"
 }
 
@@ -184,7 +174,7 @@ class SecurityManager:
                     return raw.decode('utf-8')
                 except UnicodeDecodeError:
                     return raw.decode('utf-8', errors='replace')
-            return raw
+            return raw s
         except subprocess.CalledProcessError:
             return None
 
@@ -544,8 +534,8 @@ def validate_person_data(person: Dict[str, Any]) -> Dict[str, Any]:
     if phone and not validate_phone(phone):
         warnings.append(f"Invalid phone format: {phone}")
     
-    # Date validation
-    date_fields = ['NEO Scheduled Date', 'Background Completion Date', 'DOB']
+    # Date validation - only validate approved dates
+    date_fields = ['NEO Scheduled Date']
     for field in date_fields:
         date_val = person.get(field, '').strip()
         if date_val and not validate_date_format(date_val):

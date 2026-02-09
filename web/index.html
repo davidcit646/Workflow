@@ -28,18 +28,14 @@
           <button class="nav-item nav-item--active" data-page="dashboard">Onboarding Dashboard</button>
           <button id="weekly-tracker" class="nav-item" data-page="weekly">Weekly Tracker</button>
           <button id="todo-tracker" class="nav-item" data-page="todo">To Do List</button>
-          <button class="nav-item" data-page="removed">Removed Candidates</button>
-          <button class="nav-item" data-page="exports">Exports</button>
-          <button class="nav-item" data-page="archives">Archives</button>
+          <button class="nav-item" data-page="archives">Your onboarding database</button>
         </nav>
 
         <div class="sidebar__mini" aria-hidden="true">
           <button class="nav-item nav-item--mini" data-page="dashboard" title="Onboarding Dashboard" tabindex="-1">DB</button>
           <button id="weekly-tracker-mini" class="nav-item nav-item--mini" data-page="weekly" title="Weekly Tracker" tabindex="-1">WK</button>
           <button id="todo-tracker-mini" class="nav-item nav-item--mini" data-page="todo" title="To Do List" tabindex="-1">TD</button>
-          <button class="nav-item nav-item--mini" data-page="removed" title="Removed Candidates" tabindex="-1">RM</button>
-          <button class="nav-item nav-item--mini" data-page="exports" title="Exports" tabindex="-1">EX</button>
-          <button class="nav-item nav-item--mini" data-page="archives" title="Archives" tabindex="-1">AR</button>
+          <button class="nav-item nav-item--mini" data-page="archives" title="Your onboarding database" tabindex="-1">DB</button>
           <button class="nav-item nav-item--mini" data-page="settings" title="Settings" tabindex="-1">ST</button>
         </div>
         <div class="sidebar__spacer"></div>
@@ -101,104 +97,44 @@
           </section>
         </section>
 
-        <section id="page-exports" class="page">
-          <header class="topbar">
-            <div>
-              <div class="topbar__title">CSV Exports</div>
-              <div class="topbar__subtitle">Download your exported CSV files.</div>
-            </div>
-            <div class="topbar__actions">
-              <button id="download-selected" class="button button--success">
-                <span class="button__icon">↓</span>
-                Download
-              </button>
-              <button id="export-csv" class="button button--primary">Export CSV</button>
-              <button id="exports-delete" class="button button--danger" disabled>
-                <span class="button__icon">Del</span>
-                Delete Selected
-              </button>
-              <button id="exports-refresh" class="button button--circle" aria-label="Refresh">↻</button>
-            </div>
-          </header>
-
-          <section class="board board--exports">
-            <div class="board__column" data-column="exports-files">
-              <div class="column__header">
-                <div>
-                  <div class="column__title">Export Files</div>
-                  <div class="column__subtitle">Select a CSV file to preview.</div>
-                </div>
-              </div>
-              <ul id="exports-list" class="column__list"></ul>
-            </div>
-
-            <div class="board__column board__column--wide" data-column="exports-preview">
-              <div class="column__header">
-                <div>
-                  <div class="column__title">Preview</div>
-                  <div class="column__subtitle">Preview the selected export.</div>
-                </div>
-              </div>
-              <div class="column__list">
-                <div id="exports-preview" class="exports-preview">Select a CSV to preview.</div>
-              </div>
-            </div>
-          </section>
-        </section>
-
         <section id="page-archives" class="page">
           <header class="topbar">
             <div>
-              <div class="topbar__title">Archives</div>
-              <div class="topbar__subtitle">Browse password-protected archives.</div>
+              <div class="topbar__title">Your onboarding database</div>
+              <div class="topbar__subtitle">View and export temporary and long-term storage tables.</div>
             </div>
             <div class="topbar__actions">
-              <div class="archives__actions">
-                <button id="archive-unlock" class="button button--ghost">Unlock archive</button>
-                <button id="archive-download" class="button button--ghost">Download archive</button>
-                <button id="archive-delete" class="button button--danger">Delete archive</button>
-              </div>
+              <select id="table-selector" class="select">
+                <option value="">Select table to view</option>
+                <option value="temporary">Temporary Storage (Active Onboarding)</option>
+                <option value="longterm">Long-term Storage (Archives)</option>
+              </select>
+              <button id="export-csv" class="button button--primary">Export Table to CSV</button>
             </div>
           </header>
 
-          <section class="board board--archives">
-            <div class="board__column" data-column="archives">
+          <section class="board">
+            <div class="board__column board__column--full" data-column="database-view">
               <div class="column__header">
                 <div>
-                  <div class="column__title">Archive Files</div>
-                  <div class="column__subtitle">Select an archive.</div>
-                </div>
-              </div>
-              <ul id="archives-list" class="column__list"></ul>
-            </div>
-
-            <div class="board__column board__column--wide" data-column="archive-contents">
-              <div class="column__header">
-                <div>
-                  <div class="column__title">Contents</div>
-                  <div class="column__subtitle">Browse files and preview contents.</div>
+                  <div class="column__title" id="table-title">Select a table to view</div>
+                  <div class="column__subtitle" id="table-subtitle">Choose temporary or long-term storage from the dropdown above.</div>
                 </div>
               </div>
               <div class="column__list">
-                <div class="archives__list-and-preview">
-                  <ul id="archives-contents" class="archives-files"></ul>
-                  <div id="archive-preview" class="archive-preview">Select a file to view.</div>
+                <div id="csv-viewer-container" class="csv-viewer">
+                  <div id="csv-placeholder" class="csv-placeholder">
+                    <div class="csv-placeholder__icon">📊</div>
+                    <div class="csv-placeholder__title">No table selected</div>
+                    <div class="csv-placeholder__subtitle">Select a table from the dropdown to view its contents in a spreadsheet format.</div>
+                  </div>
+                  <div id="csv-viewer" class="csv-table-container hidden">
+                    <!-- CSV table will be rendered here -->
+                  </div>
                 </div>
               </div>
             </div>
           </section>
-        </section>
-
-        <section id="page-removed" class="page">
-          <header class="topbar">
-            <div>
-              <div class="topbar__title">Removed Candidates</div>
-              <div class="topbar__subtitle">Candidates moved to trash.</div>
-            </div>
-          </header>
-          <div class="removed__body">
-            <ul id="removed-list" class="removed-list"></ul>
-          </div>
         </section>
 
         <section id="page-settings" class="page">
@@ -246,10 +182,22 @@
               <form id="candidate-form" class="modal__form">
                 <!-- Quick Info Banner -->
                 <div class="modal__quick-info">
-                  <input id="edit-name" form="candidate-form" name="Name" placeholder="Candidate name" class="modal__quick-input modal__quick-input--name" />
-                  <input id="edit-icims" form="candidate-form" name="ICIMS ID" placeholder="ICIMS ID" class="modal__quick-input modal__quick-input--narrow" />
-                  <input id="edit-neo-date" form="candidate-form" name="NEO Scheduled Date" type="date" class="modal__quick-input modal__quick-input--date" />
-                  <input id="edit-employee-id" form="candidate-form" name="Employee ID" placeholder="Employee #" class="modal__quick-input modal__quick-input--narrow" />
+                  <div class="quick-info-group">
+                    <label>Candidate Name:</label>
+                    <input id="edit-name" form="candidate-form" name="Name" placeholder="Candidate name" class="modal__quick-input modal__quick-input--name" />
+                  </div>
+                  <div class="quick-info-group">
+                    <label>ICIMS ID:</label>
+                    <input id="edit-icims" form="candidate-form" name="ICIMS ID" placeholder="ICIMS ID" class="modal__quick-input modal__quick-input--narrow" />
+                  </div>
+                  <div class="quick-info-group">
+                    <label>Employee ID:</label>
+                    <input id="edit-employee-id" form="candidate-form" name="Employee ID" placeholder="Employee #" class="modal__quick-input modal__quick-input--narrow" />
+                  </div>
+                  <div class="quick-info-group">
+                    <label>NEO Scheduled Date:</label>
+                    <input id="edit-neo-date" form="candidate-form" name="NEO Scheduled Date" type="date" class="modal__quick-input modal__quick-input--date" />
+                  </div>
                 </div>
                 
                 <!-- Dashboard-style 3 Column Board -->
@@ -296,12 +244,7 @@
                         <div class="modal__card-header">Emergency Contact</div>
                         <div class="modal__card-body" id="card-emergency"></div>
                       </div>
-                      <!-- Uniforms Card -->
-                      <div class="modal__card">
-                        <div class="modal__card-header">Uniforms</div>
-                        <div class="modal__card-body" id="card-uniforms"></div>
-                      </div>
-                      <!-- Direct Deposit Card -->
+                      <!-- ike thatDirect Deposit Card -->
                       <div class="modal__card">
                         <div class="modal__card-header">Direct Deposit</div>
                         <div class="modal__card-body" id="card-direct-deposit"></div>
@@ -316,6 +259,11 @@
                       <div class="modal__column-subtitle">Background & licensing status</div>
                     </div>
                     <div class="modal__column-content" id="column-post-neo">
+                      <!-- Uniforms Card -->
+                      <div class="modal__card">
+                        <div class="modal__card-header">Uniforms</div>
+                        <div class="modal__card-body" id="card-post-neo"></div>
+                      </div>
                     </div>
                   </div>
 
@@ -331,9 +279,9 @@
                         <div class="modal__card-header">Notes</div>
                         <div class="modal__card-body" id="card-notes"></div>
                       </div>
-                      <!-- Additional Fields Card -->
+                      <!-- Clearance and State Licenses Card -->
                       <div class="modal__card">
-                        <div class="modal__card-header">Additional Information</div>
+                        <div class="modal__card-header">Clearance and State Licenses</div>
                         <div class="modal__card-body" id="card-additional"></div>
                       </div>
                     </div>
@@ -412,10 +360,6 @@
           <button id="archive-close" class="icon-button">✕</button>
         </div>
         <form id="archive-form" class="modal__body modal__body--single">
-          <div class="field">
-            <label>Archive Password</label>
-            <input id="archive-password" type="password" required />
-          </div>
           <div class="field">
             <label>NEO Start Time</label>
             <input id="archive-start" type="text" placeholder="08:00" />

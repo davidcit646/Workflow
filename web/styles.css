@@ -415,7 +415,22 @@ body {
   width: 10px;
 }
 
-/* Archive preview styles */
+/* Archive preview/* Database viewer - FULL WIDTH */
+.database-viewer {
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 24px;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  font-size: 13px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  align-items: start;
+  justify-content: flex-start;
+}
+
 .archive-preview {
   background: var(--panel);
   border-radius: 12px;
@@ -529,6 +544,8 @@ body {
 
 .board--archives {
   align-items: stretch;
+  height: 100%;
+  overflow: hidden;
 }
 
 .board--exports .board__column,
@@ -558,23 +575,7 @@ body {
   overflow: hidden;
 }
 
-.board--archives .archives__list-and-preview {
-  height: 100%;
-  min-height: 0;
-}
-
-.board--archives .archives-files {
-  max-height: none;
-  min-height: 0;
-  overflow: auto;
-}
-
-.board--archives .archive-preview {
-  max-height: none;
-  margin-top: 0;
-  min-height: 0;
-  overflow: auto;
-}
+/* Old archive styles removed - replaced with dashboard layout */
 
 @media (max-width: 1100px) {
   .board--exports,
@@ -614,7 +615,7 @@ body {
   display: grid;
   gap: 8px;
   min-height: 72px;
-  min-width: 200px;
+  min-width: auto;
   max-width: 280px;
   align-items: start;
 }
@@ -961,9 +962,12 @@ body[data-theme="light"] .details__sep {
 
 .modal__body {
   padding: 8px 24px 20px;
-  overflow-y: auto;
-  display: grid;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   gap: 18px;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .page__body {
@@ -1026,7 +1030,7 @@ body[data-theme="light"] .details__sep {
 }
 
 #card-job {
-  min-width: 360px;
+  min-width: auto;
 }
 
 .edit-card__header {
@@ -1064,7 +1068,7 @@ body[data-theme="light"] .details__sep {
 }
 
 .field--half {
-  min-width: 180px;
+  min-width: auto;
 }
 
 @media (max-width: 1100px) {
@@ -1221,6 +1225,176 @@ body[data-theme="light"] .details__sep {
 
 .field-pair--state-license .field:last-child {
   flex: 1;
+  min-width: 0;
+}
+
+/* Compact contact field pairing */
+.field-pair--contact {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.field-pair--contact .field:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.field-pair--contact .field:last-child {
+  flex: 1.5;
+  min-width: 0;
+}
+
+/* Compact background check field pairing */
+.field-pair--background {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.field-pair--background .field:first-child {
+  flex: 1.5;
+  min-width: 0;
+}
+
+.field-pair--background .field:last-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Compact emergency contact field pairing */
+.field-pair--emergency {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.field-pair--emergency .field:first-child {
+  flex: 1.5;
+  min-width: 0;
+}
+
+.field-pair--emergency .field:last-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Compact licensing date field pairing */
+.field-pair--licensing-dates {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.field-pair--licensing-dates .field:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.field-pair--licensing-dates .field:last-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Driver's License date field pairing */
+.field-pair--drivers-license-dates {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.field-pair--drivers-license-dates .field:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.field-pair--drivers-license-dates .field:last-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* State ID date field pairing */
+.field-pair--state-id-dates {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.field-pair--state-id-dates .field:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.field-pair--state-id-dates .field:last-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Passport date field pairing */
+.field-pair--passport-dates {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.field-pair--passport-dates .field:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.field-pair--passport-dates .field:last-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Other ID date field pairing */
+.field-pair--other-id-dates {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.field-pair--other-id-dates .field:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.field-pair--other-id-dates .field:last-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Compact job field pairing */
+.field-pair--job {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.field-pair--job .field:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.field-pair--job .field:last-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Compact banking field pairing */
+.field-pair--banking {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.field-pair--banking .field:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.field-pair--banking .field:last-child {
+  flex: 1.5;
   min-width: 0;
 }
 
@@ -1424,11 +1598,48 @@ body[data-theme="light"] .details__sep {
   align-items: center;
 }
 
-.archives__list-and-preview {
+/* Dashboard-style Archive Layout */
+.archives__dashboard-layout {
   display: grid;
-  grid-template-columns: 240px 1fr;
-  gap: 12px;
-  align-items: start;
+  grid-template-columns: 280px 12px 1fr;
+  gap: 0;
+  height: 100%;
+  min-height: 0;
+}
+
+.archives__file-list-column,
+.archives__preview-column {
+  background: var(--panel);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.archives__file-list-header,
+.archives__preview-header {
+  margin-bottom: 16px;
+}
+
+.archives__file-list-header h3,
+.archives__preview-header h3 {
+  margin: 0 0 4px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.archives__file-list-header .muted,
+.archives__preview-header .muted {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.archives__spacer {
+  background: var(--background);
+  border-radius: var(--radius);
+  margin: 0 6px;
 }
 
 .archives-files {
@@ -1436,14 +1647,15 @@ body[data-theme="light"] .details__sep {
   padding: 0;
   margin: 0;
   display: grid;
-  gap: 8px;
-  max-height: 480px;
+  gap: 6px;
+  flex: 1;
   overflow: auto;
+  min-height: 0;
 }
 
 .archives-files .archive-item {
   padding: 0;
-  border-radius: 12px;
+  border-radius: 8px;
   background: transparent;
 }
 
@@ -1453,8 +1665,13 @@ body[data-theme="light"] .details__sep {
   justify-content: space-between;
   gap: 8px;
   padding: 8px 12px;
-  border-radius: 12px;
+  border-radius: 8px;
   background: var(--panel-strong);
+  transition: background-color 0.2s ease;
+}
+
+.archive-row:hover {
+  background: var(--panel-hover);
 }
 
 .archive-item--active .archive-row {
@@ -1463,11 +1680,37 @@ body[data-theme="light"] .details__sep {
 
 .archive-file-name {
   display: inline-block;
-  padding: 6px 12px;
-  border-radius: 999px;
+  padding: 4px 8px;
+  border-radius: 6px;
   background: var(--panel);
-  font-weight: 600;
+  font-weight: 500;
   font-size: 13px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.archive-file-name:hover {
+  background: var(--panel-hover);
+}
+
+.archive-preview {
+  flex: 1;
+  background: var(--panel-strong);
+  border-radius: 8px;
+  padding: 16px;
+  overflow: auto;
+  min-height: 0;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.archive-preview .muted {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-style: italic;
+  color: var(--text-muted);
 }
 
 .archives-files .archive-item.archive-item--active {
@@ -2147,9 +2390,23 @@ body[data-theme="light"] .multi-select__option:hover {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
-  padding: 12px 20px;
-  background: var(--panel);
+  align-items: end;
   border-bottom: 1px solid var(--panel-strong);
+  padding: 16px 20px;
+}
+
+.quick-info-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.quick-info-group label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .modal__quick-input {
@@ -2197,8 +2454,10 @@ body[data-theme="light"] .multi-select__option:hover {
 
 /* Dashboard-style Modal Board Layout */
 .modal__container--wide {
-  width: min(1400px, 98vw);
-  max-height: 94vh;
+  width: auto;
+  height: 94vh;
+  display: flex;
+  flex-direction: column;
 }
 
 .modal__board {
@@ -2207,9 +2466,35 @@ body[data-theme="light"] .multi-select__option:hover {
   gap: 12px;
   padding: 16px 20px;
   overflow-y: auto;
-  max-height: calc(94vh - 200px);
+  max-height: calc(94vh - 100px);
   background: var(--bg-2);
+  flex: 1 1 auto;
+  min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(9, 12, 20, 0.18) transparent;
 }
+
+/* Modal board scrollbar */
+.modal__board::-webkit-scrollbar {
+  width: 12px;
+}
+
+.modal__board::-webkit-scrollbar-thumb {
+  background: rgba(9, 12, 20, 0.18);
+  border-radius: 8px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+.modal__board::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.modal__board::-webkit-scrollbar-thumb:hover {
+  background: rgba(9, 12, 20, 0.25);
+}
+
+/* Firefox scrollbar support - note: scrollbar-width and scrollbar-color are added to the main modal__board rule above */
 
 .modal__column {
   background: var(--panel);
@@ -2218,8 +2503,8 @@ body[data-theme="light"] .multi-select__option:hover {
   flex-direction: column;
   gap: 10px;
   box-shadow: var(--shadow);
-  overflow: hidden;
-  min-height: 0;
+  overflow: visible;
+  min-height: 200px;
 }
 
 .modal__column-header {
@@ -2247,8 +2532,9 @@ body[data-theme="light"] .multi-select__option:hover {
   flex-direction: column;
   gap: 10px;
   padding: 12px 14px 14px;
-  overflow-y: auto;
+  overflow: visible;
   flex: 1;
+  min-height: 0;
 }
 
 /* Modal Cards (like dashboard cards) */
@@ -2270,12 +2556,41 @@ body[data-theme="light"] .multi-select__option:hover {
   letter-spacing: 0.5px;
   padding-bottom: 6px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.2s ease;
+}
+
+.modal__card-header:hover {
+  color: var(--text-primary);
+}
+
+.modal__card-collapse-icon {
+  font-size: 12px;
+  transition: transform 0.2s ease;
+  color: var(--muted);
+}
+
+.modal__card.collapsed .modal__card-collapse-icon {
+  transform: rotate(-90deg);
 }
 
 .modal__card-body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  transition: all 0.3s ease;
+  overflow: hidden;
+}
+
+.modal__card.collapsed .modal__card-body {
+  max-height: 0;
+  opacity: 0;
+  margin: 0;
+  padding: 0;
 }
 
 /* Modal field adjustments */
@@ -2650,4 +2965,107 @@ body[data-theme="light"] .multi-select__option:hover {
     transform: scale(0.9) translateY(-20px);
     opacity: 0;
   }
+}
+
+/* CSV Viewer Styles */
+.board__column--full {
+  grid-column: 1 / -1;
+}
+
+.csv-viewer {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.csv-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 300px;
+  text-align: center;
+  padding: 2rem;
+}
+
+.csv-placeholder__icon {
+  font-size: 4rem;
+  margin-bottom: 1rem;
+  opacity: 0.5;
+}
+
+.csv-placeholder__title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  color: var(--text);
+}
+
+.csv-placeholder__subtitle {
+  color: var(--muted);
+  max-width: 400px;
+  line-height: 1.5;
+}
+
+.csv-table-container {
+  height: 100%;
+  overflow: auto;
+  background: var(--panel);
+  border-radius: var(--radius);
+  border: 1px solid var(--panel-strong);
+}
+
+.csv-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.csv-table th,
+.csv-table td {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid var(--panel-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.csv-table th {
+  background: var(--panel-strong);
+  font-weight: 600;
+  color: var(--text);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.csv-table td {
+  color: var(--text);
+}
+
+.csv-table tr:hover td {
+  background: var(--bg-1);
+}
+
+.csv-table tr:hover td:first-child {
+  border-radius: 8px 0 0 8px;
+}
+
+.csv-table tr:hover td:last-child {
+  border-radius: 0 8px 8px 0;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* Card subtitle styling */
+.card__subtitle {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 0.25rem;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  opacity: 0.7;
 }

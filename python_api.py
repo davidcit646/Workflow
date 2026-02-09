@@ -189,6 +189,16 @@ def _db_init(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_people_name ON people(name);
         CREATE INDEX IF NOT EXISTS idx_people_branch ON people(branch);
 
+        CREATE TABLE IF NOT EXISTS temporary_sensitive (
+            uid TEXT PRIMARY KEY,
+            payload_enc BLOB NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (uid) REFERENCES people(uid) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_temp_sensitive_created ON temporary_sensitive(created_at);
+
         CREATE TABLE IF NOT EXISTS artifacts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             kind TEXT NOT NULL,
@@ -313,53 +323,7 @@ def _db_migrate_if_needed(conn: sqlite3.Connection, password: str) -> None:
         # Best-effort migration.
         pass
 
-    # 2) Migrate archives (zip files) and exports (csv/txt/json) into artifacts.
-    try:
-        archive_dir = DATA_DIR / ARCHIVE_DIR_NAME
-        if archive_dir.exists():
-            for p in archive_dir.iterdir():
-                if not p.is_file() or p.suffix.lower() != ".zip":
-                    continue
-                data = p.read_bytes()
-                payload_enc = security.encrypt_bytes(data)
-                if not payload_enc:
-                    continue
-                _upsert_artifact(
-                    conn,
-                    kind="archive",
-                    name=p.name,
-                    created_at=now,
-                    payload_enc=payload_enc,
-                    mime="application/zip",
-                )
-            conn.commit()
-    except Exception:
-        pass
-
-    try:
-        exports_dir = DATA_DIR / EXPORTS_DIR_NAME
-        if exports_dir.exists():
-            for p in exports_dir.iterdir():
-                if not p.is_file() or p.suffix.lower() not in {".csv", ".txt", ".json"}:
-                    continue
-                data = p.read_bytes()
-                payload_enc = security.encrypt_bytes(data)
-                if not payload_enc:
-                    continue
-                mime = "text/csv" if p.suffix.lower() == ".csv" else "text/plain"
-                if p.suffix.lower() == ".json":
-                    mime = "application/json"
-                _upsert_artifact(
-                    conn,
-                    kind="export",
-                    name=p.name,
-                    created_at=now,
-                    payload_enc=payload_enc,
-                    mime=mime,
-                )
-            conn.commit()
-    except Exception:
-        pass
+    # 2) Skip migration of archives and exports - keeping files in place
 
     # 3) Migrate weekly tracker files.
     try:
@@ -527,21 +491,50 @@ def _load_people(password: str):
     security = SecurityManager(password)
     def _load(conn: sqlite3.Connection):
         rows = conn.execute(
-            "SELECT payload_enc FROM people ORDER BY COALESCE(name, '') ASC"
+            "SELECT p.payload_enc, ts.payload_enc as sensitive_enc FROM people p "
+            "LEFT JOIN temporary_sensitive ts ON p.uid = ts.uid "
+            "ORDER BY COALESCE(p.name, '') ASC"
         ).fetchall()
         out: list[dict] = []
         for row in rows:
+            # Load basic person data
             person = _decrypt_json_blob(security, bytes(row["payload_enc"]))
-            if isinstance(person, dict):
-                out.append(person)
+            if not isinstance(person, dict):
+                continue
+                
+            # Load sensitive data if exists
+            if row["sensitive_enc"]:
+                sensitive_data = _decrypt_json_blob(security, bytes(row["sensitive_enc"]))
+                if isinstance(sensitive_data, dict):
+                    # Merge sensitive data into person data
+                    person.update(sensitive_data)
+            
+            out.append(person)
         return out
 
     return _with_db(password, _load)
 
 
 def _save_people(people: list, password: str):
+    from workflow import PERSONAL_ID_FIELDS
     security = SecurityManager(password)
     now = _utc_now()
+    
+    # Define sensitive fields that go in temporary_sensitive table
+    SENSITIVE_FIELDS = PERSONAL_ID_FIELDS + [
+        "Candidate Email", "Candidate Phone Number", "Bank Name", "Routing Number", 
+        "Account Number", "EC First Name", "EC Last Name", "EC Relationship", 
+        "EC Phone Number", "Background Completion Date", "CORI Status", 
+        "CORI Submit Date", "CORI Cleared Date", "NH GC Status", 
+        "NH GC Expiration Date", "NH GC ID Number", "ME GC Status", 
+        "ME GC Sent Date", "MVR", "DOD Clearance", "License Number", 
+        "Expiration Date", "Date of Birth", "Social Security Number",
+        "BG Check Date", "BG Check Status", "CORI Date", "Emergency Contact Name",
+        "Emergency Contact Relationship", "Emergency Contact Phone", "ID Type",
+        "ID Type Other", "State Abbreviation", "Licensing Info", "Boots",
+        "Deposit Account Type"
+    ]
+    
     def _save(conn: sqlite3.Connection):
         for p in people:
             if not isinstance(p, dict):
@@ -549,10 +542,23 @@ def _save_people(people: list, password: str):
             uid = _normalize_text(p.get("uid"))
             if not uid:
                 continue
-            name = _normalize_text(p.get("Name"))
-            branch = _normalize_text(p.get("Branch"))
-            removed = 1 if _is_removed(p) else 0
-            payload_enc = _encrypt_json_blob(security, p)
+            
+            # Split data into basic and sensitive
+            basic_data = {}
+            sensitive_data = {}
+            
+            for key, value in p.items():
+                if key in SENSITIVE_FIELDS:
+                    sensitive_data[key] = value
+                else:
+                    basic_data[key] = value
+            
+            # Save basic data to people table
+            name = _normalize_text(basic_data.get("Name"))
+            branch = _normalize_text(basic_data.get("Branch"))
+            removed = 1 if _is_removed(basic_data) else 0
+            basic_payload_enc = _encrypt_json_blob(security, basic_data)
+            
             conn.execute(
                 """
                 INSERT INTO people(uid, name, branch, removed, payload_enc, updated_at)
@@ -564,8 +570,26 @@ def _save_people(people: list, password: str):
                     payload_enc=excluded.payload_enc,
                     updated_at=excluded.updated_at
                 """,
-                (uid, name, branch, removed, payload_enc, now),
+                (uid, name, branch, removed, basic_payload_enc, now),
             )
+            
+            # Save sensitive data to temporary_sensitive table
+            if sensitive_data:
+                sensitive_payload_enc = _encrypt_json_blob(security, sensitive_data)
+                conn.execute(
+                    """
+                    INSERT INTO temporary_sensitive(uid, payload_enc, created_at, updated_at)
+                    VALUES(?, ?, ?, ?)
+                    ON CONFLICT(uid) DO UPDATE SET
+                        payload_enc=excluded.payload_enc,
+                        updated_at=excluded.updated_at
+                    """,
+                    (uid, sensitive_payload_enc, now, now),
+                )
+            else:
+                # Remove sensitive data if none exists
+                conn.execute("DELETE FROM temporary_sensitive WHERE uid=?", (uid,))
+                
         conn.commit()
 
     _with_db(password, _save)
@@ -757,44 +781,7 @@ def handle(payload: dict) -> dict:
             if isinstance(cached, dict) and cached.get("fields"):
                 return _response(True, 200, cached, context={"activePassword": active_password})
             fields = list(CSV_EXPORT_FIELDS)
-            extra_fields = [
-                "Notes",
-                "Shirt Size",
-                "Pants Size",
-                "Boots",
-                "Licensing Info",
-                "ID Type",
-                "ID Type Other",
-                "State Abbreviation",
-                "License Number",
-                "Expiration Date",
-                "Date of Birth",
-                "Social Security Number",
-                "BG Check Date",
-                "BG Check Status",
-                "CORI Date",
-                "NHGC Status",
-                "NHGC Expiration Date",
-                "NHGC ID Number",
-                "Maine GC Status",
-                "ME GC Date",
-                "Emergency Contact Name",
-                "Emergency Contact Relationship",
-                "Emergency Contact Phone",
-                "EC First Name",
-                "EC Last Name",
-                "EC Relationship",
-                "EC Phone Number",
-                "Other ID",
-                "State",
-                "ID No.",
-                "Exp.",
-                "DOB",
-                "Social",
-            ]
-            for field in extra_fields:
-                if field not in fields:
-                    fields.append(field)
+            # Only use approved CSV_EXPORT_FIELDS - NO sensitive data
             schema = {
                 "fields": fields,
                 "status_fields": STATUS_FIELDS,
@@ -826,6 +813,55 @@ def handle(payload: dict) -> dict:
             files = _with_db(password, _list_archives)
             return _response(True, 200, {"archives": files}, context={"activePassword": active_password})
 
+        # ---- SIMPLE ARCHIVE ENDPOINT (NO ZIP FILES) ----
+        if path == "/api/archive" and method == "POST":
+            password = _require_password(active_password)
+            if not isinstance(body, dict):
+                return _response(False, 400, error="Invalid payload.")
+            
+            uid = body.get("uid")
+            if not uid:
+                return _response(False, 400, error="UID is required.")
+            
+            # Get current people data to update with archive info
+            people = _load_people(password)
+            person_to_archive = None
+            for person in people:
+                if _normalize_text(person.get("uid")) == uid:
+                    person_to_archive = person
+                    break
+            
+            if not person_to_archive:
+                return _response(False, 404, error="Person not found.")
+            
+            # Add archive timestamp and update person
+            from datetime import datetime
+            person_to_archive["Archived Date"] = datetime.now().isoformat()
+            
+            # Add NEO times if provided
+            if body.get("start_time"):
+                person_to_archive["NEO Start Time"] = body["start_time"]
+            if body.get("end_time"):
+                person_to_archive["NEO End Time"] = body["end_time"]
+            
+            # Save updated person data (this will split into basic/sensitive as needed)
+            _save_people([person_to_archive], password)
+            
+            # COMPLETELY NUKE sensitive data and mark person as removed
+            def _archive_and_nuke(conn: sqlite3.Connection):
+                # Delete from temporary_sensitive table (COMPLETELY NUKE)
+                conn.execute("DELETE FROM temporary_sensitive WHERE uid=?", (uid,))
+                
+                # Mark person as removed in people table
+                conn.execute("UPDATE people SET removed=1, updated_at=? WHERE uid=?", 
+                           (_utc_now(), uid))
+                conn.commit()
+
+            _with_db(password, _archive_and_nuke)
+            
+            return _response(True, 200, {"status": "archived"}, context={"activePassword": active_password})
+
+        # ---- LEGACY ARCHIVE ENDPOINTS (ZIP FILES) ----
         if path.startswith("/api/archive/") and method == "POST":
             password = _require_password(active_password)
             suffix = path[len("/api/archive/") :]
@@ -852,66 +888,139 @@ def handle(payload: dict) -> dict:
                 if not name or not neo:
                     return _response(False, 400, error="Name and NEO Scheduled Date must be set before archiving.")
 
-                # Build a deterministic archive filename.
-                safe_name = sanitize_filename(name) or "Unnamed"
-                safe_neo = sanitize_filename(neo) or "NoDate"
-                archive_name = f"{safe_neo} - {safe_name}.zip"
-
-                # Create an encrypted zip in-memory.
+                # Generate monthly archive name based on NEO date
+                from datetime import datetime
                 try:
-                    import io
-                    import pyzipper
+                    neo_date = datetime.strptime(neo, '%m/%d/%Y') if '/' in neo else datetime.strptime(neo, '%Y-%m-%d')
+                    archive_name = f"Archive_{neo_date.strftime('%Y_%m')}.zip"
+                except Exception:
+                    # Fallback to current month if NEO date parsing fails
+                    archive_name = f"Archive_{datetime.now().strftime('%Y_%m')}.zip"
 
-                    buf = io.BytesIO()
-                    with pyzipper.AESZipFile(
-                        buf,
-                        "w",
-                        compression=pyzipper.ZIP_DEFLATED,
-                        encryption=pyzipper.WZ_AES,
-                    ) as zf:
-                        zf.setpassword(str(archive_password).encode("utf-8"))
+                # Check if monthly archive already exists and load it
+                existing_zip_bytes = None
+                with _db_connect() as conn:
+                    _db_init(conn)
+                    _db_migrate_if_needed(conn, password)
+                    row = conn.execute(
+                        "SELECT payload_enc FROM artifacts WHERE kind='archive' AND name=?",
+                        (archive_name,),
+                    ).fetchone()
+                    if row:
+                        security = SecurityManager(password)
+                        existing_zip_bytes = security.decrypt_bytes(bytes(row["payload_enc"]))
 
-                        # Primary human-readable dump used by the UI preview.
-                        lines: list[str] = []
-                        for key, label in getattr(sys.modules.get("workflow"), "ARCHIVE_SECTIONS", {}).items() if sys.modules.get("workflow") else []:
-                            _ = key
-                            _ = label
-                        # Use the ARCHIVE_SECTIONS mapping from workflow.py if available.
-                        try:
-                            from workflow import ARCHIVE_SECTIONS
-                        except Exception:
-                            ARCHIVE_SECTIONS = {}
+                # Create candidate text content
+                candidate_text = []
+                candidate_text.append(f"=== {name} ===")
+                candidate_text.append(f"NEO Scheduled Date: {neo}")
+                candidate_text.append(f"Archived Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                candidate_text.append("")
+                
+                # Use the ARCHIVE_SECTIONS mapping from workflow.py if available.
+                try:
+                    from workflow import ARCHIVE_SECTIONS
+                except Exception:
+                    ARCHIVE_SECTIONS = {}
 
-                        if ARCHIVE_SECTIONS:
-                            for section_key, section_title in ARCHIVE_SECTIONS.items():
-                                lines.append(f"== {section_title} ==")
-                                # For now, dump all fields; later we can map by section.
-                                # Keeping behavior stable is the priority.
-                                for k in sorted(person.keys()):
-                                    if k == "uid":
-                                        continue
-                                    v = person.get(k)
-                                    if v is None or v is False:
-                                        continue
-                                    text = str(v).strip()
-                                    if not text:
-                                        continue
-                                    lines.append(f"{k}: {text}")
-                                lines.append("")
-                        else:
-                            for k in sorted(person.keys()):
-                                if k == "uid":
-                                    continue
-                                v = person.get(k)
+                # Define field mappings for sections - ONLY store approved non-sensitive data
+                FIELD_MAPPINGS = {
+                    'candidate_info': [
+                        'Name', 'ICIMS ID', 'Employee ID', 'NEO Scheduled Date', 
+                        'Manager Name', 'Job Name', 'Job Location', 'Branch'
+                    ],
+                    'neo_hours': [
+                        'NEO Hours Scheduled', 'NEO Hours Completed', 'NEO Training Date',
+                        'NEO Start Time', 'NEO End Time', 'Total Hours'
+                    ],
+                    'uniform_sizes': [
+                        'Shirt Size', 'Pants Size'
+                    ],
+                    'notes': [
+                        'Notes'
+                    ]
+                }
+
+                if ARCHIVE_SECTIONS:
+                    # Track all fields that have been handled to avoid duplication
+                    handled_fields = set()
+                    
+                    for section_key, section_title in ARCHIVE_SECTIONS.items():
+                        candidate_text.append(f"== {section_title} ==")
+                        
+                        # Get fields for this section
+                        section_fields = FIELD_MAPPINGS.get(section_key, [])
+                        
+                        # Add fields that belong to this section
+                        has_content = False
+                        for field in section_fields:
+                            if field in person:
+                                v = person.get(field)
                                 if v is None or v is False:
                                     continue
                                 text = str(v).strip()
                                 if not text:
                                     continue
-                                lines.append(f"{k}: {text}")
+                                candidate_text.append(f"{field}: {text}")
+                                has_content = True
+                                handled_fields.add(field)
+                        
+                        # Only store approved fields - NO uncategorized fields
+                        candidate_text.append("")
+                else:
+                    # No fallback - only store approved fields
+                    candidate_text.append("=== Limited Archive Data ===")
 
-                        zf.writestr("archive.txt", "\n".join(lines))
-                        zf.writestr("candidate.json", json.dumps(person, ensure_ascii=False, indent=2))
+                candidate_filename = f"{sanitize_filename(name) or 'Unnamed'}_{sanitize_filename(neo) or 'NoDate'}.txt"
+                candidate_content = "\n".join(candidate_text)
+
+                # Create or update the monthly zip file
+                try:
+                    import io
+                    import pyzipper
+
+                    buf = io.BytesIO()
+                    
+                    if existing_zip_bytes:
+                        # Load existing zip and add new file
+                        with pyzipper.AESZipFile(io.BytesIO(existing_zip_bytes), "r") as existing_zf:
+                            existing_zf.setpassword(str(archive_password).encode("utf-8"))
+                            
+                            # Create new zip with existing files plus new one
+                            with pyzipper.AESZipFile(
+                                buf,
+                                "w",
+                                compression=pyzipper.ZIP_DEFLATED,
+                                encryption=pyzipper.WZ_AES,
+                            ) as zf:
+                                zf.setpassword(str(archive_password).encode("utf-8"))
+                                
+                                # Copy existing files
+                                for existing_file in existing_zf.namelist():
+                                    if not existing_file.endswith("/"):
+                                        existing_content = existing_zf.read(existing_file)
+                                        zf.writestr(existing_file, existing_content)
+                                
+                                # Add new candidate file
+                                zf.writestr(candidate_filename, candidate_content)
+                                # Also add JSON for completeness
+                                zf.writestr(candidate_filename.replace('.txt', '.json'), 
+                                          json.dumps(person, ensure_ascii=False, indent=2))
+                    else:
+                        # Create new monthly zip
+                        with pyzipper.AESZipFile(
+                            buf,
+                            "w",
+                            compression=pyzipper.ZIP_DEFLATED,
+                            encryption=pyzipper.WZ_AES,
+                        ) as zf:
+                            zf.setpassword(str(archive_password).encode("utf-8"))
+                            
+                            # Add candidate file
+                            zf.writestr(candidate_filename, candidate_content)
+                            # Also add JSON for completeness
+                            zf.writestr(candidate_filename.replace('.txt', '.json'), 
+                                      json.dumps(person, ensure_ascii=False, indent=2))
 
                     zip_bytes = buf.getvalue()
                 except Exception as exc:
@@ -935,15 +1044,17 @@ def handle(payload: dict) -> dict:
 
                 _with_db(password, _save_archive)
 
-                # Mark the person as removed after archiving.
-                try:
-                    for p in people:
-                        if isinstance(p, dict) and _normalize_text(p.get("uid")) == uid:
-                            p["Removed"] = True
-                            break
-                    _save_people(people, password)
-                except Exception:
-                    pass
+                # COMPLETELY NUKE temporary sensitive data and mark person as removed
+                def _archive_and_nuke(conn: sqlite3.Connection):
+                    # Delete from temporary_sensitive table (COMPLETELY NUKE)
+                    conn.execute("DELETE FROM temporary_sensitive WHERE uid=?", (uid,))
+                    
+                    # Mark person as removed in people table
+                    conn.execute("UPDATE people SET removed=1, updated_at=? WHERE uid=?", 
+                               (_utc_now(), uid))
+                    conn.commit()
+
+                _with_db(password, _archive_and_nuke)
 
                 return _response(True, 200, {"status": "ok", "archive": archive_name}, context={"activePassword": active_password})
 
@@ -1197,6 +1308,109 @@ def handle(payload: dict) -> dict:
                 return _response(False, 404, error="File not found.")
             return _response(True, 200, {"status": "ok"}, context={"activePassword": active_password})
 
+        if path == "/api/export/csv" and method == "GET":
+            password = _require_password(active_password)
+            people = _load_people(password)
+            
+            # Filter out removed candidates
+            active_people = [p for p in people if isinstance(p, dict) and not _is_removed(p)]
+            
+            import csv
+            import io
+            from datetime import datetime
+            
+            output = io.StringIO()
+            writer = csv.writer(output)
+            
+            # Write header
+            writer.writerow(CSV_EXPORT_FIELDS)
+            
+            # Write data rows
+            for person in active_people:
+                row = []
+                for field in CSV_EXPORT_FIELDS:
+                    value = person.get(field, "")
+                    # Handle list/array values by joining with commas
+                    if isinstance(value, list):
+                        value = ", ".join(str(v) for v in value)
+                    # Convert to string and handle None
+                    if value is None:
+                        value = ""
+                    else:
+                        value = str(value)
+                    row.append(value)
+                writer.writerow(row)
+            
+            csv_content = output.getvalue()
+            output.close()
+            
+            # Generate filename with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"workflow_export_{timestamp}.csv"
+            
+            # Store in database as encrypted artifact
+            security = SecurityManager(password)
+            encrypted_content = security.encrypt_bytes(csv_content.encode('utf-8'))
+            
+            def _save_export(conn: sqlite3.Connection):
+                conn.execute(
+                    "INSERT INTO artifacts (name, kind, payload_enc, created_at) VALUES (?, ?, ?, ?)",
+                    (filename, "export", encrypted_content, _utc_now())
+                )
+                conn.commit()
+            
+            _with_db(password, _save_export)
+            
+            # Return as downloadable file
+            from urllib.parse import quote
+            return {
+                "ok": True,
+                "status": 200,
+                "headers": {
+                    "Content-Type": "text/csv",
+                    "Content-Disposition": f"attachment; filename=\"{quote(filename)}\""
+                },
+                "base64": None,
+                "content": csv_content
+            }
+
+        if path == "/api/exports/file" and method == "GET":
+            password = _require_password(active_password)
+            name = (query.get("name") or [""])[0]
+            if not name:
+                return _response(False, 400, error="File name is required.")
+            
+            with _db_connect() as conn:
+                _db_init(conn)
+                _db_migrate_if_needed(conn, password)
+                
+                row = conn.execute(
+                    "SELECT payload_enc FROM artifacts WHERE kind='export' AND name=?",
+                    (name,),
+                ).fetchone()
+                
+                if not row:
+                    return _response(False, 404, error="File not found.")
+                
+                security = SecurityManager(password)
+                plain = security.decrypt_bytes(bytes(row["payload_enc"]))
+                if plain is None:
+                    return _response(False, 401, error="Unable to decrypt export. Check password.")
+            
+            # Return as downloadable file
+            from urllib.parse import quote
+            content_type = "text/csv" if name.lower().endswith(".csv") else "text/plain"
+            return {
+                "ok": True,
+                "status": 200,
+                "headers": {
+                    "Content-Type": content_type,
+                    "Content-Disposition": f"attachment; filename=\"{quote(name)}\""
+                },
+                "base64": None,
+                "content": plain.decode('utf-8', errors='replace')
+            }
+
         if path == "/api/removed" and method == "GET":
             password = _require_password(active_password)
             people = _load_people(password)
@@ -1214,7 +1428,24 @@ def handle(payload: dict) -> dict:
             password = _require_password(active_password)
             if not isinstance(body, dict):
                 return _response(False, 400, error="Invalid payload.")
+            
+            # Check for existing candidate with same ICIMS ID or Name
             people = _load_people(password)
+            new_icims = _normalize_text(body.get("ICIMS ID", ""))
+            new_name = _normalize_text(body.get("Name", ""))
+            
+            for existing_person in people:
+                existing_icims = _normalize_text(existing_person.get("ICIMS ID", ""))
+                existing_name = _normalize_text(existing_person.get("Name", ""))
+                
+                # If ICIMS ID matches, it's the same person
+                if new_icims and existing_icims and new_icims == existing_icims:
+                    return _response(False, 409, error=f"Candidate with ICIMS ID '{body.get('ICIMS ID')}' already exists.")
+                
+                # If name matches and no ICIMS ID, it might be a duplicate
+                if new_name and existing_name and new_name == existing_name and not new_icims:
+                    return _response(False, 409, error=f"Candidate with name '{body.get('Name')}' already exists.")
+            
             person = {key: value for key, value in body.items()}
             person["uid"] = str(uuid.uuid4())
             people.append(person)
@@ -1357,10 +1588,25 @@ def handle(payload: dict) -> dict:
             people = _load_people(password)
 
             if method == "DELETE":
-                updated = [p for p in people if _normalize_text(p.get("uid")) != uid]
-                if len(updated) == len(people):
+                def _delete_person(conn: sqlite3.Connection):
+                    # Delete from people table
+                    cursor1 = conn.execute("DELETE FROM people WHERE uid=?", (uid,))
+                    people_deleted = cursor1.rowcount
+                    
+                    # Delete from temporary_sensitive table  
+                    cursor2 = conn.execute("DELETE FROM temporary_sensitive WHERE uid=?", (uid,))
+                    sensitive_deleted = cursor2.rowcount
+                    
+                    conn.commit()
+                    
+                    if people_deleted == 0:
+                        return False
+                    return True
+                
+                deleted = _with_db(password, _delete_person)
+                if not deleted:
                     return _response(False, 404, error="Person not found.")
-                _save_people(updated, password)
+                    
                 return _response(True, 200, {"status": "ok"}, context={"activePassword": active_password})
 
             if not isinstance(body, dict):
@@ -1375,17 +1621,163 @@ def handle(payload: dict) -> dict:
                     return _response(True, 200, {"person": person}, context={"activePassword": active_password})
             return _response(False, 404, error="Person not found.")
 
+        # ---- DATABASE VIEWER ENDPOINTS ----
+        if path == "/api/database/temporary" and method == "GET":
+            password = _require_password(active_password)
+            def _get_temporary_data(conn: sqlite3.Connection):
+                # Get all people with their sensitive data
+                rows = conn.execute(
+                    "SELECT p.payload_enc, ts.payload_enc as sensitive_enc FROM people p "
+                    "LEFT JOIN temporary_sensitive ts ON p.uid = ts.uid "
+                    "WHERE p.removed = 0 "
+                    "ORDER BY COALESCE(p.name, '') ASC"
+                ).fetchall()
+                
+                security = SecurityManager(password)
+                people_data = []
+                
+                for row in rows:
+                    # Load basic person data
+                    person = _decrypt_json_blob(security, bytes(row["payload_enc"]))
+                    if not isinstance(person, dict):
+                        continue
+                        
+                    # Load sensitive data if exists
+                    if row["sensitive_enc"]:
+                        sensitive_data = _decrypt_json_blob(security, bytes(row["sensitive_enc"]))
+                        if isinstance(sensitive_data, dict):
+                            # Merge sensitive data into person data
+                            person.update(sensitive_data)
+                    
+                    people_data.append(person)
+                
+                return people_data
+
+            people_data = _with_db(password, _get_temporary_data)
+            return _response(True, 200, {"data": people_data}, context={"activePassword": active_password})
+
+        if path == "/api/database/longterm" and method == "GET":
+            password = _require_password(active_password)
+            def _get_longterm_data(conn: sqlite3.Connection):
+                # Get all archived people (only basic data, no sensitive info)
+                rows = conn.execute(
+                    "SELECT payload_enc FROM people WHERE removed = 1 ORDER BY updated_at DESC"
+                ).fetchall()
+                
+                security = SecurityManager(password)
+                archived_data = []
+                
+                for row in rows:
+                    person = _decrypt_json_blob(security, bytes(row["payload_enc"]))
+                    if isinstance(person, dict):
+                        archived_data.append(person)
+                
+                return archived_data
+
+            archived_data = _with_db(password, _get_longterm_data)
+            return _response(True, 200, {"data": archived_data}, context={"activePassword": active_password})
+
+        if path == "/api/database/export" and method == "POST":
+            password = _require_password(active_password)
+            if not isinstance(body, dict):
+                return _response(False, 400, error="Invalid payload.")
+            
+            table_type = body.get("table")
+            if table_type not in ["temporary", "longterm"]:
+                return _response(False, 400, error="Invalid table type.")
+            
+            # Get the data by calling the appropriate endpoint logic
+            if table_type == "temporary":
+                def _get_temporary_data(conn: sqlite3.Connection):
+                    rows = conn.execute(
+                        "SELECT p.payload_enc, ts.payload_enc as sensitive_enc FROM people p "
+                        "LEFT JOIN temporary_sensitive ts ON p.uid = ts.uid "
+                        "WHERE p.removed = 0 "
+                        "ORDER BY COALESCE(p.name, '') ASC"
+                    ).fetchall()
+                    
+                    security = SecurityManager(password)
+                    people_data = []
+                    
+                    for row in rows:
+                        person = _decrypt_json_blob(security, bytes(row["payload_enc"]))
+                        if not isinstance(person, dict):
+                            continue
+                            
+                        if row["sensitive_enc"]:
+                            sensitive_data = _decrypt_json_blob(security, bytes(row["sensitive_enc"]))
+                            if isinstance(sensitive_data, dict):
+                                person.update(sensitive_data)
+                        
+                        people_data.append(person)
+                    
+                    return people_data
+                
+                data = _with_db(password, _get_temporary_data)
+            else:
+                def _get_longterm_data(conn: sqlite3.Connection):
+                    rows = conn.execute(
+                        "SELECT payload_enc FROM people WHERE removed = 1 ORDER BY updated_at DESC"
+                    ).fetchall()
+                    
+                    security = SecurityManager(password)
+                    archived_data = []
+                    
+                    for row in rows:
+                        person = _decrypt_json_blob(security, bytes(row["payload_enc"]))
+                        if isinstance(person, dict):
+                            archived_data.append(person)
+                    
+                    return archived_data
+                
+                data = _with_db(password, _get_longterm_data)
+            
+            # Convert to CSV
+            import csv
+            from io import StringIO
+            from datetime import datetime
+            from urllib.parse import quote
+            
+            if not data:
+                return _response(False, 404, error="No data found to export.")
+            
+            # Get all possible fields from all records
+            all_fields = set()
+            for record in data:
+                all_fields.update(record.keys())
+            
+            # Sort fields for consistent ordering
+            fieldnames = sorted(all_fields)
+            
+            # Create CSV
+            output = StringIO()
+            writer = csv.DictWriter(output, fieldnames=fieldnames)
+            writer.writeheader()
+            
+            for record in data:
+                clean_record = {k: str(v) if v is not None else "" for k, v in record.items()}
+                writer.writerow(clean_record)
+            
+            csv_content = output.getvalue()
+            filename = f"{table_type}_database_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            
+            return {
+                "ok": True,
+                "status": 200,
+                "headers": {
+                    "Content-Type": "text/csv",
+                    "Content-Disposition": f"attachment; filename=\"{quote(filename)}\""
+                },
+                "base64": None,
+                "content": csv_content
+            }
+
         return _response(False, 404, error=f"Unknown route: {method} {path}")
 
     except PermissionError as exc:
         return _response(False, 401, error=str(exc), context={"activePassword": active_password})
     except Exception as exc:
         return _response(False, 500, error=str(exc), context={"activePassword": active_password})
-
-
-def main():
-    try:
-        payload = _read_stdin_json()
     except Exception as exc:
         fallback = _response(False, 400, error=f"Invalid JSON input: {exc}")
         sys.stdout.write(json.dumps(fallback))
@@ -1409,4 +1801,20 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import os
+    
+    # Read the request from stdin
+    payload_str = sys.stdin.read()
+    if not payload_str:
+        print(json.dumps({"ok": False, "status": 400, "error": "No input received"}))
+        sys.exit(1)
+    
+    try:
+        payload = json.loads(payload_str)
+    except json.JSONDecodeError:
+        print(json.dumps({"ok": False, "status": 400, "error": "Invalid JSON input"}))
+        sys.exit(1)
+    
+    # Handle the request
+    result = handle(payload)
+    print(json.dumps(result))
