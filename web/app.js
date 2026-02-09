@@ -1997,6 +1997,22 @@ const setupEventListeners = () => {
   document.querySelectorAll(".nav-item").forEach((button) => {
     button.addEventListener("click", () => switchPage(button.dataset.page));
   });
+  
+  // Database viewer event listeners
+  const tableSelector = document.getElementById('table-selector');
+  const exportCsvBtn = document.getElementById('export-csv');
+  
+  if (tableSelector) {
+    tableSelector.addEventListener('change', async (event) => {
+      state.database.selectedTable = event.target.value;
+      await loadDatabaseData();
+      renderDatabaseViewer();
+    });
+  }
+  
+  if (exportCsvBtn) {
+    exportCsvBtn.addEventListener('click', exportDatabaseToCsv);
+  }
 };
 
 const initApp = async () => {
