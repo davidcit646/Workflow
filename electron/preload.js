@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('workflowApi', {
   kanbanAddCard: (payload) => ipcRenderer.invoke('kanban:addCard', payload),
   kanbanUpdateCard: (id, payload) => ipcRenderer.invoke('kanban:updateCard', { id, payload }),
   kanbanReorderColumn: (columnId, cardIds) => ipcRenderer.invoke('kanban:reorderColumn', { columnId, cardIds }),
+  kanbanProcessCandidate: (payload) => ipcRenderer.invoke('kanban:processCandidate', payload),
+  kanbanRemoveCandidate: (candidateId) => ipcRenderer.invoke('kanban:removeCandidate', candidateId),
 
   weeklyGet: () => ipcRenderer.invoke('weekly:get'),
   weeklySave: (entries) => ipcRenderer.invoke('weekly:save', entries),
@@ -23,6 +25,7 @@ contextBridge.exposeInMainWorld('workflowApi', {
   dbListTables: () => ipcRenderer.invoke('db:listTables'),
   dbGetTable: (tableId) => ipcRenderer.invoke('db:getTable', tableId),
   dbDeleteRows: (tableId, rowIds) => ipcRenderer.invoke('db:deleteRows', { tableId, rowIds }),
+  dbExportCsv: (payload) => ipcRenderer.invoke('db:exportCsv', payload),
 
   piiGet: (candidateId) => ipcRenderer.invoke('candidate:getPII', candidateId),
   piiSave: (candidateId, data) => ipcRenderer.invoke('candidate:savePII', { candidateId, data }),

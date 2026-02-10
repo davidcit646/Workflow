@@ -1,11 +1,14 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
 const APP_NAME = 'Workflow';
+const ICON_NAME = process.platform === 'win32' ? 'app-icon.ico' : 'app-icon.png';
+const ICON_PATH = path.join(__dirname, 'assets', ICON_NAME);
 const AUTH_FILE = path.join(app.getPath('userData'), 'auth.json');
 const DATA_FILE = path.join(app.getPath('userData'), 'workflow.enc');
+const LAST_COLUMN_MESSAGE = 'Please remove candidate cards from the last remaining column before deleting it.';
 
 let authState = { configured: false, authenticated: false };
 let activePassword = null;
@@ -221,6 +224,152 @@ const normalizeTodos = (todos = []) => {
   return changed;
 };
 
+const parseDateValue = (value) => {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const ts = Date.parse(text);
+  return Number.isNaN(ts) ? null : ts;
+};
+
+const sortCandidateRowsByHireDate = (rows) => {
+  return rows.sort((a, b) => {
+    const aTime = parseDateValue(a['Hire Date']);
+    const bTime = parseDateValue(b['Hire Date']);
+    if (aTime === null && bTime === null) return 0;
+    if (aTime === null) return 1;
+    if (bTime === null) return -1;
+    if (aTime !== bTime) return aTime - bTime;
+    const aName = String(a['Candidate Name'] || '');
+    const bName = String(b['Candidate Name'] || '');
+    return aName.localeCompare(bName);
+  });
+};
+
+const orderColumns = (columns = []) => {
+  return [...columns].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+};
+
+const pickFallbackColumn = (columns, removedId) => {
+  const ordered = orderColumns(columns);
+  const index = ordered.findIndex((col) => col.id === removedId);
+  const remaining = ordered.filter((col) => col.id !== removedId);
+  if (!remaining.length) return null;
+  if (index === -1) return remaining[0];
+  const after = ordered.slice(index + 1).find((col) => col.id !== removedId);
+  if (after) return after;
+  const before = [...ordered.slice(0, index)].reverse().find((col) => col.id !== removedId);
+  return before || remaining[0];
+};
+
+const moveCardsToColumn = (db, fromColumnIds, targetColumnId) => {
+  if (!db || !targetColumnId || !fromColumnIds || fromColumnIds.size === 0) return;
+  const moving = db.kanban.cards.filter((card) => fromColumnIds.has(card.column_id));
+  if (!moving.length) return;
+  const now = new Date().toISOString();
+  const targetCards = db.kanban.cards.filter((card) => card.column_id === targetColumnId);
+  let nextOrder = Math.max(0, ...targetCards.map((c) => c.order || 0)) + 1;
+  moving
+    .sort((a, b) => (a.order || 0) - (b.order || 0))
+    .forEach((card) => {
+      card.column_id = targetColumnId;
+      card.order = nextOrder++;
+      card.updated_at = now;
+    });
+};
+
+const sanitizeFilename = (name) => {
+  const safe = String(name || '')
+    .replace(/[^\w\- ]+/g, '')
+    .trim()
+    .replace(/\s+/g, '_');
+  return safe || 'export';
+};
+
+const csvEscape = (value) => {
+  const str = value === null || value === undefined ? '' : String(value);
+  if (/[",\n\r]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+};
+
+const rowsToCsv = (columns, rows) => {
+  let cols = Array.isArray(columns) ? columns.filter((col) => col && col !== '__rowId') : [];
+  const dataRows = Array.isArray(rows) ? rows : [];
+  if (!cols.length && dataRows.length) {
+    cols = Object.keys(dataRows[0]).filter((col) => col !== '__rowId');
+  }
+  const lines = [];
+  if (cols.length) {
+    lines.push(cols.map(csvEscape).join(','));
+  }
+  dataRows.forEach((row) => {
+    const line = cols.map((col) => csvEscape(row ? row[col] : '')).join(',');
+    lines.push(line);
+  });
+  return lines.join('\n');
+};
+
+const SENSITIVE_PII_FIELDS = [
+  'Contact Phone',
+  'Contact Email',
+  'Background Provider',
+  'Background Cleared Date',
+  'Background MVR Flag',
+  'License Type',
+  'MA CORI Status',
+  'MA CORI Date',
+  'NH GC Status',
+  'NH GC Expiration Date',
+  'NH GC ID Number',
+  'ME GC Status',
+  'ME GC Expiration Date',
+  'Bank Name',
+  'Account Type',
+  'Routing Number',
+  'Account Number',
+  'Shirt Size',
+  'Pants Size',
+  'Boots Size',
+  'Emergency Contact Name',
+  'Emergency Contact Relationship',
+  'Emergency Contact Phone',
+  'Additional Details',
+  'Additional Notes',
+];
+
+const SENSITIVE_CARD_FIELDS = ['icims_id', 'employee_id'];
+
+const parseMilitaryTime = (value) => {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (digits.length !== 4) return null;
+  const hours = Number(digits.slice(0, 2));
+  const minutes = Number(digits.slice(2, 4));
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return null;
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  return hours * 60 + minutes;
+};
+
+const roundToQuarterHour = (minutes) => {
+  if (minutes === null || minutes === undefined) return null;
+  const rounded = Math.round(minutes / 15) * 15;
+  const maxMinutes = 23 * 60 + 45;
+  return Math.min(Math.max(rounded, 0), maxMinutes);
+};
+
+const formatMilitaryTime = (minutes) => {
+  if (minutes === null || minutes === undefined) return '';
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+};
+
+const formatTotalHours = (minutes) => {
+  if (minutes === null || minutes === undefined) return '';
+  const hours = minutes / 60;
+  return Number.isFinite(hours) ? hours.toFixed(2) : '';
+};
+
 const TABLE_DEFS = {
   kanban_columns: {
     name: 'Kanban Columns',
@@ -271,13 +420,16 @@ const TABLE_DEFS = {
   candidate_data: {
     name: 'Onboarding Candidate Data',
     columns: [...KANBAN_CANDIDATE_FIELDS],
-    rows: (db) => (db.kanban.candidates || []).map((row) => ({
-      __rowId: row['candidate UUID'] || row['Candidate Name'] || crypto.randomUUID(),
-      ...KANBAN_CANDIDATE_FIELDS.reduce((acc, key) => {
-        acc[key] = row[key] ?? '';
-        return acc;
-      }, {}),
-    })),
+    rows: (db) => {
+      const rows = (db.kanban.candidates || []).map((row) => ({
+        __rowId: row['candidate UUID'] || row['Candidate Name'] || crypto.randomUUID(),
+        ...KANBAN_CANDIDATE_FIELDS.reduce((acc, key) => {
+          acc[key] = row[key] ?? '';
+          return acc;
+        }, {}),
+      }));
+      return sortCandidateRowsByHireDate(rows);
+    },
   },
   weekly_entries: {
     name: 'Weekly Tracker Entries',
@@ -355,6 +507,7 @@ const createWindow = () => {
     height: 900,
     backgroundColor: '#f6f7fb',
     title: APP_NAME,
+    icon: ICON_PATH,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -367,6 +520,9 @@ const createWindow = () => {
 
 app.whenReady().then(() => {
   ensureAuthState();
+  if (process.platform === 'win32') {
+    app.setAppUserModelId(APP_NAME);
+  }
   createWindow();
 
   app.on('activate', () => {
@@ -452,13 +608,28 @@ ipcMain.handle('kanban:addColumn', (_event, name) => {
 ipcMain.handle('kanban:removeColumn', (_event, columnId) => {
   requireAuth();
   const db = loadDb();
-  db.kanban.columns = db.kanban.columns.filter((col) => col.id !== columnId);
-  const removedCards = db.kanban.cards.filter((card) => card.column_id === columnId);
-  db.kanban.cards = db.kanban.cards.filter((card) => card.column_id !== columnId);
-  const removedIds = new Set(removedCards.map((card) => card.uuid));
-  db.kanban.candidates = db.kanban.candidates.filter((row) => !removedIds.has(row['candidate UUID']));
+  const exists = db.kanban.columns.some((col) => col.id === columnId);
+  if (!exists) {
+    return { ok: true, columns: db.kanban.columns, cards: db.kanban.cards };
+  }
+  const remaining = db.kanban.columns.filter((col) => col.id !== columnId);
+  const cardsInColumn = db.kanban.cards.filter((card) => card.column_id === columnId);
+  if (remaining.length === 0) {
+    if (cardsInColumn.length) {
+      return { ok: false, error: 'last_column', message: LAST_COLUMN_MESSAGE };
+    }
+    db.kanban.columns = remaining;
+    saveDb(db);
+    return { ok: true, columns: db.kanban.columns, cards: db.kanban.cards };
+  }
+
+  const target = pickFallbackColumn(db.kanban.columns, columnId);
+  if (target) {
+    moveCardsToColumn(db, new Set([columnId]), target.id);
+  }
+  db.kanban.columns = remaining;
   saveDb(db);
-  return { columns: db.kanban.columns, cards: db.kanban.cards };
+  return { ok: true, columns: db.kanban.columns, cards: db.kanban.cards };
 });
 
 ipcMain.handle('kanban:addCard', (_event, payload) => {
@@ -488,6 +659,8 @@ ipcMain.handle('kanban:addCard', (_event, payload) => {
   candidateRow['Candidate Name'] = card.candidate_name;
   candidateRow['ICIMS ID'] = card.icims_id;
   candidateRow['Employee ID'] = card.employee_id;
+  candidateRow['Contact Phone'] = payload.contact_phone || '';
+  candidateRow['Contact Email'] = payload.contact_email || '';
   candidateRow['Job ID Name'] = jobIdName(card.job_id, card.job_name);
   candidateRow['Job Location'] = card.job_location;
   candidateRow['Manager'] = card.manager;
@@ -504,13 +677,37 @@ ipcMain.handle('kanban:updateCard', (_event, { id, payload }) => {
   const db = loadDb();
   const card = db.kanban.cards.find((c) => c.uuid === id);
   if (!card) return { cards: db.kanban.cards };
-  Object.assign(card, payload);
+  const updates = {};
+  const allowed = new Set([
+    'candidate_name',
+    'icims_id',
+    'employee_id',
+    'job_id',
+    'job_name',
+    'job_location',
+    'manager',
+    'branch',
+    'column_id',
+    'order',
+  ]);
+  if (payload && typeof payload === 'object') {
+    Object.keys(payload).forEach((key) => {
+      if (allowed.has(key)) updates[key] = payload[key];
+    });
+  }
+  Object.assign(card, updates);
   card.updated_at = new Date().toISOString();
 
   const candidateRow = ensureCandidateRow(db, id);
   candidateRow['Candidate Name'] = card.candidate_name || '';
   candidateRow['ICIMS ID'] = card.icims_id || '';
   candidateRow['Employee ID'] = card.employee_id || '';
+  if (payload.contact_phone !== undefined) {
+    candidateRow['Contact Phone'] = payload.contact_phone || '';
+  }
+  if (payload.contact_email !== undefined) {
+    candidateRow['Contact Email'] = payload.contact_email || '';
+  }
   candidateRow['Job ID Name'] = jobIdName(card.job_id, card.job_name);
   candidateRow['Job Location'] = card.job_location || '';
   candidateRow['Manager'] = card.manager || '';
@@ -546,6 +743,57 @@ ipcMain.handle('candidate:savePII', (_event, { candidateId, data }) => {
   }
   saveDb(db);
   return true;
+});
+
+ipcMain.handle('kanban:processCandidate', (_event, { candidateId, arrival, departure }) => {
+  requireAuth();
+  const db = loadDb();
+  if (!candidateId) return { ok: false, message: 'Missing candidate.' };
+  const card = db.kanban.cards.find((c) => c.uuid === candidateId);
+  if (!card) return { ok: false, message: 'Candidate not found.' };
+
+  const arrivalMinutes = roundToQuarterHour(parseMilitaryTime(arrival));
+  const departureMinutes = roundToQuarterHour(parseMilitaryTime(departure));
+  if (arrivalMinutes === null || departureMinutes === null) {
+    return { ok: false, message: 'Invalid time format. Use 4-digit 24H time.' };
+  }
+
+  const arrivalText = formatMilitaryTime(arrivalMinutes);
+  const departureText = formatMilitaryTime(departureMinutes);
+  let totalMinutes = departureMinutes - arrivalMinutes;
+  if (totalMinutes < 0) totalMinutes += 24 * 60;
+  const totalHours = formatTotalHours(totalMinutes);
+
+  const row = ensureCandidateRow(db, candidateId);
+  row['Candidate Name'] = card.candidate_name || row['Candidate Name'] || '';
+  row['ICIMS ID'] = card.icims_id || row['ICIMS ID'] || '';
+  row['Employee ID'] = card.employee_id || row['Employee ID'] || '';
+  row['Job ID Name'] = jobIdName(card.job_id, card.job_name);
+  row['Job Location'] = card.job_location || row['Job Location'] || '';
+  row['Manager'] = card.manager || row['Manager'] || '';
+  row['Branch'] = card.branch || row['Branch'] || '';
+  row['Neo Arrival Time'] = arrivalText;
+  row['Neo Departure Time'] = departureText;
+  row['Total Neo Hours'] = totalHours;
+
+  SENSITIVE_PII_FIELDS.forEach((field) => { row[field] = ''; });
+  SENSITIVE_CARD_FIELDS.forEach((field) => { card[field] = ''; });
+  card.updated_at = new Date().toISOString();
+
+  saveDb(db);
+  return { ok: true, card };
+});
+
+ipcMain.handle('kanban:removeCandidate', (_event, candidateId) => {
+  requireAuth();
+  const db = loadDb();
+  if (!candidateId) return { ok: false, message: 'Missing candidate.' };
+  db.kanban.cards = db.kanban.cards.filter((card) => card.uuid !== candidateId);
+  db.kanban.candidates = db.kanban.candidates.filter(
+    (row) => row['candidate UUID'] !== candidateId
+  );
+  saveDb(db);
+  return { ok: true, columns: db.kanban.columns, cards: db.kanban.cards };
 });
 
 ipcMain.handle('kanban:reorderColumn', (_event, { columnId, cardIds }) => {
@@ -648,6 +896,35 @@ ipcMain.handle('db:getTable', (_event, tableId) => {
   return table || { id: tableId, name: 'Unknown', columns: [], rows: [] };
 });
 
+ipcMain.handle('db:exportCsv', async (_event, payload) => {
+  requireAuth();
+  const { tableId, tableName, columns, rows } = payload || {};
+  let exportColumns = Array.isArray(columns) ? columns : [];
+  let exportRows = Array.isArray(rows) ? rows : [];
+  if ((!exportColumns.length || !exportRows.length) && tableId) {
+    const db = loadDb();
+    const table = buildTable(tableId, db);
+    if (table) {
+      if (!exportColumns.length) exportColumns = table.columns;
+      if (!exportRows.length) exportRows = table.rows;
+    }
+  }
+  const baseName = sanitizeFilename(tableName || tableId || 'table');
+  const defaultFilename = `${baseName}_${new Date().toISOString().slice(0, 10)}.csv`;
+  const defaultPath = path.join(app.getPath('documents'), defaultFilename);
+  const { canceled, filePath } = await dialog.showSaveDialog({
+    title: 'Export CSV',
+    defaultPath,
+    buttonLabel: 'Save CSV',
+    filters: [{ name: 'CSV', extensions: ['csv'] }],
+  });
+  if (canceled || !filePath) return { canceled: true };
+
+  const csv = rowsToCsv(exportColumns, exportRows);
+  fs.writeFileSync(filePath, csv, 'utf-8');
+  return { ok: true, filePath };
+});
+
 ipcMain.handle('db:deleteRows', (_event, { tableId, rowIds }) => {
   requireAuth();
   const db = loadDb();
@@ -656,12 +933,19 @@ ipcMain.handle('db:deleteRows', (_event, { tableId, rowIds }) => {
   switch (tableId) {
     case 'kanban_columns': {
       const removed = db.kanban.columns.filter((col) => ids.has(col.id));
-      db.kanban.columns = db.kanban.columns.filter((col) => !ids.has(col.id));
+      const remaining = db.kanban.columns.filter((col) => !ids.has(col.id));
       const removedColumnIds = new Set(removed.map((col) => col.id));
       const removedCards = db.kanban.cards.filter((card) => removedColumnIds.has(card.column_id));
-      db.kanban.cards = db.kanban.cards.filter((card) => !removedColumnIds.has(card.column_id));
-      const removedCardIds = new Set(removedCards.map((card) => card.uuid));
-      db.kanban.candidates = db.kanban.candidates.filter((row) => !removedCardIds.has(row['candidate UUID']));
+      if (remaining.length === 0 && removedCards.length) {
+        return { ok: false, error: 'last_column', message: LAST_COLUMN_MESSAGE };
+      }
+      if (remaining.length > 0 && removedCards.length) {
+        const target = orderColumns(remaining)[0];
+        if (target) {
+          moveCardsToColumn(db, removedColumnIds, target.id);
+        }
+      }
+      db.kanban.columns = remaining;
       break;
     }
     case 'kanban_cards': {
@@ -697,5 +981,5 @@ ipcMain.handle('db:deleteRows', (_event, { tableId, rowIds }) => {
   }
 
   saveDb(db);
-  return true;
+  return { ok: true };
 });

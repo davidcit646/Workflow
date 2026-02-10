@@ -11,6 +11,8 @@ const state = {
     editingCardId: null,
     draggingCardId: null,
     piiCandidateId: null,
+    detailsCardId: null,
+    detailsRow: null,
     loaded: false,
   },
   auth: {
@@ -36,6 +38,47 @@ const state = {
 const workflowApi = window.workflowApi;
 
 const $ = (id) => document.getElementById(id);
+
+const positionFlyout = (panel) => {
+  if (!panel) return;
+  const header = document.querySelector(".page--active .topbar");
+  const headerBottom = header ? header.getBoundingClientRect().bottom : 0;
+  const top = Math.max(24, Math.round(headerBottom + 16));
+  panel.style.top = `${top}px`;
+  panel.style.height = `calc(100% - ${top + 24}px)`;
+};
+
+const setPanelVisibility = (panel, isOpen) => {
+  if (!panel) return;
+  if (panel.dataset.animTimer) {
+    clearTimeout(Number(panel.dataset.animTimer));
+    delete panel.dataset.animTimer;
+  }
+  if (isOpen) {
+    panel.classList.remove("hidden");
+    requestAnimationFrame(() => {
+      panel.classList.add("is-open");
+    });
+    panel.setAttribute("aria-hidden", "false");
+    return;
+  }
+  panel.classList.remove("is-open");
+  panel.setAttribute("aria-hidden", "true");
+  const onEnd = (event) => {
+    if (event.propertyName !== "opacity") return;
+    panel.classList.add("hidden");
+    panel.removeEventListener("transitionend", onEnd);
+  };
+  panel.addEventListener("transitionend", onEnd);
+  const timer = window.setTimeout(() => {
+    if (!panel.classList.contains("is-open")) {
+      panel.classList.add("hidden");
+    }
+    panel.removeEventListener("transitionend", onEnd);
+    delete panel.dataset.animTimer;
+  }, 280);
+  panel.dataset.animTimer = String(timer);
+};
 
 const showMessageModal = (title, message) => {
   const modal = $("action-result-modal");
@@ -73,6 +116,19 @@ const formatPhoneLike = (value) => {
 
 const isPhoneLikeValid = (value) => /^\d{3}-\d{3}-\d{4}$/.test(value);
 const sortByOrder = (a, b) => (a.order ?? 0) - (b.order ?? 0);
+const normalizeValue = (value) => {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value.trim();
+  return String(value);
+};
+const hasValue = (value) => normalizeValue(value) !== "";
+const formatMvrFlag = (value) => {
+  const text = normalizeValue(value).toLowerCase();
+  if (!text) return "";
+  if (["1", "true", "yes"].includes(text)) return "Yes";
+  if (["0", "false", "no"].includes(text)) return "No";
+  return normalizeValue(value);
+};
 
 const initPasswordToggles = () => {
   document.querySelectorAll('input[type="password"]').forEach((input) => {
@@ -290,6 +346,21 @@ const renderKanbanCard = (cardData) => {
   title.className = "kanban-card__title";
   title.textContent = cardData.candidate_name || "Unnamed Candidate";
 
+  const actions = document.createElement("div");
+  actions.className = "kanban-card__actions";
+
+  const basicButton = document.createElement("button");
+  basicButton.type = "button";
+  basicButton.className = "kanban-card__pii";
+  basicButton.textContent = "+ Basic Info";
+  basicButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openCandidateModal("edit", cardData.column_id, cardData);
+  });
+  basicButton.addEventListener("mousedown", (event) => {
+    event.stopPropagation();
+  });
+
   const piiButton = document.createElement("button");
   piiButton.type = "button";
   piiButton.className = "kanban-card__pii";
@@ -302,7 +373,8 @@ const renderKanbanCard = (cardData) => {
     event.stopPropagation();
   });
 
-  header.append(title, piiButton);
+  actions.append(basicButton, piiButton);
+  header.append(title, actions);
 
   const meta = document.createElement("div");
   meta.className = "kanban-card__meta";
@@ -360,10 +432,269 @@ const renderKanbanCard = (cardData) => {
 
   card.addEventListener("click", () => {
     if (state.kanban.draggingCardId) return;
+    openDetailsDrawer(cardData);
+  });
+  card.addEventListener("dblclick", () => {
+    if (state.kanban.draggingCardId) return;
     openCandidateModal("edit", cardData.column_id, cardData);
   });
 
   return card;
+};
+
+const createDetailsCard = (title, items) => {
+  const filtered = items.filter((item) => hasValue(item.value));
+  if (!filtered.length) return null;
+  const card = document.createElement("div");
+  card.className = "details-card";
+  const titleEl = document.createElement("div");
+  titleEl.className = "details-card__title";
+  titleEl.textContent = title;
+  card.appendChild(titleEl);
+  filtered.forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "details-item";
+    const label = document.createElement("div");
+    label.className = "details-item__label";
+    label.textContent = item.label;
+    const value = document.createElement("div");
+    value.className = "details-item__value";
+    value.textContent = normalizeValue(item.value);
+    row.append(label, value);
+    card.appendChild(row);
+  });
+  return card;
+};
+
+const renderDetailsDrawer = () => {
+  const drawer = $("details-drawer");
+  const body = $("details-drawer-body");
+  const title = $("details-drawer-name");
+  const scheduled = $("details-drawer-scheduled");
+  if (!drawer || !body || !title || !scheduled) return;
+
+  const cardId = state.kanban.detailsCardId;
+  const card = state.kanban.cards.find((item) => item.uuid === cardId);
+  if (!card) {
+    closeDetailsDrawer();
+    return;
+  }
+
+  const row = state.kanban.detailsRow || {};
+  const displayName =
+    normalizeValue(card.candidate_name) || normalizeValue(row["Candidate Name"]) || "Candidate";
+  title.textContent = displayName;
+
+  const scheduledDate = normalizeValue(row["Hire Date"]);
+  if (scheduledDate) {
+    scheduled.textContent = `Neo Scheduled Date · ${scheduledDate}`;
+    scheduled.classList.remove("hidden");
+  } else {
+    scheduled.classList.add("hidden");
+  }
+
+  body.innerHTML = "";
+  const cards = [];
+  const jobText =
+    [card.job_id, card.job_name].filter(Boolean).join(" · ") || normalizeValue(row["Job ID Name"]);
+  const overview = createDetailsCard("Candidate Overview", [
+    { label: "Job", value: jobText },
+    { label: "Location", value: card.job_location || row["Job Location"] },
+    { label: "Manager", value: card.manager || row["Manager"] },
+    { label: "Branch", value: card.branch || row["Branch"] },
+    { label: "ICIMS ID", value: card.icims_id || row["ICIMS ID"] },
+    { label: "Employee ID", value: card.employee_id || row["Employee ID"] },
+    { label: "Phone", value: row["Contact Phone"] },
+    { label: "Email", value: row["Contact Email"] },
+  ]);
+  if (overview) cards.push(overview);
+
+  const bank = createDetailsCard("Bank Info", [
+    { label: "Bank Name", value: row["Bank Name"] },
+    { label: "Account Type", value: row["Account Type"] },
+    { label: "Routing Number", value: row["Routing Number"] },
+    { label: "Account Number", value: row["Account Number"] },
+  ]);
+  if (bank) cards.push(bank);
+
+  const emergency = createDetailsCard("Emergency Contact", [
+    { label: "Name", value: row["Emergency Contact Name"] },
+    { label: "Relationship", value: row["Emergency Contact Relationship"] },
+    { label: "Phone", value: row["Emergency Contact Phone"] },
+  ]);
+  if (emergency) cards.push(emergency);
+
+  const background = createDetailsCard("Background", [
+    { label: "Provider", value: row["Background Provider"] },
+    { label: "Cleared Date", value: row["Background Cleared Date"] },
+    { label: "MVR Flag", value: formatMvrFlag(row["Background MVR Flag"]) },
+  ]);
+  if (background) cards.push(background);
+
+  const licensing = createDetailsCard("Licensing", [
+    { label: "License Type", value: row["License Type"] },
+    { label: "MA CORI Status", value: row["MA CORI Status"] },
+    { label: "MA CORI Date", value: row["MA CORI Date"] },
+    { label: "NH GC Status", value: row["NH GC Status"] },
+    { label: "NH GC Expiration", value: row["NH GC Expiration Date"] },
+    { label: "NH GC ID", value: row["NH GC ID Number"] },
+    { label: "ME GC Status", value: row["ME GC Status"] },
+    { label: "ME GC Expiration", value: row["ME GC Expiration Date"] },
+  ]);
+  if (licensing) cards.push(licensing);
+
+  const uniforms = createDetailsCard("Uniforms", [
+    { label: "Shirt Size", value: row["Shirt Size"] },
+    { label: "Pants Size", value: row["Pants Size"] },
+    { label: "Boots Size", value: row["Boots Size"] },
+  ]);
+  if (uniforms) cards.push(uniforms);
+
+  const attendance = createDetailsCard("Neo Attendance", [
+    { label: "Arrival", value: row["Neo Arrival Time"] },
+    { label: "Departure", value: row["Neo Departure Time"] },
+    { label: "Total Hours", value: row["Total Neo Hours"] },
+  ]);
+  if (attendance) cards.push(attendance);
+
+  const notes = createDetailsCard("Notes", [
+    { label: "Additional Details", value: row["Additional Details"] },
+    { label: "Additional Notes", value: row["Additional Notes"] },
+  ]);
+  if (notes) cards.push(notes);
+
+  if (!cards.length) {
+    const empty = document.createElement("div");
+    empty.className = "muted";
+    empty.textContent = "No details available yet.";
+    body.appendChild(empty);
+    return;
+  }
+
+  cards.forEach((cardEl) => body.appendChild(cardEl));
+};
+
+const refreshDetailsRow = async (candidateId) => {
+  if (!candidateId) return;
+  try {
+    const result = await workflowApi.piiGet(candidateId);
+    state.kanban.detailsRow = result ? result.row : null;
+  } catch (error) {
+    await showMessageModal(
+      "Details Unavailable",
+      "Unable to load candidate details. Please fully quit and relaunch the app."
+    );
+  }
+};
+
+const openDetailsDrawer = async (cardData) => {
+  if (!cardData || !cardData.uuid) return;
+  state.kanban.detailsCardId = cardData.uuid;
+  state.kanban.detailsRow = null;
+  setPanelVisibility($("details-drawer"), true);
+  renderDetailsDrawer();
+  await refreshDetailsRow(cardData.uuid);
+  renderDetailsDrawer();
+};
+
+const closeDetailsDrawer = () => {
+  state.kanban.detailsCardId = null;
+  state.kanban.detailsRow = null;
+  setPanelVisibility($("details-drawer"), false);
+};
+
+const sanitizeTimeInput = (input) => {
+  if (!input) return "";
+  const cleaned = input.value.replace(/\D/g, "").slice(0, 4);
+  input.value = cleaned;
+  return cleaned;
+};
+
+const openProcessModal = () => {
+  if (!state.kanban.detailsCardId) return;
+  const modal = $("process-modal");
+  const arrival = $("process-arrival");
+  const departure = $("process-departure");
+  if (!modal) return;
+  if (arrival) arrival.value = "";
+  if (departure) departure.value = "";
+  modal.classList.remove("hidden");
+};
+
+const closeProcessModal = () => {
+  const modal = $("process-modal");
+  if (modal) modal.classList.add("hidden");
+};
+
+const handleProcessConfirm = async () => {
+  const candidateId = state.kanban.detailsCardId;
+  if (!candidateId) return;
+  const arrivalInput = $("process-arrival");
+  const departureInput = $("process-departure");
+  const arrival = sanitizeTimeInput(arrivalInput);
+  const departure = sanitizeTimeInput(departureInput);
+  if (arrival.length !== 4 || departure.length !== 4) {
+    await showMessageModal(
+      "Invalid Time",
+      "Enter arrival and departure time as 4 digits in 24H format (e.g., 0824)."
+    );
+    return;
+  }
+
+  let result = null;
+  try {
+    result = await workflowApi.kanbanProcessCandidate({ candidateId, arrival, departure });
+  } catch (error) {
+    await showMessageModal(
+      "Process Failed",
+      "Unable to process candidate. Please fully quit and relaunch the app."
+    );
+    return;
+  }
+
+  if (result && result.ok === false) {
+    await showMessageModal("Process Failed", result.message || "Unable to process candidate.");
+    return;
+  }
+
+  if (result && result.card) {
+    const idx = state.kanban.cards.findIndex((card) => card.uuid === result.card.uuid);
+    if (idx >= 0) state.kanban.cards[idx] = result.card;
+  } else if (result && result.cards) {
+    state.kanban.cards = result.cards;
+  }
+
+  closeProcessModal();
+  await refreshDetailsRow(candidateId);
+  renderKanbanBoard();
+  renderDetailsDrawer();
+};
+
+const handleProcessRemove = async () => {
+  const candidateId = state.kanban.detailsCardId;
+  if (!candidateId) return;
+  let result = null;
+  try {
+    result = await workflowApi.kanbanRemoveCandidate(candidateId);
+  } catch (error) {
+    await showMessageModal(
+      "Remove Failed",
+      "Unable to remove candidate. Please fully quit and relaunch the app."
+    );
+    return;
+  }
+
+  if (result && result.ok === false) {
+    await showMessageModal("Remove Failed", result.message || "Unable to remove candidate.");
+    return;
+  }
+
+  if (result && result.columns) state.kanban.columns = result.columns;
+  if (result && result.cards) state.kanban.cards = result.cards;
+  closeProcessModal();
+  closeDetailsDrawer();
+  renderKanbanBoard();
+  renderKanbanSettings();
 };
 
 const renderKanbanBoard = () => {
@@ -371,12 +702,19 @@ const renderKanbanBoard = () => {
   if (!page || !page.classList.contains("page--active")) return;
   const board = $("kanban-board");
   const empty = $("kanban-empty");
+  const layout = $("kanban-layout");
   if (!board || !empty) return;
 
   const columns = [...state.kanban.columns].sort(sortByOrder);
   const hasColumns = columns.length > 0;
   empty.classList.toggle("hidden", hasColumns);
+  if (layout) layout.classList.toggle("hidden", !hasColumns);
   board.innerHTML = "";
+
+  if (state.kanban.detailsCardId) {
+    const exists = state.kanban.cards.some((card) => card.uuid === state.kanban.detailsCardId);
+    if (!exists) closeDetailsDrawer();
+  }
 
   columns.forEach((column) => {
     const columnEl = document.createElement("div");
@@ -479,6 +817,10 @@ const loadKanban = async () => {
   state.kanban.loaded = true;
   renderKanbanBoard();
   renderKanbanSettings();
+  if (state.kanban.detailsCardId) {
+    await refreshDetailsRow(state.kanban.detailsCardId);
+    renderDetailsDrawer();
+  }
 };
 
 const openAddColumnModal = () => {
@@ -512,6 +854,10 @@ const removeSelectedColumn = async () => {
   const columnId = state.kanban.selectedColumnId;
   if (!columnId) return;
   const payload = await workflowApi.kanbanRemoveColumn(columnId);
+  if (payload && payload.ok === false) {
+    await showMessageModal("Delete Blocked", payload.message || "Unable to delete column.");
+    return;
+  }
   state.kanban.columns = payload.columns || [];
   state.kanban.cards = payload.cards || [];
   state.kanban.selectedColumnId = null;
@@ -528,6 +874,8 @@ const openCandidateModal = (mode, columnId, cardData = null) => {
   const nameInput = $("candidate-name");
   const icimsInput = $("candidate-icims");
   const empInput = $("candidate-employee");
+  const phoneInput = $("candidate-phone");
+  const emailInput = $("candidate-email");
   const jobIdInput = $("candidate-job-id");
   const jobNameInput = $("candidate-job-name");
   const jobLocationInput = $("candidate-job-location");
@@ -553,6 +901,8 @@ const openCandidateModal = (mode, columnId, cardData = null) => {
     fill(nameInput, cardData.candidate_name);
     fill(icimsInput, cardData.icims_id);
     fill(empInput, cardData.employee_id);
+    fill(phoneInput, "");
+    fill(emailInput, "");
     fill(jobIdInput, cardData.job_id);
     fill(jobNameInput, cardData.job_name);
     fill(jobLocationInput, cardData.job_location);
@@ -566,10 +916,22 @@ const openCandidateModal = (mode, columnId, cardData = null) => {
         branchOther.value = isOther ? branchValue : "";
       }
     }
+
+    workflowApi
+      .piiGet(cardData.uuid)
+      .then((result) => {
+        if (state.kanban.editingCardId !== cardData.uuid) return;
+        const row = (result && result.row) || {};
+        fill(phoneInput, row["Contact Phone"]);
+        fill(emailInput, row["Contact Email"]);
+      })
+      .catch(() => {});
   } else {
     fill(nameInput, "");
     fill(icimsInput, "");
     fill(empInput, "");
+    fill(phoneInput, "");
+    fill(emailInput, "");
     fill(jobIdInput, "");
     fill(jobNameInput, "");
     fill(jobLocationInput, "");
@@ -658,8 +1020,6 @@ const openPiiModal = async (cardData) => {
     if (input) input.value = value || "";
   };
 
-  setValue("pii-contact-phone", row["Contact Phone"]);
-  setValue("pii-contact-email", row["Contact Email"]);
   setValue("pii-background-provider", row["Background Provider"]);
   setValue("pii-background-date", row["Background Cleared Date"]);
   setValue("pii-background-mvr", row["Background MVR Flag"] || "1");
@@ -700,8 +1060,6 @@ const closePiiModal = () => {
 const collectPiiPayload = () => {
   const value = (id) => ($(id) ? $(id).value.trim() : "");
   return {
-    "Contact Phone": value("pii-contact-phone"),
-    "Contact Email": value("pii-contact-email"),
     "Background Provider": value("pii-background-provider"),
     "Background Cleared Date": value("pii-background-date"),
     "Background MVR Flag": value("pii-background-mvr") || "1",
@@ -729,7 +1087,6 @@ const collectPiiPayload = () => {
 
 const validatePiiPayload = async (payload) => {
   const phoneFields = [
-    { label: "Contact Phone", value: payload["Contact Phone"] },
     { label: "Emergency Contact Phone", value: payload["Emergency Contact Phone"] },
     { label: "Background Cleared Date", value: payload["Background Cleared Date"] },
     { label: "MA CORI Date", value: payload["MA CORI Date"] },
@@ -740,14 +1097,6 @@ const validatePiiPayload = async (payload) => {
   for (const field of phoneFields) {
     if (field.value && !isPhoneLikeValid(field.value)) {
       await showMessageModal("Invalid Format", `${field.label} must be in 123-123-1234 format.`);
-      return false;
-    }
-  }
-
-  if (payload["Contact Email"]) {
-    const emailInput = $("pii-contact-email");
-    if (emailInput && !emailInput.checkValidity()) {
-      await showMessageModal("Invalid Email", "Please enter a valid email address.");
       return false;
     }
   }
@@ -781,6 +1130,10 @@ const handlePiiSubmit = async (event) => {
     );
     return;
   }
+  if (state.kanban.detailsCardId === candidateId) {
+    await refreshDetailsRow(candidateId);
+    renderDetailsDrawer();
+  }
   closePiiModal();
 };
 
@@ -788,6 +1141,8 @@ const buildCandidatePayload = () => {
   const nameInput = $("candidate-name");
   const icimsInput = $("candidate-icims");
   const empInput = $("candidate-employee");
+  const phoneInput = $("candidate-phone");
+  const emailInput = $("candidate-email");
   const jobIdInput = $("candidate-job-id");
   const jobNameInput = $("candidate-job-name");
   const jobLocationInput = $("candidate-job-location");
@@ -804,6 +1159,8 @@ const buildCandidatePayload = () => {
     candidate_name: nameInput ? nameInput.value.trim() : "",
     icims_id: icimsInput ? icimsInput.value.trim() : "",
     employee_id: empInput ? empInput.value.trim() : "",
+    contact_phone: phoneInput ? phoneInput.value.trim() : "",
+    contact_email: emailInput ? emailInput.value.trim() : "",
     job_id: jobIdInput ? jobIdInput.value.trim() : "",
     job_name: jobNameInput ? jobNameInput.value.trim() : "",
     job_location: jobLocationInput ? jobLocationInput.value.trim() : "",
@@ -823,6 +1180,17 @@ const handleCandidateSubmit = async (event) => {
     await showMessageModal("Missing Name", "Candidate Name is required.");
     return;
   }
+  if (payload.contact_phone && !isPhoneLikeValid(payload.contact_phone)) {
+    await showMessageModal("Invalid Format", "Contact Phone must be in 123-123-1234 format.");
+    return;
+  }
+  if (payload.contact_email) {
+    const emailInput = $("candidate-email");
+    if (emailInput && !emailInput.checkValidity()) {
+      await showMessageModal("Invalid Email", "Please enter a valid email address.");
+      return;
+    }
+  }
 
   if (state.kanban.editingCardId) {
     const data = await workflowApi.kanbanUpdateCard(state.kanban.editingCardId, payload);
@@ -837,6 +1205,10 @@ const handleCandidateSubmit = async (event) => {
   }
   closeCandidateModal();
   renderKanbanBoard();
+  if (state.kanban.detailsCardId) {
+    await refreshDetailsRow(state.kanban.detailsCardId);
+    renderDetailsDrawer();
+  }
 };
 
 const persistColumnOrder = async (columnId) => {
@@ -897,6 +1269,7 @@ const initCandidateInputs = () => {
   const icimsInput = $("candidate-icims");
   const empInput = $("candidate-employee");
   const branchSelect = $("candidate-branch");
+  const contactPhone = $("candidate-phone");
 
   const letterInputs = [nameInput, jobLocationInput, managerInput, branchOther].filter(Boolean);
   letterInputs.forEach((input) => {
@@ -912,6 +1285,12 @@ const initCandidateInputs = () => {
     });
   });
 
+  if (contactPhone) {
+    contactPhone.addEventListener("input", () => {
+      contactPhone.value = formatPhoneLike(contactPhone.value);
+    });
+  }
+
   if (branchSelect && branchOther) {
     branchSelect.addEventListener("change", () => {
       if (branchSelect.value === "Other") {
@@ -925,13 +1304,12 @@ const initCandidateInputs = () => {
 };
 
 const initPiiInputs = () => {
-  const contactPhone = $("pii-contact-phone");
   const backgroundDate = $("pii-background-date");
   const coriDate = $("pii-cori-date");
   const nhExpiration = $("pii-nh-expiration");
   const meExpiration = $("pii-me-expiration");
   const emergencyPhone = $("pii-emergency-phone");
-  const dateLikeInputs = [contactPhone, backgroundDate, coriDate, nhExpiration, meExpiration, emergencyPhone].filter(Boolean);
+  const dateLikeInputs = [backgroundDate, coriDate, nhExpiration, meExpiration, emergencyPhone].filter(Boolean);
   dateLikeInputs.forEach((input) => {
     input.addEventListener("input", () => {
       input.value = formatPhoneLike(input.value);
@@ -992,6 +1370,8 @@ const openWeeklyTracker = async () => {
   const form = $("weekly-form");
   const range = $("weekly-range");
   if (!panel || !form) return;
+  if (state.flyouts.todo) closeTodoPanel();
+  positionFlyout(panel);
   const data = await workflowApi.weeklyGet();
   form.innerHTML = "";
   if (range) {
@@ -1035,16 +1415,14 @@ const openWeeklyTracker = async () => {
     grid.appendChild(container);
   });
   form.appendChild(grid);
-  panel.classList.remove("hidden");
-  panel.setAttribute("aria-hidden", "false");
+  setPanelVisibility(panel, true);
   state.flyouts.weekly = true;
 };
 
 const closeWeeklyTracker = () => {
   const panel = $("weekly-panel");
   if (panel) {
-    panel.classList.add("hidden");
-    panel.setAttribute("aria-hidden", "true");
+    setPanelVisibility(panel, false);
   }
   state.flyouts.weekly = false;
 };
@@ -1089,16 +1467,16 @@ const downloadWeeklySummary = async () => {
 const openTodoPanel = () => {
   const panel = $("todo-panel");
   if (!panel) return;
-  panel.classList.remove("hidden");
-  panel.setAttribute("aria-hidden", "false");
+  if (state.flyouts.weekly) closeWeeklyTracker();
+  positionFlyout(panel);
+  setPanelVisibility(panel, true);
   state.flyouts.todo = true;
 };
 
 const closeTodoPanel = () => {
   const panel = $("todo-panel");
   if (!panel) return;
-  panel.classList.add("hidden");
-  panel.setAttribute("aria-hidden", "true");
+  setPanelVisibility(panel, false);
   state.flyouts.todo = false;
 };
 
@@ -1237,6 +1615,13 @@ const renderDatabaseTableSelect = () => {
   }
 };
 
+const updateDatabaseSearchPlaceholder = (tableName) => {
+  const input = $("db-search");
+  if (!input) return;
+  const label = tableName ? `Search ${tableName}...` : "Search current table...";
+  input.placeholder = label;
+};
+
 const getFilteredDatabaseRows = () => {
   const query = state.data.query.trim().toLowerCase();
   if (!query) return state.data.rows;
@@ -1348,6 +1733,7 @@ const loadDatabaseTable = async (tableId) => {
   state.data.rows = table.rows || [];
   state.data.selectedRowIds = new Set();
   renderDatabaseTableSelect();
+  updateDatabaseSearchPlaceholder(table.name);
   renderDatabaseTable();
 };
 
@@ -1375,8 +1761,9 @@ const loadDatabaseTables = async () => {
 const handleDatabaseDelete = async () => {
   if (!state.data.tableId || state.data.selectedRowIds.size === 0) return;
   const ids = Array.from(state.data.selectedRowIds);
+  let result = null;
   try {
-    await workflowApi.dbDeleteRows(state.data.tableId, ids);
+    result = await workflowApi.dbDeleteRows(state.data.tableId, ids);
   } catch (error) {
     await showMessageModal(
       "Delete Failed",
@@ -1384,9 +1771,44 @@ const handleDatabaseDelete = async () => {
     );
     return;
   }
+  if (result && result.ok === false) {
+    await showMessageModal("Delete Blocked", result.message || "Unable to delete rows.");
+    return;
+  }
   await loadDatabaseTables();
   if (["kanban_columns", "kanban_cards", "candidate_data"].includes(state.data.tableId)) {
     await loadKanban();
+  }
+};
+
+const handleDatabaseExport = async () => {
+  if (!state.data.tableId) return;
+  const visibleRows = getFilteredDatabaseRows();
+  const selectedRows = visibleRows.filter((row) => state.data.selectedRowIds.has(row.__rowId));
+  let rowsToExport = selectedRows.length ? selectedRows : visibleRows;
+  if (!rowsToExport.length) {
+    rowsToExport = state.data.rows;
+  }
+  if (!rowsToExport.length) {
+    await showMessageModal("Nothing to Export", "There are no rows to export for the current table.");
+    return;
+  }
+  const table = state.data.tables.find((item) => item.id === state.data.tableId);
+  try {
+    const result = await workflowApi.dbExportCsv({
+      tableId: state.data.tableId,
+      tableName: table ? table.name : state.data.tableId,
+      columns: state.data.columns,
+      rows: rowsToExport,
+    });
+    if (result && result.ok === false) {
+      await showMessageModal("Export Failed", result.message || "Unable to export CSV.");
+    }
+  } catch (error) {
+    await showMessageModal(
+      "Export Failed",
+      "Unable to export CSV. Please fully quit and relaunch the app."
+    );
   }
 };
 
@@ -1404,6 +1826,15 @@ const setupFlyoutDismiss = () => {
     if (state.flyouts.todo && todoPanel && todoButton) {
       if (!todoPanel.contains(event.target) && !todoButton.contains(event.target)) {
         closeTodoPanel();
+      }
+    }
+    const drawer = $("details-drawer");
+    if (state.kanban.detailsCardId && drawer) {
+      const isOnCard = event.target && event.target.closest
+        ? event.target.closest(".kanban-card")
+        : null;
+      if (!drawer.contains(event.target) && !isOnCard) {
+        closeDetailsDrawer();
       }
     }
   });
@@ -1459,6 +1890,13 @@ const setupEventListeners = () => {
   const piiForm = $("pii-form");
   const piiClose = $("pii-close");
   const piiCancel = $("pii-cancel");
+  const detailsClose = $("details-drawer-close");
+  const detailsProcess = $("details-process");
+  const processClose = $("process-close");
+  const processConfirm = $("process-confirm");
+  const processRemove = $("process-remove");
+  const processArrival = $("process-arrival");
+  const processDeparture = $("process-departure");
 
   if (addColumnHeader) addColumnHeader.addEventListener("click", openAddColumnModal);
   if (addColumnSettings) addColumnSettings.addEventListener("click", openAddColumnModal);
@@ -1472,6 +1910,15 @@ const setupEventListeners = () => {
   if (piiForm) piiForm.addEventListener("submit", handlePiiSubmit);
   if (piiClose) piiClose.addEventListener("click", closePiiModal);
   if (piiCancel) piiCancel.addEventListener("click", closePiiModal);
+  if (detailsClose) detailsClose.addEventListener("click", closeDetailsDrawer);
+  if (detailsProcess) detailsProcess.addEventListener("click", openProcessModal);
+  if (processClose) processClose.addEventListener("click", closeProcessModal);
+  if (processConfirm) processConfirm.addEventListener("click", handleProcessConfirm);
+  if (processRemove) processRemove.addEventListener("click", handleProcessRemove);
+  if (processArrival) processArrival.addEventListener("input", () => sanitizeTimeInput(processArrival));
+  if (processDeparture) {
+    processDeparture.addEventListener("input", () => sanitizeTimeInput(processDeparture));
+  }
 
   const weeklyButton = $("weekly-toggle");
   const weeklyClose = $("weekly-close");
@@ -1497,6 +1944,7 @@ const setupEventListeners = () => {
   if (changeForm) changeForm.addEventListener("submit", handleChangePasswordSubmit);
 
   const dbSearch = $("db-search");
+  const dbExport = $("db-export");
   const dbDelete = $("db-delete");
   const dbSelect = $("db-table-select");
   const dbTable = $("db-table");
@@ -1506,6 +1954,7 @@ const setupEventListeners = () => {
       renderDatabaseTable();
     });
   }
+  if (dbExport) dbExport.addEventListener("click", handleDatabaseExport);
   if (dbDelete) dbDelete.addEventListener("click", handleDatabaseDelete);
   if (dbSelect) {
     dbSelect.addEventListener("change", async () => {
@@ -1539,6 +1988,11 @@ const setupEventListeners = () => {
       }
     });
   }
+
+  window.addEventListener("resize", () => {
+    if (state.flyouts.weekly) positionFlyout($("weekly-panel"));
+    if (state.flyouts.todo) positionFlyout($("todo-panel"));
+  });
 
   document.querySelectorAll(".nav-item").forEach((button) => {
     button.addEventListener("click", () => switchPage(button.dataset.page));
