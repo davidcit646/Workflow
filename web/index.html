@@ -17,6 +17,18 @@
     <link rel="stylesheet" href="./overrides.css" />
   </head>
   <body>
+    <div class="titlebar">
+      <div class="titlebar__controls">
+        <button id="window-close" class="window-control window-control--close" type="button" aria-label="Close">×</button>
+        <button id="window-min" class="window-control window-control--min" type="button" aria-label="Minimize">–</button>
+        <button id="window-max" class="window-control window-control--max" type="button" aria-label="Maximize">□</button>
+      </div>
+      <div class="titlebar__brand">
+        <img class="titlebar__logo" src="./assets/app-icon.svg" alt="Workflow" />
+        <div class="titlebar__text">Workflow</div>
+      </div>
+      <div class="titlebar__spacer"></div>
+    </div>
     <div class="app">
       <aside class="sidebar">
         <div class="sidebar__brand">
@@ -89,7 +101,7 @@
               <button id="db-delete" class="button button--danger" type="button" disabled>Delete Selected</button>
             </div>
           </header>
-          <div class="page__body">
+          <div class="page__body settings-body">
             <div class="card">
               <div class="db-table-wrap">
                 <table id="db-table" class="data-table">

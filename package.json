@@ -3,12 +3,48 @@
   "version": "1.0.0",
   "description": "Workflow onboarding tracker",
   "main": "electron/main.js",
-  "author": "",
+  "author": {
+    "name": "David Citarelli",
+    "email": "davidcit646@gmail.com"
+  },
   "license": "MIT",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:linux": "electron-builder --linux",
+    "dist:win": "electron-builder --win"
   },
   "devDependencies": {
-    "electron": "^29.1.0"
+    "electron": "^40.2.1",
+    "electron-builder": "^26.7.0"
+  },
+  "build": {
+    "appId": "com.workflow.tracker",
+    "productName": "Workflow Tracker",
+    "asar": true,
+    "directories": {
+      "buildResources": "electron/assets",
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "web/**/*",
+      "assets/**/*",
+      "light_theme.json",
+      "main.js",
+      "preload.js",
+      "python_api.py",
+      "package.json"
+    ],
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Office"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "electron/assets/app-icon.ico"
+    }
   }
 }

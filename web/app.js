@@ -40,6 +40,32 @@ const workflowApi = window.workflowApi;
 
 const $ = (id) => document.getElementById(id);
 
+const initWindowControls = () => {
+  const body = document.body;
+  const platform = workflowApi && workflowApi.platform ? workflowApi.platform : "";
+  const platformClass =
+    platform === "darwin" ? "platform-mac" : platform === "win32" ? "platform-win" : "platform-linux";
+  body.classList.add(platformClass);
+
+  const controls = workflowApi && workflowApi.windowControls ? workflowApi.windowControls : null;
+  const closeBtn = $("window-close");
+  const minBtn = $("window-min");
+  const maxBtn = $("window-max");
+  if (!controls || !closeBtn || !minBtn || !maxBtn) return;
+
+  closeBtn.addEventListener("click", () => controls.close());
+  minBtn.addEventListener("click", () => controls.minimize());
+  maxBtn.addEventListener("click", () => controls.toggleMaximize());
+
+  const titlebar = document.querySelector(".titlebar");
+  if (titlebar) {
+    titlebar.addEventListener("dblclick", (event) => {
+      if ((event.target && event.target.closest(".window-control")) || !controls) return;
+      controls.toggleMaximize();
+    });
+  }
+};
+
 const positionFlyout = (panel) => {
   if (!panel) return;
   const header = document.querySelector(".page--active .topbar");
@@ -823,17 +849,16 @@ const handleProcessConfirm = async () => {
     return;
   }
 
-  if (result && result.card) {
+  if (result && result.cards) {
+    state.kanban.cards = result.cards;
+  } else if (result && result.card) {
     const idx = state.kanban.cards.findIndex((card) => card.uuid === result.card.uuid);
     if (idx >= 0) state.kanban.cards[idx] = result.card;
-  } else if (result && result.cards) {
-    state.kanban.cards = result.cards;
   }
 
   closeProcessModal();
-  await refreshDetailsRow(candidateId);
+  closeDetailsDrawer();
   renderKanbanBoard();
-  renderDetailsDrawer();
 };
 
 const handleProcessRemove = async () => {
@@ -2186,22 +2211,6 @@ const switchPage = (page) => {
 };
 
 const setupEventListeners = () => {
-  const sidebarToggle = $("sidebar-toggle");
-  if (sidebarToggle) {
-    sidebarToggle.addEventListener("click", () => {
-      const appEl = document.querySelector(".app");
-      const mini = document.querySelector(".sidebar__mini");
-      const isCollapsed = appEl.classList.toggle("app--sidebar-collapsed");
-      if (mini) {
-        mini.setAttribute("aria-hidden", isCollapsed ? "false" : "true");
-        mini.querySelectorAll(".nav-item--mini").forEach((btn) => {
-          if (isCollapsed) btn.removeAttribute("tabindex");
-          else btn.setAttribute("tabindex", "-1");
-        });
-      }
-    });
-  }
-
   const addColumnHeader = $("add-column-header");
   const addColumnSettings = $("settings-add-column");
   const removeColumnSettings = $("settings-remove-column");
@@ -2395,6 +2404,7 @@ const initApp = async () => {
     await showMessageModal("Error", "Electron preload is unavailable.");
     return;
   }
+  initWindowControls();
   initPasswordToggles();
   observeNewPasswordFields();
   setupEventListeners();

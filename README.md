@@ -17,3 +17,4 @@ Known bugs and TodoTh :
 Added:
 1. Pill to weekly tracker, that calculates hours after you save the week. This requires reopening the weekly tracker. I might change that to stay open. 
 2. Ability to search the database for entries. 
+3. Custom window title and borders.

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -13,6 +13,7 @@ const LAST_COLUMN_MESSAGE = 'Please remove candidate cards from the last remaini
 let authState = { configured: false, authenticated: false };
 let activePassword = null;
 let dbCache = null;
+let mainWindow = null;
 
 const ensureDir = (dirPath) => {
   try {
@@ -623,12 +624,15 @@ const jobIdName = (jobId, jobName) => {
 };
 
 const createWindow = () => {
-  const mainWindow = new BrowserWindow({
+  const isMac = process.platform === 'darwin';
+  mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     backgroundColor: '#f6f7fb',
     title: APP_NAME,
     icon: ICON_PATH,
+    frame: false,
+    autoHideMenuBar: !isMac,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -637,12 +641,56 @@ const createWindow = () => {
   });
 
   mainWindow.loadFile(path.join(__dirname, '..', 'web', 'index.html'));
+
+  mainWindow.on('maximize', () => {
+    if (mainWindow) mainWindow.webContents.send('window:maximized');
+  });
+  mainWindow.on('unmaximize', () => {
+    if (mainWindow) mainWindow.webContents.send('window:unmaximized');
+  });
 };
+
+ipcMain.handle('window:minimize', () => {
+  if (mainWindow) mainWindow.minimize();
+  return true;
+});
+
+ipcMain.handle('window:maximize', () => {
+  if (mainWindow && !mainWindow.isMaximized()) mainWindow.maximize();
+  return true;
+});
+
+ipcMain.handle('window:unmaximize', () => {
+  if (mainWindow && mainWindow.isMaximized()) mainWindow.unmaximize();
+  return true;
+});
+
+ipcMain.handle('window:toggleMaximize', () => {
+  if (!mainWindow) return false;
+  if (mainWindow.isMaximized()) {
+    mainWindow.unmaximize();
+    return false;
+  }
+  mainWindow.maximize();
+  return true;
+});
+
+ipcMain.handle('window:isMaximized', () => {
+  return mainWindow ? mainWindow.isMaximized() : false;
+});
+
+ipcMain.handle('window:close', () => {
+  if (mainWindow) mainWindow.close();
+  return true;
+});
 
 app.whenReady().then(() => {
   ensureAuthState();
   if (process.platform === 'win32') {
     app.setAppUserModelId(APP_NAME);
+  }
+  if (process.platform !== 'darwin') {
+    Menu.setApplicationMenu(null);
   }
   createWindow();
 
@@ -899,9 +947,10 @@ ipcMain.handle('kanban:processCandidate', (_event, { candidateId, arrival, depar
   SENSITIVE_PII_FIELDS.forEach((field) => { row[field] = ''; });
   SENSITIVE_CARD_FIELDS.forEach((field) => { card[field] = ''; });
   card.updated_at = new Date().toISOString();
+  db.kanban.cards = db.kanban.cards.filter((c) => c.uuid !== candidateId);
 
   saveDb(db);
-  return { ok: true, card };
+  return { ok: true, cards: db.kanban.cards };
 });
 
 ipcMain.handle('kanban:removeCandidate', (_event, candidateId) => {

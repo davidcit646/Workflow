@@ -282,7 +282,139 @@ body {
   background-color: var(--bg);
   color: var(--text);
   height: 100vh;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
+}
+
+.titlebar {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--outline);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.titlebar__controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  -webkit-app-region: drag;
+}
+
+.titlebar__logo {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  box-shadow: 0 6px 12px rgba(16, 24, 40, 0.16);
+}
+
+.titlebar__spacer {
+  flex: 1;
+}
+
+.window-control {
+  width: 36px;
+  height: 28px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  -webkit-app-region: no-drag;
+}
+
+.window-control:hover {
+  background: var(--panel-strong);
+}
+
+.window-control--close:hover {
+  background: #e85c5c;
+  color: #fff;
+}
+
+.platform-mac .titlebar__controls {
+  order: 1;
+}
+
+.platform-mac .titlebar__brand {
+  order: 2;
+}
+
+.platform-mac .titlebar__spacer {
+  order: 3;
+}
+
+.platform-mac .window-control {
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 0;
+}
+
+.platform-mac .window-control--close {
+  background: #ff5f57;
+}
+
+.platform-mac .window-control--min {
+  background: #febc2e;
+}
+
+.platform-mac .window-control--max {
+  background: #28c840;
+}
+
+.platform-mac .window-control:hover {
+  filter: brightness(0.95);
+}
+
+.platform-win .titlebar__controls,
+.platform-linux .titlebar__controls {
+  order: 3;
+  margin-left: auto;
+}
+
+.platform-win .titlebar__brand,
+.platform-linux .titlebar__brand {
+  order: 1;
+}
+
+.platform-win .titlebar__spacer,
+.platform-linux .titlebar__spacer {
+  order: 2;
+}
+
+.platform-win .window-control--min,
+.platform-linux .window-control--min {
+  order: 1;
+}
+
+.platform-win .window-control--max,
+.platform-linux .window-control--max {
+  order: 2;
+}
+
+.platform-win .window-control--close,
+.platform-linux .window-control--close {
+  order: 3;
 }
 
 .hidden {
@@ -294,22 +426,12 @@ body {
   grid-template-columns: 240px 1fr;
   gap: 24px;
   height: 100%;
+  flex: 1;
   padding: 24px;
   transition: grid-template-columns 350ms cubic-bezier(0.4, 0, 0.2, 1),
     gap 350ms cubic-bezier(0.4, 0, 0.2, 1),
     padding 350ms cubic-bezier(0.4, 0, 0.2, 1);
   overflow: hidden;
-}
-
-/* When the sidebar is collapsed, shrink its grid column so the main area expands. */
-.app--sidebar-collapsed {
-  grid-template-columns: 88px 1fr;
-}
-
-/* Tighten sidebar padding in collapsed mode */
-.app--sidebar-collapsed .sidebar {
-  padding-left: 12px;
-  padding-right: 12px;
 }
 
 .sidebar {
@@ -1365,25 +1487,54 @@ body {
   display: grid;
   gap: 18px;
   height: 100%;
-  overflow-y: auto;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.settings-body {
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  gap: 16px;
+}
+
+#page-settings .card {
+  padding: 18px 20px;
+  border-radius: 18px;
+}
+
+#page-settings h3 {
+  font-size: 16px;
+  margin-bottom: 10px;
+}
+
+.setting-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: center;
+}
+
+.setting-row .muted {
+  font-size: 12px;
 }
 
 .kanban-settings {
   display: grid;
-  grid-template-columns: 1.4fr 1fr;
+  grid-template-columns: minmax(0, 1.5fr) minmax(220px, 0.8fr);
   gap: 18px;
   align-items: start;
 }
 
 .kanban-settings__list {
-  background: var(--panel-strong);
-  border: 1px dashed var(--outline);
-  border-radius: 16px;
-  padding: 16px;
-  min-height: 120px;
+  background: #f8faff;
+  border: 1px solid var(--outline);
+  border-radius: 14px;
+  padding: 12px;
+  min-height: 96px;
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
   align-content: flex-start;
 }
 
@@ -1391,9 +1542,9 @@ body {
   border: 1px solid var(--outline);
   background: #ffffff;
   color: var(--text);
-  padding: 8px 12px;
+  padding: 6px 10px;
   border-radius: 999px;
-  font-size: 13px;
+  font-size: 12px;
   cursor: pointer;
   transition: background 0.2s ease, color 0.2s ease, border 0.2s ease;
 }
@@ -1407,6 +1558,11 @@ body {
 .kanban-settings__actions {
   display: grid;
   gap: 12px;
+  align-content: start;
+}
+
+#page-settings .kanban-settings__actions .button {
+  width: 100%;
 }
 
 .modal__body--single {
@@ -1565,55 +1721,6 @@ body {
     text-align: left;
   }
 }
-
-/* Sidebar collapsed state */
-.app--sidebar-collapsed .sidebar__brand>div {
-  display: none;
-}
-
-.app--sidebar-collapsed .sidebar__nav,
-.app--sidebar-collapsed .sidebar__section,
-.app--sidebar-collapsed .sidebar__footer {
-  display: none;
-}
-
-.app--sidebar-collapsed .brand__logo {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-}
-
-/* Sidebar mini buttons */
-.sidebar__mini {
-  display: none;
-}
-
-.app--sidebar-collapsed .sidebar__mini {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin-top: 18px;
-  align-items: center;
-}
-
-.nav-item--mini {
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  background: var(--panel-strong);
-  display: grid;
-  place-items: center;
-  border: none;
-  color: var(--text);
-  cursor: pointer;
-  font-size: 18px;
-}
-
-.nav-item--mini.nav-item--active {
-  box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.25);
-  background: rgba(26, 115, 232, 0.08);
-}
-
 
 @media (max-width: 900px) {
   .app {

@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('workflowApi', {
+  platform: process.platform,
   authStatus: () => ipcRenderer.invoke('auth:status'),
   authSetup: (password) => ipcRenderer.invoke('auth:setup', password),
   authLogin: (password) => ipcRenderer.invoke('auth:login', password),
@@ -29,4 +30,15 @@ contextBridge.exposeInMainWorld('workflowApi', {
 
   piiGet: (candidateId) => ipcRenderer.invoke('candidate:getPII', candidateId),
   piiSave: (candidateId, data) => ipcRenderer.invoke('candidate:savePII', { candidateId, data }),
+
+  windowControls: {
+    minimize: () => ipcRenderer.invoke('window:minimize'),
+    maximize: () => ipcRenderer.invoke('window:maximize'),
+    unmaximize: () => ipcRenderer.invoke('window:unmaximize'),
+    toggleMaximize: () => ipcRenderer.invoke('window:toggleMaximize'),
+    close: () => ipcRenderer.invoke('window:close'),
+    isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
+    onMaximized: (callback) => ipcRenderer.on('window:maximized', () => callback()),
+    onUnmaximized: (callback) => ipcRenderer.on('window:unmaximized', () => callback()),
+  },
 });
