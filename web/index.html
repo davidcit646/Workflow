@@ -3,11 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Workflow Web</title>
+    <title>Workflow</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="./styles.css" />
@@ -25,22 +25,18 @@
           </div>
         </div>
         <nav class="sidebar__nav">
-          <button class="nav-item nav-item--active" data-page="dashboard">Onboarding Dashboard</button>
-          <button id="weekly-tracker" class="nav-item" data-page="weekly">Weekly Tracker</button>
-          <button id="todo-tracker" class="nav-item" data-page="todo">To Do List</button>
-          <button class="nav-item" data-page="archives">Your onboarding database</button>
+          <button class="nav-item nav-item--active" data-page="dashboard">Dashboard</button>
+          <button class="nav-item" data-page="database">Database</button>
         </nav>
 
         <div class="sidebar__mini" aria-hidden="true">
-          <button class="nav-item nav-item--mini" data-page="dashboard" title="Onboarding Dashboard" tabindex="-1">DB</button>
-          <button id="weekly-tracker-mini" class="nav-item nav-item--mini" data-page="weekly" title="Weekly Tracker" tabindex="-1">WK</button>
-          <button id="todo-tracker-mini" class="nav-item nav-item--mini" data-page="todo" title="To Do List" tabindex="-1">TD</button>
-          <button class="nav-item nav-item--mini" data-page="archives" title="Your onboarding database" tabindex="-1">DB</button>
-          <button class="nav-item nav-item--mini" data-page="settings" title="Settings" tabindex="-1">ST</button>
+          <button class="nav-item nav-item--mini" data-page="dashboard" title="Dashboard" tabindex="-1">D</button>
+          <button class="nav-item nav-item--mini" data-page="database" title="Database" tabindex="-1">DB</button>
+          <button class="nav-item nav-item--mini" data-page="settings" title="Settings" tabindex="-1">⚙️</button>
         </div>
         <div class="sidebar__spacer"></div>
         <div class="sidebar__footer">
-          <button id="settings-button" class="nav-item" data-page="settings">Settings</button>
+          <button id="settings-button" class="nav-item" data-page="settings">⚙️ Settings</button>
         </div>
       </aside>
 
@@ -48,93 +44,67 @@
         <section id="page-dashboard" class="page page--active">
           <header class="topbar">
             <div>
-              <div class="topbar__title">Onboarding Dashboard</div>
-              <div class="topbar__subtitle">Keep the team moving with live status cards.</div>
+              <div class="topbar__title">Dashboard</div>
+              <div class="topbar__subtitle">Move candidates through onboarding with a simple Kanban flow.</div>
             </div>
             <div class="topbar__actions">
-              <div class="search">
-                <span class="search__icon">⌕</span>
-                <input id="search-input" type="text" placeholder="Search" />
-              </div>
-              <select id="branch-filter" class="select">
-                <option value="">All branches</option>
-              </select>
-              <button class="button button--ghost">Filters</button>
-              <button id="add-candidate" class="button button--primary">Add Candidate</button>
+              <button id="weekly-toggle" class="button button--primary">Weekly Tracker</button>
+              <button id="todo-toggle" class="button button--primary">Todo List</button>
+              <button id="add-column-header" class="button button--primary">Add Column</button>
             </div>
           </header>
 
-          <section class="board">
-            <div class="board__column" data-column="not-scheduled">
-              <div class="column__header">
-                <div>
-                  <div class="column__title">Not Scheduled</div>
-                  <div class="column__subtitle">High priority candidates with open items.</div>
-                </div>
-              </div>
-              <div class="column__list" id="not-scheduled"></div>
+          <section class="kanban">
+            <div id="kanban-empty" class="kanban-empty">
+              No columns yet. Add your first Kanban column to get started.
             </div>
-
-            <div class="board__column" data-column="neo-scheduled">
-              <div class="column__header">
-                <div>
-                  <div class="column__title">NEO Scheduled</div>
-                  <div class="column__subtitle">Orientation scheduled but pending clearance.</div>
+            <div id="kanban-layout" class="kanban__layout">
+              <div id="kanban-board" class="kanban__board"></div>
+              <aside id="details-drawer" class="details-drawer hidden" aria-hidden="true">
+                <div class="details-drawer__header">
+                  <div class="details-drawer__title" id="details-drawer-name">Candidate</div>
+                  <div class="details-drawer__meta">
+                    <div class="details-drawer__pill hidden" id="details-drawer-scheduled">Neo Scheduled Date</div>
+                  </div>
+                  <button id="details-drawer-close" class="icon-button" aria-label="Close details drawer">✕</button>
                 </div>
-              </div>
-              <div class="column__list" id="neo-scheduled"></div>
-            </div>
-
-            <div class="board__column" data-column="in-progress">
-              <div class="column__header">
-                <div>
-                  <div class="column__title">Onboarding · In Progress</div>
-                  <div class="column__subtitle">Action items are underway.</div>
+                <div class="details-drawer__body" id="details-drawer-body"></div>
+                <div class="details-drawer__footer">
+                  <button id="details-process" class="button button--primary button--full" type="button">Process Candidate</button>
                 </div>
-              </div>
-              <div class="column__list" id="in-progress"></div>
+              </aside>
             </div>
           </section>
         </section>
 
-        <section id="page-archives" class="page">
+        <section id="page-database" class="page">
           <header class="topbar">
             <div>
-              <div class="topbar__title">Your onboarding database</div>
-              <div class="topbar__subtitle">View and export temporary and long-term storage tables.</div>
+              <div class="topbar__title">Database</div>
+              <div class="topbar__subtitle">View and manage stored onboarding data.</div>
             </div>
-            <div class="topbar__actions">
-              <select id="table-selector" class="select">
-                <option value="">Select table to view</option>
-                <option value="temporary">Temporary Storage (Active Onboarding)</option>
-                <option value="longterm">Long-term Storage (Archives)</option>
-              </select>
-              <button id="export-csv" class="button button--primary">Export Table to CSV</button>
+            <div class="topbar__actions topbar__actions--db">
+              <select id="db-table-select" class="select db-table-select" aria-label="Table"></select>
+              <div class="search search--db">
+                <input id="db-search" type="text" placeholder="Search current table..." autocomplete="off" />
+              </div>
+              <button id="db-export" class="button button--ghost" type="button">Export CSV</button>
+              <button id="db-delete" class="button button--danger" type="button" disabled>Delete Selected</button>
             </div>
           </header>
-
-          <section class="board">
-            <div class="board__column board__column--full" data-column="database-view">
-              <div class="column__header">
-                <div>
-                  <div class="column__title" id="table-title">Select a table to view</div>
-                  <div class="column__subtitle" id="table-subtitle">Choose temporary or long-term storage from the dropdown above.</div>
-                </div>
+          <div class="page__body">
+            <div class="card">
+              <div class="db-controls">
+                <div id="db-table-meta" class="muted"></div>
               </div>
-              <div class="column__list">
-                <div id="csv-viewer-container" class="csv-viewer">
-                  <div id="csv-placeholder" class="csv-placeholder">
-                    <div class="csv-placeholder__icon">📊</div>
-                    <div class="csv-placeholder__title">No table selected</div>
-                    <div class="csv-placeholder__subtitle">Select a table from the dropdown to view its contents in a spreadsheet format.</div>
-                  </div>
-                  <div id="csv-viewer" class="csv-table-container hidden">
-                    <!-- CSV table will be rendered here -->
-                  </div>
-                </div>
+              <div class="db-table-wrap">
+                <table id="db-table" class="data-table">
+                  <thead></thead>
+                  <tbody></tbody>
+                </table>
               </div>
             </div>
-          </section>
+          </div>
         </section>
 
         <section id="page-settings" class="page">
@@ -146,15 +116,17 @@
           </header>
           <div class="page__body">
             <div class="card">
-              <h3>Appearance</h3>
-              <div class="field">
-                <label>Theme</label>
-                <div class="setting-row">
-                  <button id="theme-toggle" class="button button--ghost" type="button">Light mode</button>
-                  <div class="muted">Toggle between light and dark modes. Preference is saved.</div>
+              <h3>Kanban Columns</h3>
+              <div class="kanban-settings">
+                <div class="kanban-settings__list" id="kanban-columns-list"></div>
+                <div class="kanban-settings__actions">
+                  <button id="settings-add-column" class="button button--primary" type="button">Add Kanban Column</button>
+                  <button id="settings-remove-column" class="button button--danger" type="button" disabled>Remove KanBan Column</button>
+                  <div class="muted">Select a column to remove.</div>
                 </div>
               </div>
-            </div>            <div class="card">
+            </div>
+            <div class="card">
               <h3>Security</h3>
               <div class="field">
                 <label>Program Password</label>
@@ -163,269 +135,48 @@
                   <div class="muted">Change the program password. Current password required.</div>
                 </div>
               </div>
-            </div>          </div>
+            </div>
+          </div>
         </section>
-
-        <!-- Edit Candidate Modal -->
-        <div id="edit-modal" class="modal hidden">
-          <div class="modal__overlay"></div>
-          <div class="modal__container modal__container--wide">
-            <div class="modal__header">
-              <div class="modal__title">
-                <h2 id="modal-title">Edit Candidate</h2>
-                <p id="modal-subtitle">Update candidate information</p>
-              </div>
-              <button class="modal__close" id="modal-close" aria-label="Close modal">✕</button>
-            </div>
-            
-            <div class="modal__body">
-              <form id="candidate-form" class="modal__form">
-                <!-- Quick Info Banner -->
-                <div class="modal__quick-info">
-                  <div class="quick-info-group">
-                    <label>Candidate Name:</label>
-                    <input id="edit-name" form="candidate-form" name="Name" placeholder="Candidate name" class="modal__quick-input modal__quick-input--name" />
-                  </div>
-                  <div class="quick-info-group">
-                    <label>ICIMS ID:</label>
-                    <input id="edit-icims" form="candidate-form" name="ICIMS ID" placeholder="ICIMS ID" class="modal__quick-input modal__quick-input--narrow" />
-                  </div>
-                  <div class="quick-info-group">
-                    <label>Employee ID:</label>
-                    <input id="edit-employee-id" form="candidate-form" name="Employee ID" placeholder="Employee #" class="modal__quick-input modal__quick-input--narrow" />
-                  </div>
-                  <div class="quick-info-group">
-                    <label>NEO Scheduled Date:</label>
-                    <input id="edit-neo-date" form="candidate-form" name="NEO Scheduled Date" type="date" class="modal__quick-input modal__quick-input--date" />
-                  </div>
-                </div>
-                
-                <!-- Dashboard-style 3 Column Board -->
-                <div class="modal__board">
-                  <!-- Column 1: Pre NEO -->
-                  <div class="modal__column" data-column="pre-neo">
-                    <div class="modal__column-header">
-                      <div class="modal__column-title">Pre NEO</div>
-                      <div class="modal__column-subtitle">Candidate basics & contact info</div>
-                    </div>
-                    <div class="modal__column-content" id="column-pre-neo">
-                      <!-- Job Info Card -->
-                      <div class="modal__card">
-                        <div class="modal__card-header">Job Information</div>
-                        <div class="modal__card-body" id="card-job"></div>
-                      </div>
-                      <!-- Contact Info Card -->
-                      <div class="modal__card">
-                        <div class="modal__card-header">Contact Information</div>
-                        <div class="modal__card-body" id="card-contact"></div>
-                      </div>
-                      <!-- Background Check Card -->
-                      <div class="modal__card">
-                        <div class="modal__card-header">Background Check</div>
-                        <div class="modal__card-body" id="card-background"></div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <!-- Column 2: At NEO -->
-                  <div class="modal__column" data-column="at-neo">
-                    <div class="modal__column-header">
-                      <div class="modal__column-title">At NEO</div>
-                      <div class="modal__column-subtitle">Job details & emergency contact</div>
-                    </div>
-                    <div class="modal__column-content" id="column-at-neo">
-                      <!-- Identification Card -->
-                      <div class="modal__card">
-                        <div class="modal__card-header">Identification</div>
-                        <div class="modal__card-body" id="card-id"></div>
-                      </div>
-                      <!-- Emergency Contact Card -->
-                      <div class="modal__card">
-                        <div class="modal__card-header">Emergency Contact</div>
-                        <div class="modal__card-body" id="card-emergency"></div>
-                      </div>
-                      <!-- ike thatDirect Deposit Card -->
-                      <div class="modal__card">
-                        <div class="modal__card-header">Direct Deposit</div>
-                        <div class="modal__card-body" id="card-direct-deposit"></div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <!-- Column 3: Post NEO -->
-                  <div class="modal__column" data-column="post-neo">
-                    <div class="modal__column-header">
-                      <div class="modal__column-title">Post NEO</div>
-                      <div class="modal__column-subtitle">Background & licensing status</div>
-                    </div>
-                    <div class="modal__column-content" id="column-post-neo">
-                      <!-- Uniforms Card -->
-                      <div class="modal__card">
-                        <div class="modal__card-header">Uniforms</div>
-                        <div class="modal__card-body" id="card-post-neo"></div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <!-- Column 4: Additional Info -->
-                  <div class="modal__column" data-column="additional-info">
-                    <div class="modal__column-header">
-                      <div class="modal__column-title">Additional Info</div>
-                      <div class="modal__column-subtitle">Notes & miscellaneous</div>
-                    </div>
-                    <div class="modal__column-content" id="column-additional-info">
-                      <!-- Notes Card -->
-                      <div class="modal__card">
-                        <div class="modal__card-header">Notes</div>
-                        <div class="modal__card-body" id="card-notes"></div>
-                      </div>
-                      <!-- Clearance and State Licenses Card -->
-                      <div class="modal__card">
-                        <div class="modal__card-header">Clearance and State Licenses</div>
-                        <div class="modal__card-body" id="card-additional"></div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </form>
-            </div>
-            
-            <div class="modal__footer">
-              <button id="edit-cancel" class="button button--ghost" type="button">Cancel</button>
-              <button id="save-candidate" class="button button--primary" type="submit" form="candidate-form">Save Candidate</button>
-            </div>
-          </div>
-        </div>
       </main>
-
-      <aside class="details details--hidden" id="details-panel">
-        <div class="details__card">
-          <div class="details__header">
-            <div>
-              <div class="details__title" id="details-title">Candidate Details</div>
-              <div class="details__subtitle" id="details-subtitle"></div>
-            </div>
-            <span id="details-status" class="badge badge--warning"></span>
-          </div>
-          <div class="details__body" id="details-body"></div>
-          <div class="details__notes" id="details-notes"></div>
-          <div class="details__actions">
-            <button id="details-archive" class="button button--ghost">Archive Candidate</button>
-            <button id="details-remove" class="button button--danger">Remove Candidate</button>
-            <button id="details-edit" class="button button--primary button--full">Edit candidate details</button>
-          </div>
-        </div>
-      </aside>
-
-      <aside class="details details--hidden" id="weekly-panel">
-        <div class="details__card">
-          <div class="details__header">
-            <div>
-              <div class="details__title">Weekly Tracker</div>
-              <div class="details__subtitle" id="weekly-panel-range"></div>
-            </div>
-            <button id="weekly-panel-close" class="icon-button" aria-label="Close weekly tracker">✕</button>
-          </div>
-          <div class="details__body" id="weekly-panel-body"></div>
-          <div class="details__actions">
-            <button id="weekly-panel-export" class="button button--ghost button--full" type="button">Export Summary</button>
-            <button id="weekly-panel-save" class="button button--primary button--full">Save Week</button>
-          </div>
-        </div>
-      </aside>
-
-      <aside class="details details--hidden" id="todo-panel">
-        <div class="details__card">
-          <div class="details__header">
-            <div>
-              <div class="details__title">To Do List</div>
-              <div class="details__subtitle">Tasks are saved immediately</div>
-            </div>
-          </div>
-          <div class="details__body" id="todo-panel-body">
-            <div class="todo__input-row">
-              <input id="todo-input" type="text" placeholder="Add a new task..." class="todo__input" />
-              <button id="todo-add" class="button button--primary">Add</button>
-            </div>
-            <ul id="todo-list" class="todo__list"></ul>
-          </div>
-        </div>
-      </aside>
     </div>
 
-    <div id="archive-modal" class="modal hidden">
-      <div class="modal__card modal__card--small">
-        <div class="modal__header">
-          <h2>Archive Candidate</h2>
-          <button id="archive-close" class="icon-button">✕</button>
+    <aside id="weekly-panel" class="flyout hidden" aria-hidden="true">
+      <div class="flyout__header">
+        <div>
+          <div class="flyout__title">Weekly Tracker</div>
+          <div class="flyout__subtitle" id="weekly-range"></div>
         </div>
-        <form id="archive-form" class="modal__body modal__body--single">
-          <div class="field">
-            <label>NEO Start Time</label>
-            <input id="archive-start" type="text" placeholder="08:00" />
-          </div>
-          <div class="field">
-            <label>NEO End Time</label>
-            <input id="archive-end" type="text" placeholder="17:00" />
-          </div>
-        </form>
-        <div class="modal__footer">
-          <button id="archive-cancel" class="button button--ghost" type="button">Cancel</button>
-          <button id="archive-confirm" class="button button--primary" type="submit" form="archive-form">Archive</button>
+        <button id="weekly-close" class="icon-button" aria-label="Close weekly tracker">✕</button>
+      </div>
+      <form id="weekly-form" class="flyout__body weekly__body"></form>
+      <div class="flyout__footer">
+        <button id="weekly-export" class="button button--ghost" type="button">Export Summary</button>
+        <div class="flyout__actions">
+          <button id="weekly-cancel" class="button button--ghost" type="button">Close</button>
+          <button id="weekly-save" class="button button--primary" type="submit" form="weekly-form">Save Week</button>
         </div>
       </div>
-    </div>
+    </aside>
 
-    <!-- Archive Password Prompt (used when loading or viewing archive files) -->
-    <div id="archive-password-modal" class="modal hidden">
-      <div class="modal__card modal__card--small">
-        <div class="modal__header">
-          <h2>Archive Password</h2>
-          <button id="archive-password-close" class="icon-button">✕</button>
+    <aside id="todo-panel" class="flyout hidden" aria-hidden="true">
+      <div class="flyout__header">
+        <div>
+          <div class="flyout__title">Todo List</div>
+          <div class="flyout__subtitle">Track onboarding tasks and roll them into the weekly tracker.</div>
         </div>
-        <form id="archive-password-form" class="modal__body modal__body--single" autocomplete="off">
-          <div class="field">
-            <label>Archive password</label>
-            <input id="archive-prompt-password" type="password" required />
-          </div>
-          <div class="muted" id="archive-password-note">Password will be cached for 10 minutes after entry.</div>
-        </form>
-        <div class="modal__footer">
-          <div class="modal__actions">
-            <button id="archive-password-cancel" class="button button--ghost" type="button">Cancel</button>
-            <button id="archive-password-submit" class="button button--primary" type="submit" form="archive-password-form">Continue</button>
-          </div>
-        </div>
+        <button id="todo-close" class="icon-button" aria-label="Close todo list">✕</button>
       </div>
-    </div>
-
-    <!-- Archive Delete Confirm (asks for program password before deleting) -->
-    <div id="archive-delete-modal" class="modal hidden">
-      <div class="modal__card modal__card--small">
-        <div class="modal__header">
-          <h2>Delete Archive</h2>
-          <button id="archive-delete-close" class="icon-button">✕</button>
-        </div>
-        <form id="archive-delete-form" class="modal__body modal__body--single" autocomplete="off">
-          <div class="field">
-            <p id="archive-delete-message">This will permanently delete the selected archive. This action cannot be undone.</p>
-          </div>
-          <div class="field">
-            <label>Enter your program password to confirm</label>
-            <input id="archive-delete-password" type="password" required />
-          </div>
+      <div class="flyout__body">
+        <form id="todo-form" class="todo-panel__form">
+          <input id="todo-input" type="text" placeholder="Add a todo..." autocomplete="off" />
+          <button id="todo-add" class="button button--primary" type="submit">Add</button>
         </form>
-        <div class="modal__footer">
-          <div class="modal__actions">
-            <button id="archive-delete-cancel" class="button button--ghost" type="button">Cancel</button>
-            <button id="archive-delete-confirm" class="button button--danger" type="submit" form="archive-delete-form">Delete</button>
-          </div>
-        </div>
+        <ul id="todo-list" class="todo-panel__list"></ul>
       </div>
-    </div>
+    </aside>
 
-    <!-- Action Result Modal -->
-    <div id="action-result-modal" class="modal hidden">
+    <div id="action-result-modal" class="modal modal--alert hidden">
       <div class="modal__card modal__card--small">
         <div class="modal__header">
           <h2 id="action-result-title"></h2>
@@ -436,28 +187,6 @@
         </div>
         <div class="modal__footer">
           <button id="action-result-ok" class="button button--primary" type="button">OK</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Archive Password Prompt (used when loading or viewing archive files) -->
-    <div id="archive-password-modal" class="modal hidden">
-      <div class="modal__card modal__card--small">
-        <div class="modal__header">
-          <h2>Archive Password</h2>
-          <button id="archive-password-close" class="icon-button">✕</button>
-        </div>
-        <form id="archive-password-form" class="modal__body modal__body--single" autocomplete="off">
-          <div class="field">
-            <label>Archive password</label>
-            <input id="archive-prompt-password" type="password" required />
-          </div>
-        </form>
-        <div class="modal__footer">
-          <div class="modal__actions">
-            <button id="archive-password-cancel" class="button button--ghost" type="button">Cancel</button>
-            <button id="archive-password-submit" class="button button--primary" type="submit" form="archive-password-form">Continue</button>
-          </div>
         </div>
       </div>
     </div>
@@ -506,26 +235,202 @@
       </div>
     </div>
 
-    <!-- NEO action modal -->
-    <div id="neo-modal" class="modal hidden">
+    <div id="add-column-modal" class="modal hidden">
       <div class="modal__card modal__card--small">
         <div class="modal__header">
-          <h2>NEO Actions</h2>
-          <button id="neo-close" class="icon-button">✕</button>
+          <h2>Add Kanban Column</h2>
+          <button id="add-column-close" class="icon-button">✕</button>
         </div>
-        <div class="modal__body modal__body--single">
-          <p>Candidate: <strong class="neo-name" id="neo-name">Name</strong></p>
-          <p>NEO Date: <span id="neo-date">—</span></p>
-          <p>Choose an action:</p>
-          <div style="display:flex; gap:8px; margin-top:8px;">
-            <button id="neo-move" class="button button--primary">Move to Onboarding in Progress</button>
-            <button id="neo-remove" class="button button--danger">Remove Candidate</button>
-            <button id="neo-cancel" class="button button--ghost">Cancel</button>
+        <form id="add-column-form" class="modal__body modal__body--single" autocomplete="off">
+          <div class="field">
+            <input id="add-column-name" type="text" placeholder="Column Name" required />
+          </div>
+        </form>
+        <div class="modal__footer">
+          <div class="modal__actions">
+            <button id="add-column-cancel" class="button button--danger" type="button">Cancel</button>
+            <button id="add-column-submit" class="button button--primary" type="submit" form="add-column-form">Add Column</button>
           </div>
         </div>
       </div>
     </div>
 
-    <script src="./app.js"></script>
+    <div id="candidate-modal" class="modal hidden">
+      <div class="modal__card modal__card--wide">
+        <div class="modal__header modal__header--candidate">
+          <div class="modal__title-group">
+            <h2 id="candidate-modal-title">Add Candidate</h2>
+            <div class="modal__subtitle" id="candidate-modal-subtitle"></div>
+          </div>
+          <input id="candidate-name" type="text" placeholder="Candidate Name" autocomplete="off" form="candidate-form" />
+          <button id="candidate-close" class="icon-button">✕</button>
+        </div>
+        <form id="candidate-form" class="modal__body modal__body--candidate" autocomplete="off">
+          <div class="modal__section">
+            <input id="candidate-icims" type="text" inputmode="numeric" maxlength="12" placeholder="ICIMS ID" />
+            <input id="candidate-employee" type="text" inputmode="numeric" maxlength="12" placeholder="Employee ID" />
+          </div>
+          <div class="modal__section modal__section--full">
+            <div class="modal__section-title">Contact Info</div>
+            <input id="candidate-phone" type="text" placeholder="Phone Number" inputmode="numeric" />
+            <input id="candidate-email" type="email" placeholder="Email" />
+          </div>
+          <div class="modal__section">
+            <input id="candidate-job-id" type="text" placeholder="Job ID" />
+            <input id="candidate-job-name" type="text" placeholder="Job Name" />
+            <input id="candidate-job-location" type="text" placeholder="Location" />
+            <input id="candidate-manager" type="text" placeholder="Manager" />
+            <select id="candidate-branch">
+              <option value="">Branch</option>
+              <option value="Salem">Salem</option>
+              <option value="Portland">Portland</option>
+              <option value="Other">Other</option>
+            </select>
+            <input id="candidate-branch-other" type="text" placeholder="Other Branch" class="hidden" />
+          </div>
+        </form>
+        <div class="modal__footer">
+          <div class="modal__actions">
+            <button id="candidate-cancel" class="button button--danger" type="button">Cancel</button>
+            <button id="candidate-submit" class="button button--primary" type="submit" form="candidate-form">Add Candidate</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="pii-modal" class="modal hidden">
+      <div class="modal__card modal__card--wide">
+        <div class="modal__header">
+          <h2 id="pii-modal-title">Candidate's Personal Information</h2>
+          <button id="pii-close" class="icon-button">✕</button>
+        </div>
+        <form id="pii-form" class="modal__body modal__body--pii" autocomplete="off">
+          <div class="pii-grid">
+            <div class="pii-column">
+              <div class="pii-column__title">Pre Neo</div>
+              <div class="pii-card">
+                <div class="pii-card__title">Background</div>
+                <select id="pii-background-provider">
+                  <option value="">Background Provider</option>
+                  <option value="Sterling">Sterling</option>
+                  <option value="Sterling With MVR">Sterling With MVR</option>
+                  <option value="Accurate">Accurate</option>
+                  <option value="Accurate with MVR">Accurate with MVR</option>
+                </select>
+                <input id="pii-background-date" type="text" placeholder="Cleared Date" inputmode="numeric" class="hidden" />
+                <input id="pii-background-mvr" type="hidden" value="1" />
+              </div>
+              <div class="pii-card">
+                <div class="pii-card__title">State Licensing</div>
+                <select id="pii-license-type">
+                  <option value="">License Type</option>
+                  <option value="MA CORI">Massachusetts CORI</option>
+                  <option value="NH GC">New Hampshire Guard Card</option>
+                  <option value="ME GC">Maine Guard Card</option>
+                </select>
+                <div id="pii-license-ma" class="pii-license-section hidden">
+                  <select id="pii-cori-status">
+                    <option value="">CORI Status</option>
+                    <option value="Required">Required</option>
+                    <option value="Submitted">Submitted</option>
+                    <option value="Cleared">Cleared</option>
+                  </select>
+                  <input id="pii-cori-date" type="text" placeholder="CORI Date" inputmode="numeric" />
+                </div>
+                <div id="pii-license-nh" class="pii-license-section hidden">
+                  <select id="pii-nh-status">
+                    <option value="">NH Status</option>
+                    <option value="Required">Required</option>
+                    <option value="Submitted">Submitted</option>
+                    <option value="Cleared">Cleared</option>
+                  </select>
+                  <input id="pii-nh-expiration" type="text" placeholder="NH Expiration Date" inputmode="numeric" />
+                  <input id="pii-nh-id" type="text" placeholder="NH GC ID Number" inputmode="numeric" />
+                </div>
+                <div id="pii-license-me" class="pii-license-section hidden">
+                  <select id="pii-me-status">
+                    <option value="">ME Status</option>
+                    <option value="Required">Required</option>
+                    <option value="Submitted">Submitted</option>
+                    <option value="Cleared">Cleared</option>
+                  </select>
+                  <input id="pii-me-expiration" type="text" placeholder="ME Expiration Date" inputmode="numeric" />
+                </div>
+              </div>
+            </div>
+
+            <div class="pii-column">
+              <div class="pii-column__title">At Neo</div>
+              <div class="pii-card">
+                <div class="pii-card__title">Bank Information</div>
+                <input id="pii-bank-name" type="text" placeholder="Bank Name" />
+                <select id="pii-account-type">
+                  <option value="">Account Type</option>
+                  <option value="Checking">Checking</option>
+                  <option value="Savings">Savings</option>
+                </select>
+                <input id="pii-routing" type="text" placeholder="Routing Number" inputmode="numeric" />
+                <input id="pii-account" type="text" placeholder="Account Number" inputmode="numeric" />
+              </div>
+              <div class="pii-card">
+                <div class="pii-card__title">Uniforms</div>
+                <input id="pii-shirt" type="text" placeholder="Shirt Size" />
+                <input id="pii-pants" type="text" placeholder="Pants Size" />
+                <input id="pii-boots" type="text" placeholder="Boots Size" />
+              </div>
+              <div class="pii-card">
+                <div class="pii-card__title">Emergency Contact</div>
+                <input id="pii-emergency-name" type="text" placeholder="Emergency Contact Name" />
+                <input id="pii-emergency-relationship" type="text" placeholder="Relationship" />
+                <input id="pii-emergency-phone" type="text" placeholder="Emergency Contact Phone" inputmode="numeric" />
+              </div>
+            </div>
+
+            <div class="pii-column">
+              <div class="pii-column__title">Post Neo</div>
+              <div class="pii-card">
+                <div class="pii-card__title">Additional Details</div>
+                <textarea id="pii-additional-details" placeholder="Additional Details"></textarea>
+              </div>
+            </div>
+          </div>
+        </form>
+        <div class="modal__footer">
+          <div class="modal__actions">
+            <button id="pii-cancel" class="button button--danger" type="button">Cancel</button>
+            <button id="pii-submit" class="button button--primary" type="submit" form="pii-form">Save PII</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="process-modal" class="modal hidden">
+      <div class="modal__card modal__card--small">
+        <div class="modal__header">
+          <h2>Pass Candidate</h2>
+          <button id="process-close" class="icon-button">✕</button>
+        </div>
+        <div class="modal__body modal__body--single">
+          <div class="process-card">
+            <div class="process-grid">
+              <div class="field">
+                <label>Arrival Time</label>
+                <input id="process-arrival" type="text" inputmode="numeric" maxlength="4" placeholder="24H" />
+              </div>
+              <div class="field">
+                <label>Departure Time</label>
+                <input id="process-departure" type="text" inputmode="numeric" maxlength="4" placeholder="24H" />
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal__footer">
+          <div class="modal__actions">
+            <button id="process-confirm" class="button button--primary" type="button">Process Candidate</button>
+            <button id="process-remove" class="button button--danger" type="button">Remove Candidate</button>
+          </div>
+        </div>
+      </div>
+    </div>
   </body>
 </html>
