@@ -48,6 +48,21 @@
   margin-top: 2px;
 }
 
+.weekly-hours-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--success);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  box-shadow: 0 10px 18px rgba(30, 142, 62, 0.35);
+}
+
 .flyout__body {
   flex: 1;
   overflow-y: auto;
@@ -172,25 +187,14 @@
   align-items: center;
 }
 
-.topbar__actions--db .db-table-select {
-  min-width: 220px;
-}
-
 .search--db {
   min-width: 280px;
-}
-
-.db-controls {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
 }
 
 .db-table-wrap {
   width: 100%;
   overflow: auto;
+  max-height: 60vh;
   border: 1px solid var(--outline);
   border-radius: 16px;
   background: #fff;
@@ -236,6 +240,10 @@
   text-align: center;
   color: var(--muted);
   padding: 24px;
+}
+
+#db-delete:not(:disabled) {
+  box-shadow: 0 10px 18px rgba(220, 53, 69, 0.3);
 }
 
 :root {
@@ -320,6 +328,12 @@ body {
   align-items: center;
   gap: 12px;
   margin-bottom: 24px;
+}
+
+.brand__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .brand__logo {
@@ -432,6 +446,7 @@ body {
 .main {
   display: block;
   height: 100%;
+  min-height: 0;
 }
 
 .page {
@@ -445,6 +460,7 @@ body {
   grid-template-rows: auto 1fr;
   gap: 20px;
   height: 100%;
+  min-height: 0;
 }
 
 .topbar {
@@ -643,6 +659,11 @@ body {
   flex-direction: column;
   gap: 18px;
   height: 100%;
+  min-height: 0;
+}
+
+.page--active > .kanban {
+  min-height: 0;
 }
 
 .kanban__layout {
@@ -650,6 +671,8 @@ body {
   gap: 18px;
   flex: 1;
   min-height: 0;
+  height: 100%;
+  align-items: stretch;
 }
 
 .kanban-empty {
@@ -682,6 +705,8 @@ body {
   box-shadow: var(--shadow-soft);
   display: flex;
   flex-direction: column;
+  height: 100%;
+  max-height: 100%;
   min-height: 0;
   overflow: hidden;
   opacity: 0;
@@ -775,7 +800,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
   min-height: 0;
 }
 
@@ -1191,6 +1219,8 @@ body {
 
 .modal__body--pii {
   padding-top: 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .pii-grid {
@@ -1203,6 +1233,7 @@ body {
   display: grid;
   gap: 12px;
   align-content: start;
+  min-width: 0;
 }
 
 .pii-column__title {
@@ -1220,6 +1251,7 @@ body {
   padding: 14px;
   display: grid;
   gap: 10px;
+  min-width: 0;
 }
 
 .pii-card__title {
@@ -1230,6 +1262,8 @@ body {
 .pii-card input,
 .pii-card select,
 .pii-card textarea {
+  width: 100%;
+  min-width: 0;
   border: 1px solid transparent;
   border-radius: 12px;
   padding: 10px 12px;
@@ -1247,6 +1281,27 @@ body {
 .pii-card input::placeholder,
 .pii-card textarea::placeholder {
   color: #8b95a7;
+}
+
+.pii-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.pii-row input,
+.pii-row select {
+  flex: 1 1 0;
+  min-width: 0;
+  width: 0;
+}
+
+.pii-input--short {
+  flex: 0 0 90px;
+  max-width: 90px;
+  width: 90px;
+  text-transform: uppercase;
 }
 
 .pii-license-section {

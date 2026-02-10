@@ -20,19 +20,15 @@
     <div class="app">
       <aside class="sidebar">
         <div class="sidebar__brand">
-          <button id="sidebar-toggle" class="icon-button" aria-label="Toggle sidebar">☰</button>
           <img class="brand__logo" src="./assets/app-icon.svg" alt="Workflow" />
+          <div class="brand__text">
+            <div class="brand__title">Workflow Tracker</div>
+          </div>
         </div>
         <nav class="sidebar__nav">
           <button class="nav-item nav-item--active" data-page="dashboard">Dashboard</button>
           <button class="nav-item" data-page="database">Database</button>
         </nav>
-
-        <div class="sidebar__mini" aria-hidden="true">
-          <button class="nav-item nav-item--mini" data-page="dashboard" title="Dashboard" tabindex="-1">D</button>
-          <button class="nav-item nav-item--mini" data-page="database" title="Database" tabindex="-1">DB</button>
-          <button class="nav-item nav-item--mini" data-page="settings" title="Settings" tabindex="-1">⚙️</button>
-        </div>
         <div class="sidebar__spacer"></div>
         <div class="sidebar__footer">
           <button id="settings-button" class="nav-item" data-page="settings">⚙️ Settings</button>
@@ -85,19 +81,16 @@
               <div class="topbar__subtitle">View and manage stored onboarding data.</div>
             </div>
             <div class="topbar__actions topbar__actions--db">
-              <select id="db-table-select" class="select db-table-select" aria-label="Table"></select>
               <div class="search search--db">
                 <input id="db-search" type="text" placeholder="Search current table..." autocomplete="off" />
               </div>
-              <button id="db-export" class="button button--ghost" type="button">Export CSV</button>
+              <button id="db-export" class="button button--primary" type="button">Export CSV</button>
+              <button id="db-clear-selection" class="button button--primary" type="button" disabled>Clear Selection</button>
               <button id="db-delete" class="button button--danger" type="button" disabled>Delete Selected</button>
             </div>
           </header>
           <div class="page__body">
             <div class="card">
-              <div class="db-controls">
-                <div id="db-table-meta" class="muted"></div>
-              </div>
               <div class="db-table-wrap">
                 <table id="db-table" class="data-table">
                   <thead></thead>
@@ -147,6 +140,7 @@
         <div>
           <div class="flyout__title">Weekly Tracker</div>
           <div class="flyout__subtitle" id="weekly-range"></div>
+          <div id="weekly-hours-pill" class="weekly-hours-pill">Total Hours: —</div>
         </div>
         <button id="weekly-close" class="icon-button" aria-label="Close weekly tracker">✕</button>
       </div>
@@ -396,6 +390,27 @@
 
             <div class="pii-column">
               <div class="pii-column__title">Post Neo</div>
+              <div class="pii-card">
+                <div class="pii-card__title">Identification</div>
+                <select id="pii-id-type">
+                  <option value="">ID Type</option>
+                  <option value="Driver's License">Driver's License</option>
+                  <option value="State ID">State ID</option>
+                  <option value="Passport">Passport</option>
+                  <option value="Military ID">Military ID</option>
+                  <option value="Other">Other</option>
+                </select>
+                <input id="pii-id-other-type" type="text" placeholder="Other ID Type" maxlength="24" class="hidden" />
+                <div id="pii-id-row" class="pii-row hidden">
+                  <input id="pii-id-state" type="text" placeholder="State" maxlength="2" class="pii-input--short" />
+                  <input id="pii-id-number" type="text" placeholder="ID Number" maxlength="20" />
+                </div>
+                <div id="pii-id-dates" class="pii-row hidden">
+                  <input id="pii-id-dob" type="text" placeholder="DOB" inputmode="numeric" />
+                  <input id="pii-id-exp" type="text" placeholder="EXP" inputmode="numeric" />
+                </div>
+                <input id="pii-social" type="text" placeholder="Social (###-##-####)" inputmode="numeric" maxlength="11" class="hidden" />
+              </div>
               <div class="pii-card">
                 <div class="pii-card__title">Additional Details</div>
                 <textarea id="pii-additional-details" placeholder="Additional Details"></textarea>

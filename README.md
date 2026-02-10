@@ -1,53 +1,19 @@
-# Workflow Electron App
+Known bugs and TodoTh : 
 
-A desktop application built with Electron that wraps the Workflow web application.
+~~1. Workflow tracker doesnt export the total hours for the week.~~
+~~2. Add Neo scheduled date to the database.~~
+~~3. Add License stuff to table, then delete when we process candidate.~~
+~~4. Candidate flyout doesnt have a scroll bar; so the stuff lower down gets blocked by the screen.~~
+~~5. No license fields in the pii section.~~
+~~6. Bank Account number demands a 20 character input. ~~
+~~7. License info in the PII screen extends past the width of the modal.~~
+~~8. Increase usable space in the database page. Add QOL features. ~~
+~~9. Social is required when no social is entered. ~~
+~~10. Social and license info arent saving into the database. ~~
+~~11. Social and license info arent persisting for some reason.~~
+~~12. Wipe the license and other sensitive info when we process the candidate. ~~
+~~13. Check the weekly tracker output.~~
 
-## Installation
-
-1. Install Node.js dependencies:
-```bash
-npm install
-```
-
-2. Install Python dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-## Development
-
-Run the application:
-```bash
-npm start
-```
-
-## Building
-
-Build the application for distribution:
-```bash
-npm run build
-```
-
-The built application will be available in the `electron-dist` directory.
-
-## Running
-
-After installation, you can run the app with:
-```bash
-npm start
-```
-
-## Features
-
-- Desktop wrapper for the Workflow web application
-- Native menu bar with standard application menus
-- Window management (minimize, maximize, close)
-- External link handling
-- Development tools support
-
-## Structure
-
-- `main.js` - Main Electron process
-- `preload.js` - Preload script for security
-- `web/` - Frontend web assets
-- `python_api.py` - Python IPC bridge used by Electron (no HTTP server)
+Added:
+1. Pill to weekly tracker, that calculates hours after you save the week. This requires reopening the weekly tracker. I might change that to stay open. 
+2. Ability to search the database for entries. 

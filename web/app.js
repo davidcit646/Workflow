@@ -107,6 +107,9 @@ const showMessageModal = (title, message) => {
 const sanitizeLetters = (value) => (value || "").replace(/[^a-zA-Z\s'-]/g, "");
 const sanitizeNumbers = (value) => (value || "").replace(/\D/g, "");
 const sanitizeAlphaNum = (value) => (value || "").replace(/[^a-zA-Z0-9\s-]/g, "");
+const sanitizeAlphaNumTight = (value) => (value || "").replace(/[^a-zA-Z0-9]/g, "");
+const sanitizeStateAbbrev = (value) =>
+  (value || "").replace(/[^a-zA-Z]/g, "").slice(0, 2).toUpperCase();
 
 const formatPhoneLike = (value) => {
   const digits = sanitizeNumbers(value).slice(0, 10);
@@ -123,6 +126,89 @@ const formatDateLike = (value) => {
 };
 
 const isPhoneLikeValid = (value) => /^\d{3}-\d{3}-\d{4}$/.test(value);
+const formatSsnLike = (value) => {
+  const digits = sanitizeNumbers(value).slice(0, 9);
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 5) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+  return `${digits.slice(0, 3)}-${digits.slice(3, 5)}-${digits.slice(5)}`;
+};
+const isSsnLikeValid = (value) => /^\d{3}-\d{2}-\d{4}$/.test(value);
+
+const parseWeeklyTime = (value) => {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return null;
+  const meridiemMatch = raw.match(/\b([ap])(?:\.?m\.?)?\b/);
+  const meridiem = meridiemMatch ? meridiemMatch[1] : null;
+  const cleaned = raw.replace(/[^\d:]/g, "");
+  if (!cleaned) return null;
+
+  let hours = null;
+  let minutes = null;
+
+  if (cleaned.includes(":")) {
+    const [h, m] = cleaned.split(":");
+    if (!/^\d{1,2}$/.test(h || "") || !/^\d{1,2}$/.test(m || "")) return null;
+    hours = Number(h);
+    minutes = Number(m);
+  } else {
+    const digits = cleaned;
+    if (digits.length <= 2) {
+      hours = Number(digits);
+      minutes = 0;
+    } else if (digits.length === 3) {
+      hours = Number(digits.slice(0, 1));
+      minutes = Number(digits.slice(1));
+    } else if (digits.length === 4) {
+      hours = Number(digits.slice(0, 2));
+      minutes = Number(digits.slice(2));
+    } else {
+      return null;
+    }
+  }
+
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  if (minutes < 0 || minutes > 59) return null;
+
+  if (meridiem) {
+    if (hours < 1 || hours > 12) return null;
+    if (meridiem === "a") {
+      hours = hours === 12 ? 0 : hours;
+    } else {
+      hours = hours === 12 ? 12 : hours + 12;
+    }
+  } else if (hours < 0 || hours > 23) {
+    return null;
+  }
+
+  return hours * 60 + minutes;
+};
+
+const formatWeeklyHours = (minutes) => {
+  if (minutes === null || minutes === undefined) return "—";
+  const hours = minutes / 60;
+  return Number.isFinite(hours) ? hours.toFixed(2) : "—";
+};
+
+const updateWeeklyHoursPill = (entries) => {
+  const pill = $("weekly-hours-pill");
+  if (!pill) return;
+  const days = ["Friday", "Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"];
+  let totalMinutes = 0;
+  let hasTotals = false;
+  days.forEach((day) => {
+    const entry = entries && entries[day] ? entries[day] : { start: "", end: "" };
+    const startMinutes = parseWeeklyTime(entry.start || "");
+    const endMinutes = parseWeeklyTime(entry.end || "");
+    if (startMinutes !== null && endMinutes !== null) {
+      let dayMinutes = endMinutes - startMinutes;
+      if (dayMinutes < 0) dayMinutes += 24 * 60;
+      totalMinutes += dayMinutes;
+      hasTotals = true;
+    }
+  });
+  const totalText = hasTotals ? formatWeeklyHours(totalMinutes) : "—";
+  pill.textContent = `Total Hours: ${totalText}`;
+};
 const isDateLikeValid = (value) => /^\d{2}\/\d{2}\/(\d{2}|\d{4})$/.test(value);
 const isFullDateValid = (value) => /^\d{2}\/\d{2}\/\d{4}$/.test(value);
 const isoToSlashDate = (value) => {
@@ -571,6 +657,17 @@ const renderDetailsDrawer = () => {
     { label: "Boots Size", value: row["Boots Size"] },
   ]);
   if (uniforms) cards.push(uniforms);
+
+  const identification = createDetailsCard("Identification", [
+    { label: "ID Type", value: row["ID Type"] },
+    { label: "State", value: row["State Abbreviation"] },
+    { label: "ID Number", value: row["ID Number"] },
+    { label: "DOB", value: row["DOB"] },
+    { label: "EXP", value: row["EXP"] },
+    { label: "Other ID Type", value: row["Other ID Type"] },
+    { label: "Social", value: row["Social"] },
+  ]);
+  if (identification) cards.push(identification);
 
   const attendance = createDetailsCard("Neo Attendance", [
     { label: "Arrival", value: row["Neo Arrival Time"] },
@@ -1042,6 +1139,57 @@ const toggleLicenseSections = (value) => {
   if (value === "ME GC" && me) me.classList.remove("hidden");
 };
 
+const toggleIdFields = (value) => {
+  const row = $("pii-id-row");
+  const dates = $("pii-id-dates");
+  const state = $("pii-id-state");
+  const otherType = $("pii-id-other-type");
+  const idNumber = $("pii-id-number");
+  const dob = $("pii-id-dob");
+  const exp = $("pii-id-exp");
+  const social = $("pii-social");
+
+  const hasType = !!value;
+  const needsState = ["Driver's License", "State ID", "Other"].includes(value);
+  const needsOther = value === "Other";
+
+  if (row) row.classList.toggle("hidden", !hasType);
+  if (dates) dates.classList.toggle("hidden", !hasType);
+
+  if (state) {
+    if (hasType && needsState) {
+      state.classList.remove("hidden");
+    } else {
+      state.classList.add("hidden");
+      state.value = "";
+    }
+  }
+
+  if (otherType) {
+    if (hasType && needsOther) {
+      otherType.classList.remove("hidden");
+    } else {
+      otherType.classList.add("hidden");
+      otherType.value = "";
+    }
+  }
+
+  if (social) {
+    if (hasType) {
+      social.classList.remove("hidden");
+    } else {
+      social.classList.add("hidden");
+      social.value = "";
+    }
+  }
+
+  if (!hasType) {
+    if (idNumber) idNumber.value = "";
+    if (dob) dob.value = "";
+    if (exp) exp.value = "";
+  }
+};
+
 const toggleBackgroundDate = (value) => {
   const dateInput = $("pii-background-date");
   if (!dateInput) return;
@@ -1110,12 +1258,20 @@ const openPiiModal = async (cardData) => {
   setValue("pii-emergency-name", row["Emergency Contact Name"]);
   setValue("pii-emergency-relationship", row["Emergency Contact Relationship"]);
   setValue("pii-emergency-phone", row["Emergency Contact Phone"]);
+  setValue("pii-id-type", row["ID Type"]);
+  setValue("pii-id-state", row["State Abbreviation"]);
+  setValue("pii-id-number", row["ID Number"]);
+  setValue("pii-id-dob", row["DOB"]);
+  setValue("pii-id-exp", row["EXP"]);
+  setValue("pii-id-other-type", row["Other ID Type"]);
+  setValue("pii-social", row["Social"]);
   setValue("pii-additional-details", row["Additional Details"]);
 
   const providerValue = row["Background Provider"] || "";
   toggleBackgroundDate(providerValue);
   updateBackgroundMvrFlag(providerValue);
   toggleLicenseSections(row["License Type"]);
+  toggleIdFields(row["ID Type"]);
 
   modal.classList.remove("hidden");
 };
@@ -1150,6 +1306,13 @@ const collectPiiPayload = () => {
     "Emergency Contact Name": value("pii-emergency-name"),
     "Emergency Contact Relationship": value("pii-emergency-relationship"),
     "Emergency Contact Phone": value("pii-emergency-phone"),
+    "ID Type": value("pii-id-type"),
+    "State Abbreviation": value("pii-id-state"),
+    "ID Number": value("pii-id-number"),
+    "DOB": value("pii-id-dob"),
+    "EXP": value("pii-id-exp"),
+    "Other ID Type": value("pii-id-other-type"),
+    "Social": value("pii-social"),
     "Additional Details": value("pii-additional-details"),
   };
 };
@@ -1161,6 +1324,8 @@ const validatePiiPayload = async (payload) => {
     { label: "MA CORI Date", value: payload["MA CORI Date"] },
     { label: "NH GC Expiration Date", value: payload["NH GC Expiration Date"] },
     { label: "ME GC Expiration Date", value: payload["ME GC Expiration Date"] },
+    { label: "DOB", value: payload["DOB"] },
+    { label: "EXP", value: payload["EXP"] },
   ];
 
   for (const field of phoneFields) {
@@ -1177,14 +1342,38 @@ const validatePiiPayload = async (payload) => {
     }
   }
 
-  if (payload["Routing Number"] && !/^\d{9}$/.test(payload["Routing Number"])) {
-    await showMessageModal("Invalid Routing Number", "Routing Number must be 9 digits.");
+  if (payload["Routing Number"] && payload["Routing Number"].length > 9) {
+    await showMessageModal("Invalid Routing Number", "Routing Number must be 9 digits or fewer.");
     return false;
   }
 
-  if (payload["Account Number"] && !/^\d{20}$/.test(payload["Account Number"])) {
-    await showMessageModal("Invalid Account Number", "Account Number must be 20 digits.");
+  if (payload["Account Number"] && payload["Account Number"].length > 20) {
+    await showMessageModal("Invalid Account Number", "Account Number must be 20 digits or fewer.");
     return false;
+  }
+
+  if (payload["ID Type"]) {
+    if (!payload["DOB"] || !payload["EXP"]) {
+      await showMessageModal("Missing Dates", "DOB and EXP are required for the selected ID Type.");
+      return false;
+    }
+  }
+
+  if (payload["ID Type"] === "Other" && !payload["Other ID Type"]) {
+    await showMessageModal("Missing ID Type", "Other ID Type is required when ID Type is Other.");
+    return false;
+  }
+
+  if (payload["Social"] && payload["Social"].length === 11 && !isSsnLikeValid(payload["Social"])) {
+    await showMessageModal("Invalid Format", "Social must be in 123-45-6789 format.");
+    return false;
+  }
+
+  if (["Driver's License", "State ID", "Other"].includes(payload["ID Type"])) {
+    if (!/^[A-Z]{2}$/.test(payload["State Abbreviation"] || "")) {
+      await showMessageModal("Invalid State", "State Abbreviation must be 2 letters.");
+      return false;
+    }
   }
 
   return true;
@@ -1384,8 +1573,10 @@ const initPiiInputs = () => {
   const coriDate = $("pii-cori-date");
   const nhExpiration = $("pii-nh-expiration");
   const meExpiration = $("pii-me-expiration");
+  const idDob = $("pii-id-dob");
+  const idExp = $("pii-id-exp");
   const emergencyPhone = $("pii-emergency-phone");
-  const dateInputs = [backgroundDate, coriDate, nhExpiration, meExpiration].filter(Boolean);
+  const dateInputs = [backgroundDate, coriDate, nhExpiration, meExpiration, idDob, idExp].filter(Boolean);
   dateInputs.forEach((input) => {
     input.addEventListener("input", () => {
       input.value = formatDateLike(input.value);
@@ -1413,6 +1604,41 @@ const initPiiInputs = () => {
       input.value = sanitizeAlphaNum(input.value);
     });
   });
+
+  const idType = $("pii-id-type");
+  if (idType) {
+    idType.addEventListener("change", () => {
+      toggleIdFields(idType.value);
+    });
+  }
+
+  const idState = $("pii-id-state");
+  if (idState) {
+    idState.addEventListener("input", () => {
+      idState.value = sanitizeStateAbbrev(idState.value);
+    });
+  }
+
+  const idNumber = $("pii-id-number");
+  if (idNumber) {
+    idNumber.addEventListener("input", () => {
+      idNumber.value = sanitizeAlphaNumTight(idNumber.value).slice(0, 20);
+    });
+  }
+
+  const idOtherType = $("pii-id-other-type");
+  if (idOtherType) {
+    idOtherType.addEventListener("input", () => {
+      idOtherType.value = sanitizeAlphaNum(idOtherType.value).slice(0, 24);
+    });
+  }
+
+  const social = $("pii-social");
+  if (social) {
+    social.addEventListener("input", () => {
+      social.value = formatSsnLike(social.value);
+    });
+  }
 
   const routing = $("pii-routing");
   if (routing) {
@@ -1459,6 +1685,7 @@ const openWeeklyTracker = async () => {
   if (range) {
     range.textContent = `Week of ${data.week_start} to ${data.week_end}`;
   }
+  updateWeeklyHoursPill(data.entries || {});
   const days = ["Friday", "Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"];
   const grid = document.createElement("div");
   grid.className = "weekly__grid";
@@ -1529,17 +1756,17 @@ const saveWeeklyTracker = async (event) => {
     entries[day][field] = element.value;
   });
   await workflowApi.weeklySave(entries);
-  closeWeeklyTracker();
+  updateWeeklyHoursPill(entries);
 };
 
 const downloadWeeklySummary = async () => {
   const summary = await workflowApi.weeklySummary();
   if (!summary || !summary.content) return;
-  const blob = new Blob([summary.content], { type: "text/plain" });
+  const blob = new Blob([summary.content], { type: "text/markdown" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = summary.filename || "weekly_summary.txt";
+  link.download = summary.filename || "weekly_summary.md";
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -1724,8 +1951,16 @@ const updateDatabaseMeta = (filteredCount) => {
 
 const updateDbDeleteButton = () => {
   const btn = $("db-delete");
-  if (!btn) return;
-  btn.disabled = state.data.selectedRowIds.size === 0;
+  const clearBtn = $("db-clear-selection");
+  const hasSelection = state.data.selectedRowIds.size > 0;
+  if (btn) btn.disabled = !hasSelection;
+  if (clearBtn) clearBtn.disabled = !hasSelection;
+};
+
+const clearDatabaseSelection = (shouldRender = true) => {
+  state.data.selectedRowIds = new Set();
+  updateDbDeleteButton();
+  if (shouldRender) renderDatabaseTable();
 };
 
 const renderDatabaseTable = () => {
@@ -1736,10 +1971,6 @@ const renderDatabaseTable = () => {
   if (!thead || !tbody) return;
 
   const rows = getFilteredDatabaseRows();
-  const visibleIds = new Set(rows.map((row) => row.__rowId));
-  state.data.selectedRowIds = new Set(
-    [...state.data.selectedRowIds].filter((id) => visibleIds.has(id))
-  );
 
   thead.innerHTML = "";
   tbody.innerHTML = "";
@@ -1830,10 +2061,9 @@ const loadDatabaseTables = async () => {
     );
     return;
   }
-  state.data.tables = tables;
-  if (!tables.some((table) => table.id === state.data.tableId)) {
-    state.data.tableId = tables.length ? tables[0].id : null;
-  }
+  const candidateTable = tables.find((table) => table.id === "candidate_data") || null;
+  state.data.tables = candidateTable ? [candidateTable] : [];
+  state.data.tableId = candidateTable ? candidateTable.id : null;
   renderDatabaseTableSelect();
   if (state.data.tableId) {
     await loadDatabaseTable(state.data.tableId);
@@ -1846,33 +2076,38 @@ const handleDatabaseDelete = async () => {
   let result = null;
   try {
     result = await workflowApi.dbDeleteRows(state.data.tableId, ids);
+    if (result && result.ok === false) {
+      await showMessageModal("Delete Blocked", result.message || "Unable to delete rows.");
+      return;
+    }
+    await loadDatabaseTables();
+    if (["kanban_columns", "kanban_cards", "candidate_data"].includes(state.data.tableId)) {
+      await loadKanban();
+    }
   } catch (error) {
     await showMessageModal(
       "Delete Failed",
       "Unable to delete rows. Please fully quit and relaunch the app."
     );
-    return;
-  }
-  if (result && result.ok === false) {
-    await showMessageModal("Delete Blocked", result.message || "Unable to delete rows.");
-    return;
-  }
-  await loadDatabaseTables();
-  if (["kanban_columns", "kanban_cards", "candidate_data"].includes(state.data.tableId)) {
-    await loadKanban();
+  } finally {
+    clearDatabaseSelection();
   }
 };
 
 const handleDatabaseExport = async () => {
-  if (!state.data.tableId) return;
+  if (!state.data.tableId) {
+    clearDatabaseSelection();
+    return;
+  }
   const visibleRows = getFilteredDatabaseRows();
-  const selectedRows = visibleRows.filter((row) => state.data.selectedRowIds.has(row.__rowId));
+  const selectedRows = state.data.rows.filter((row) => state.data.selectedRowIds.has(row.__rowId));
   let rowsToExport = selectedRows.length ? selectedRows : visibleRows;
   if (!rowsToExport.length) {
     rowsToExport = state.data.rows;
   }
   if (!rowsToExport.length) {
     await showMessageModal("Nothing to Export", "There are no rows to export for the current table.");
+    clearDatabaseSelection();
     return;
   }
   const table = state.data.tables.find((item) => item.id === state.data.tableId);
@@ -1891,6 +2126,8 @@ const handleDatabaseExport = async () => {
       "Export Failed",
       "Unable to export CSV. Please fully quit and relaunch the app."
     );
+  } finally {
+    clearDatabaseSelection();
   }
 };
 
@@ -1927,6 +2164,9 @@ const setupFlyoutDismiss = () => {
 const switchPage = (page) => {
   if (!page) return;
   const target = $(`page-${page}`) ? page : "dashboard";
+  if (state.page === "database" && target !== "database") {
+    clearDatabaseSelection(false);
+  }
   state.page = target;
   document.querySelectorAll(".page").forEach((section) => {
     section.classList.toggle("page--active", section.id === `page-${target}`);
@@ -2042,12 +2282,24 @@ const setupEventListeners = () => {
   const weeklyCancel = $("weekly-cancel");
   const weeklyForm = $("weekly-form");
   const weeklyExport = $("weekly-export");
+  const weeklyPanel = $("weekly-panel");
+  if (weeklyPanel) {
+    weeklyPanel.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+  }
   if (weeklyButton) weeklyButton.addEventListener("click", toggleWeeklyTracker);
   if (weeklyClose) weeklyClose.addEventListener("click", closeWeeklyTracker);
   if (weeklyCancel) weeklyCancel.addEventListener("click", closeWeeklyTracker);
   if (weeklyForm) weeklyForm.addEventListener("submit", saveWeeklyTracker);
   if (weeklyExport) weeklyExport.addEventListener("click", downloadWeeklySummary);
 
+  const todoPanel = $("todo-panel");
+  if (todoPanel) {
+    todoPanel.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+  }
   const authForm = $("auth-form");
   const authClose = $("auth-close");
   if (authForm) authForm.addEventListener("submit", handleAuthSubmit);
@@ -2062,6 +2314,7 @@ const setupEventListeners = () => {
 
   const dbSearch = $("db-search");
   const dbExport = $("db-export");
+  const dbClear = $("db-clear-selection");
   const dbDelete = $("db-delete");
   const dbSelect = $("db-table-select");
   const dbTable = $("db-table");
@@ -2072,6 +2325,7 @@ const setupEventListeners = () => {
     });
   }
   if (dbExport) dbExport.addEventListener("click", handleDatabaseExport);
+  if (dbClear) dbClear.addEventListener("click", () => clearDatabaseSelection());
   if (dbDelete) dbDelete.addEventListener("click", handleDatabaseDelete);
   if (dbSelect) {
     dbSelect.addEventListener("change", async () => {
@@ -2086,9 +2340,13 @@ const setupEventListeners = () => {
       if (!(target instanceof HTMLInputElement)) return;
       if (target.dataset.selectAll) {
         if (target.checked) {
-          state.data.selectedRowIds = new Set(getFilteredDatabaseRows().map((row) => row.__rowId));
+          const next = new Set(state.data.selectedRowIds);
+          getFilteredDatabaseRows().forEach((row) => next.add(row.__rowId));
+          state.data.selectedRowIds = next;
         } else {
-          state.data.selectedRowIds = new Set();
+          const next = new Set(state.data.selectedRowIds);
+          getFilteredDatabaseRows().forEach((row) => next.delete(row.__rowId));
+          state.data.selectedRowIds = next;
         }
         renderDatabaseTable();
         return;

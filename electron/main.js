@@ -141,28 +141,130 @@ const getCurrentWeek = () => {
   return { weekStart: toIso(weekStart), weekEnd: toIso(weekEnd) };
 };
 
+const parseWeeklyTime = (value) => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return null;
+
+  const meridiemMatch = raw.match(/\b([ap])(?:\.?m\.?)?\b/);
+  const meridiem = meridiemMatch ? meridiemMatch[1] : null;
+  const cleaned = raw.replace(/[^\d:]/g, '');
+  if (!cleaned) return null;
+
+  let hours = null;
+  let minutes = null;
+
+  if (cleaned.includes(':')) {
+    const [h, m] = cleaned.split(':');
+    if (!/^\d{1,2}$/.test(h || '') || !/^\d{1,2}$/.test(m || '')) return null;
+    hours = Number(h);
+    minutes = Number(m);
+  } else {
+    const digits = cleaned;
+    if (digits.length <= 2) {
+      hours = Number(digits);
+      minutes = 0;
+    } else if (digits.length === 3) {
+      hours = Number(digits.slice(0, 1));
+      minutes = Number(digits.slice(1));
+    } else if (digits.length === 4) {
+      hours = Number(digits.slice(0, 2));
+      minutes = Number(digits.slice(2));
+    } else {
+      return null;
+    }
+  }
+
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  if (minutes < 0 || minutes > 59) return null;
+
+  if (meridiem) {
+    if (hours < 1 || hours > 12) return null;
+    if (meridiem === 'a') {
+      hours = hours === 12 ? 0 : hours;
+    } else {
+      hours = hours === 12 ? 12 : hours + 12;
+    }
+  } else if (hours < 0 || hours > 23) {
+    return null;
+  }
+
+  return hours * 60 + minutes;
+};
+
+const formatHours = (minutes) => {
+  if (minutes === null || minutes === undefined) return '—';
+  const hours = minutes / 60;
+  return Number.isFinite(hours) ? hours.toFixed(2) : '—';
+};
+
 const buildWeeklySummary = (weekData) => {
   const { week_start, week_end, entries } = weekData;
-  const lines = [];
   const now = new Date();
-  lines.push('='.repeat(60));
-  lines.push('WEEKLY WORK TRACKER SUMMARY');
-  lines.push(`Work Week: ${week_start} - ${week_end}`);
-  lines.push(`Generated: ${now.toLocaleString()}`);
-  lines.push('='.repeat(60));
+  const lines = [];
+  const days = ["Friday", "Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"];
+  let totalMinutes = 0;
+  let hasTotals = false;
+
+  const dayBlocks = days.map((day) => {
+    const entry = entries[day] || { start: '', end: '', content: '' };
+    const startText = String(entry.start || '').trim();
+    const endText = String(entry.end || '').trim();
+    const startMinutes = parseWeeklyTime(startText);
+    const endMinutes = parseWeeklyTime(endText);
+    let dayMinutes = null;
+    if (startMinutes !== null && endMinutes !== null) {
+      dayMinutes = endMinutes - startMinutes;
+      if (dayMinutes < 0) dayMinutes += 24 * 60;
+      totalMinutes += dayMinutes;
+      hasTotals = true;
+    }
+
+    const contentLines = String(entry.content || '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const activities = contentLines.length
+      ? contentLines.map((line) => `- ${line}`)
+      : ['_No activities entered._'];
+
+    return {
+      day,
+      startText: startText || '—',
+      endText: endText || '—',
+      hoursText: formatHours(dayMinutes),
+      activities,
+    };
+  });
+
+  const totalHoursText = hasTotals ? formatHours(totalMinutes) : '—';
+
+  lines.push('# Weekly Work Tracker');
+  lines.push('');
+  lines.push(`**Work Week:** ${week_start} – ${week_end}`);
+  lines.push(`**Generated:** ${now.toLocaleString()}`);
+  lines.push('');
+  lines.push('---');
+  lines.push('');
+  lines.push('## Summary');
+  lines.push('');
+  lines.push('| Metric | Value |');
+  lines.push('| --- | --- |');
+  lines.push(`| Total Hours | **${totalHoursText}** |`);
+  lines.push('');
+  lines.push('## Overview');
+  lines.push('');
+  lines.push('| Day | Start | End | Hours |');
+  lines.push('| --- | --- | --- | --- |');
+  dayBlocks.forEach((block) => {
+    lines.push(`| ${block.day} | ${block.startText} | ${block.endText} | ${block.hoursText} |`);
+  });
   lines.push('');
 
-  const days = ["Friday", "Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"];
-  days.forEach((day) => {
-    const entry = entries[day] || { start: '', end: '', content: '' };
-    lines.push(`--- ${day} ---`);
-    if (entry.start && entry.end) {
-      lines.push(`Time: ${entry.start} to ${entry.end}`);
-    } else {
-      lines.push('Time: (Not specified)');
-    }
-    lines.push('Activities:');
-    lines.push(entry.content || '(No activities entered)');
+  dayBlocks.forEach((block) => {
+    lines.push(`## ${block.day}`);
+    lines.push('');
+    lines.push('**Activities**');
+    lines.push(...block.activities);
     lines.push('');
   });
 
@@ -194,6 +296,13 @@ const KANBAN_CANDIDATE_FIELDS = [
   'NH GC ID Number',
   'ME GC Status',
   'ME GC Expiration Date',
+  'ID Type',
+  'State Abbreviation',
+  'ID Number',
+  'DOB',
+  'EXP',
+  'Other ID Type',
+  'Social',
   'Bank Name',
   'Account Type',
   'Routing Number',
@@ -324,6 +433,13 @@ const SENSITIVE_PII_FIELDS = [
   'NH GC ID Number',
   'ME GC Status',
   'ME GC Expiration Date',
+  'ID Type',
+  'State Abbreviation',
+  'ID Number',
+  'DOB',
+  'EXP',
+  'Other ID Type',
+  'Social',
   'Bank Name',
   'Account Type',
   'Routing Number',
@@ -493,6 +609,11 @@ const ensureCandidateRow = (db, candidateId) => {
       row['Candidate Name'] = card.candidate_name || '';
     }
     db.kanban.candidates.push(row);
+  } else {
+    KANBAN_CANDIDATE_FIELDS.forEach((field) => {
+      if (row[field] === undefined) row[field] = '';
+    });
+    if (!row['candidate UUID']) row['candidate UUID'] = candidateId;
   }
   return row;
 };
@@ -737,7 +858,6 @@ ipcMain.handle('candidate:savePII', (_event, { candidateId, data }) => {
   if (data && typeof data === 'object') {
     Object.keys(data).forEach((key) => {
       if (blocked.has(key)) return;
-      if (!KANBAN_CANDIDATE_FIELDS.includes(key)) return;
       row[key] = data[key];
     });
   }
@@ -857,7 +977,7 @@ ipcMain.handle('weekly:summary', () => {
   const data = db.weekly[weekStart] || { week_start: weekStart, week_end: '', entries: {} };
   const content = buildWeeklySummary(data);
   return {
-    filename: `Weekly_${weekStart}_Summary.txt`,
+    filename: `Weekly_${weekStart}_Summary.md`,
     content,
   };
 });

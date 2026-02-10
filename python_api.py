@@ -531,6 +531,7 @@ def _save_people(people: list, password: str):
         "Expiration Date", "Date of Birth", "Social Security Number",
         "BG Check Date", "BG Check Status", "CORI Date", "Emergency Contact Name",
         "Emergency Contact Relationship", "Emergency Contact Phone", "ID Type",
+        "ID Number", "DOB", "EXP", "Other ID Type", "Social",
         "ID Type Other", "State Abbreviation", "Licensing Info", "Boots",
         "Deposit Account Type"
     ]
