@@ -323,13 +323,12 @@ body {
 }
 
 .brand__logo {
-  width: 42px;
-  height: 42px;
+  width: 44px;
+  height: 44px;
   border-radius: 14px;
-  background: linear-gradient(135deg, #1a73e8, #6aa9ff);
-  display: grid;
-  place-items: center;
-  font-weight: 700;
+  display: block;
+  object-fit: cover;
+  box-shadow: 0 10px 20px rgba(16, 24, 40, 0.18);
 }
 
 .brand__title {
