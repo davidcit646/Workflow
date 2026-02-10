@@ -13,6 +13,7 @@ const state = {
     piiCandidateId: null,
     detailsCardId: null,
     detailsRow: null,
+    neoDateCandidateId: null,
     loaded: false,
   },
   auth: {
@@ -114,7 +115,29 @@ const formatPhoneLike = (value) => {
   return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6, 10)}`;
 };
 
+const formatDateLike = (value) => {
+  const digits = sanitizeNumbers(value).slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+};
+
 const isPhoneLikeValid = (value) => /^\d{3}-\d{3}-\d{4}$/.test(value);
+const isDateLikeValid = (value) => /^\d{2}\/\d{2}\/(\d{2}|\d{4})$/.test(value);
+const isFullDateValid = (value) => /^\d{2}\/\d{2}\/\d{4}$/.test(value);
+const isoToSlashDate = (value) => {
+  if (!value || typeof value !== "string") return "";
+  const parts = value.split("-");
+  if (parts.length !== 3) return "";
+  const [year, month, day] = parts;
+  if (!year || !month || !day) return "";
+  return `${month}/${day}/${year}`;
+};
+const slashToIsoDate = (value) => {
+  if (!isFullDateValid(value)) return "";
+  const [month, day, year] = value.split("/");
+  return `${year}-${month}-${day}`;
+};
 const sortByOrder = (a, b) => (a.order ?? 0) - (b.order ?? 0);
 const normalizeValue = (value) => {
   if (value === null || value === undefined) return "";
@@ -485,13 +508,12 @@ const renderDetailsDrawer = () => {
     normalizeValue(card.candidate_name) || normalizeValue(row["Candidate Name"]) || "Candidate";
   title.textContent = displayName;
 
-  const scheduledDate = normalizeValue(row["Hire Date"]);
-  if (scheduledDate) {
-    scheduled.textContent = `Neo Scheduled Date · ${scheduledDate}`;
-    scheduled.classList.remove("hidden");
-  } else {
-    scheduled.classList.add("hidden");
-  }
+  const scheduledRaw = normalizeValue(row["Hire Date"]);
+  const scheduledDate = /^\d{4}-\d{2}-\d{2}$/.test(scheduledRaw)
+    ? isoToSlashDate(scheduledRaw)
+    : scheduledRaw;
+  scheduled.textContent = scheduledDate || "Click Here to Add Neo Date";
+  scheduled.classList.remove("hidden");
 
   body.innerHTML = "";
   const cards = [];
@@ -624,6 +646,53 @@ const openProcessModal = () => {
 const closeProcessModal = () => {
   const modal = $("process-modal");
   if (modal) modal.classList.add("hidden");
+};
+
+const openNeoDateModal = () => {
+  if (!state.kanban.detailsCardId) return;
+  const modal = $("neo-date-modal");
+  const input = $("neo-date-input");
+  const picker = $("neo-date-picker");
+  if (!modal || !input) return;
+  state.kanban.neoDateCandidateId = state.kanban.detailsCardId;
+  const row = state.kanban.detailsRow || {};
+  const current = normalizeValue(row["Hire Date"]);
+  const displayValue = /^\d{4}-\d{2}-\d{2}$/.test(current) ? isoToSlashDate(current) : current;
+  input.value = displayValue;
+  if (picker) picker.value = slashToIsoDate(displayValue);
+  modal.classList.remove("hidden");
+  input.focus();
+  input.select();
+};
+
+const closeNeoDateModal = () => {
+  const modal = $("neo-date-modal");
+  if (modal) modal.classList.add("hidden");
+  state.kanban.neoDateCandidateId = null;
+};
+
+const handleNeoDateSubmit = async (event) => {
+  event.preventDefault();
+  const candidateId = state.kanban.neoDateCandidateId || state.kanban.detailsCardId;
+  if (!candidateId) return;
+  const input = $("neo-date-input");
+  const value = input ? normalizeValue(input.value) : "";
+  if (value && !isFullDateValid(value)) {
+    await showMessageModal("Invalid Format", "Neo Scheduled Date must be in MM/DD/YYYY format.");
+    return;
+  }
+  try {
+    await workflowApi.piiSave(candidateId, { "Hire Date": value });
+  } catch (error) {
+    await showMessageModal(
+      "Save Failed",
+      "Unable to save Neo Scheduled Date. Please fully quit and relaunch the app."
+    );
+    return;
+  }
+  await refreshDetailsRow(candidateId);
+  renderDetailsDrawer();
+  closeNeoDateModal();
 };
 
 const handleProcessConfirm = async () => {
@@ -1086,8 +1155,8 @@ const collectPiiPayload = () => {
 };
 
 const validatePiiPayload = async (payload) => {
-  const phoneFields = [
-    { label: "Emergency Contact Phone", value: payload["Emergency Contact Phone"] },
+  const phoneFields = [{ label: "Emergency Contact Phone", value: payload["Emergency Contact Phone"] }];
+  const dateFields = [
     { label: "Background Cleared Date", value: payload["Background Cleared Date"] },
     { label: "MA CORI Date", value: payload["MA CORI Date"] },
     { label: "NH GC Expiration Date", value: payload["NH GC Expiration Date"] },
@@ -1097,6 +1166,13 @@ const validatePiiPayload = async (payload) => {
   for (const field of phoneFields) {
     if (field.value && !isPhoneLikeValid(field.value)) {
       await showMessageModal("Invalid Format", `${field.label} must be in 123-123-1234 format.`);
+      return false;
+    }
+  }
+
+  for (const field of dateFields) {
+    if (field.value && !isDateLikeValid(field.value)) {
+      await showMessageModal("Invalid Format", `${field.label} must be in MM/DD/YY or MM/DD/YYYY format.`);
       return false;
     }
   }
@@ -1309,12 +1385,18 @@ const initPiiInputs = () => {
   const nhExpiration = $("pii-nh-expiration");
   const meExpiration = $("pii-me-expiration");
   const emergencyPhone = $("pii-emergency-phone");
-  const dateLikeInputs = [backgroundDate, coriDate, nhExpiration, meExpiration, emergencyPhone].filter(Boolean);
-  dateLikeInputs.forEach((input) => {
+  const dateInputs = [backgroundDate, coriDate, nhExpiration, meExpiration].filter(Boolean);
+  dateInputs.forEach((input) => {
     input.addEventListener("input", () => {
-      input.value = formatPhoneLike(input.value);
+      input.value = formatDateLike(input.value);
     });
   });
+
+  if (emergencyPhone) {
+    emergencyPhone.addEventListener("input", () => {
+      emergencyPhone.value = formatPhoneLike(emergencyPhone.value);
+    });
+  }
 
   const bankName = $("pii-bank-name");
   const emergencyName = $("pii-emergency-name");
@@ -1830,6 +1912,8 @@ const setupFlyoutDismiss = () => {
     }
     const drawer = $("details-drawer");
     if (state.kanban.detailsCardId && drawer) {
+      const openModal = document.querySelector(".modal:not(.hidden)");
+      if (openModal) return;
       const isOnCard = event.target && event.target.closest
         ? event.target.closest(".kanban-card")
         : null;
@@ -1890,6 +1974,13 @@ const setupEventListeners = () => {
   const piiForm = $("pii-form");
   const piiClose = $("pii-close");
   const piiCancel = $("pii-cancel");
+  const neoDatePill = $("details-drawer-scheduled");
+  const neoDateForm = $("neo-date-form");
+  const neoDateClose = $("neo-date-close");
+  const neoDateCancel = $("neo-date-cancel");
+  const neoDatePickerButton = $("neo-date-picker-button");
+  const neoDatePicker = $("neo-date-picker");
+  const neoDateInput = $("neo-date-input");
   const detailsClose = $("details-drawer-close");
   const detailsProcess = $("details-process");
   const processClose = $("process-close");
@@ -1910,6 +2001,32 @@ const setupEventListeners = () => {
   if (piiForm) piiForm.addEventListener("submit", handlePiiSubmit);
   if (piiClose) piiClose.addEventListener("click", closePiiModal);
   if (piiCancel) piiCancel.addEventListener("click", closePiiModal);
+  if (neoDatePill) neoDatePill.addEventListener("click", openNeoDateModal);
+  if (neoDateForm) neoDateForm.addEventListener("submit", handleNeoDateSubmit);
+  if (neoDateClose) neoDateClose.addEventListener("click", closeNeoDateModal);
+  if (neoDateCancel) neoDateCancel.addEventListener("click", closeNeoDateModal);
+  if (neoDatePickerButton && neoDatePicker) {
+    neoDatePickerButton.addEventListener("click", () => {
+      if (neoDatePicker.showPicker) {
+        neoDatePicker.showPicker();
+      } else {
+        neoDatePicker.focus();
+        neoDatePicker.click();
+      }
+    });
+  }
+  if (neoDatePicker && neoDateInput) {
+    neoDatePicker.addEventListener("change", () => {
+      neoDateInput.value = isoToSlashDate(neoDatePicker.value);
+    });
+  }
+  if (neoDateInput) {
+    neoDateInput.addEventListener("input", () => {
+      neoDateInput.value = formatDateLike(neoDateInput.value);
+      const iso = slashToIsoDate(neoDateInput.value);
+      if (neoDatePicker) neoDatePicker.value = iso;
+    });
+  }
   if (detailsClose) detailsClose.addEventListener("click", closeDetailsDrawer);
   if (detailsProcess) detailsProcess.addEventListener("click", openProcessModal);
   if (processClose) processClose.addEventListener("click", closeProcessModal);

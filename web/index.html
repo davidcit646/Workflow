@@ -63,7 +63,9 @@
                 <div class="details-drawer__header">
                   <div class="details-drawer__title" id="details-drawer-name">Candidate</div>
                   <div class="details-drawer__meta">
-                    <div class="details-drawer__pill hidden" id="details-drawer-scheduled">Neo Scheduled Date</div>
+                  <button class="details-drawer__pill hidden" id="details-drawer-scheduled" type="button">
+                    Neo Scheduled Date
+                  </button>
                   </div>
                   <button id="details-drawer-close" class="icon-button" aria-label="Close details drawer">✕</button>
                 </div>
@@ -265,27 +267,34 @@
           <button id="candidate-close" class="icon-button">✕</button>
         </div>
         <form id="candidate-form" class="modal__body modal__body--candidate" autocomplete="off">
-          <div class="modal__section">
-            <input id="candidate-icims" type="text" inputmode="numeric" maxlength="12" placeholder="ICIMS ID" />
-            <input id="candidate-employee" type="text" inputmode="numeric" maxlength="12" placeholder="Employee ID" />
-          </div>
-          <div class="modal__section modal__section--full">
-            <div class="modal__section-title">Contact Info</div>
-            <input id="candidate-phone" type="text" placeholder="Phone Number" inputmode="numeric" />
-            <input id="candidate-email" type="email" placeholder="Email" />
-          </div>
-          <div class="modal__section">
-            <input id="candidate-job-id" type="text" placeholder="Job ID" />
-            <input id="candidate-job-name" type="text" placeholder="Job Name" />
-            <input id="candidate-job-location" type="text" placeholder="Location" />
-            <input id="candidate-manager" type="text" placeholder="Manager" />
-            <select id="candidate-branch">
-              <option value="">Branch</option>
-              <option value="Salem">Salem</option>
-              <option value="Portland">Portland</option>
-              <option value="Other">Other</option>
-            </select>
-            <input id="candidate-branch-other" type="text" placeholder="Other Branch" class="hidden" />
+          <div class="candidate-grid">
+            <div class="candidate-column">
+              <div class="modal__section">
+                <input id="candidate-icims" type="text" inputmode="numeric" maxlength="12" placeholder="ICIMS ID" />
+                <input id="candidate-employee" type="text" inputmode="numeric" maxlength="12" placeholder="Employee ID" />
+              </div>
+            </div>
+            <div class="candidate-column">
+              <div class="modal__section">
+                <input id="candidate-phone" type="text" placeholder="Phone Number" inputmode="numeric" />
+                <input id="candidate-email" type="email" placeholder="Email" />
+              </div>
+            </div>
+            <div class="candidate-column">
+              <div class="modal__section">
+                <input id="candidate-job-id" type="text" placeholder="Job ID" />
+                <input id="candidate-job-name" type="text" placeholder="Job Name" />
+                <input id="candidate-job-location" type="text" placeholder="Location" />
+                <input id="candidate-manager" type="text" placeholder="Manager" />
+                <select id="candidate-branch">
+                  <option value="">Branch</option>
+                  <option value="Salem">Salem</option>
+                  <option value="Portland">Portland</option>
+                  <option value="Other">Other</option>
+                </select>
+                <input id="candidate-branch-other" type="text" placeholder="Other Branch" class="hidden" />
+              </div>
+            </div>
           </div>
         </form>
         <div class="modal__footer">
@@ -398,6 +407,30 @@
           <div class="modal__actions">
             <button id="pii-cancel" class="button button--danger" type="button">Cancel</button>
             <button id="pii-submit" class="button button--primary" type="submit" form="pii-form">Save PII</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="neo-date-modal" class="modal hidden">
+      <div class="modal__card modal__card--small">
+        <div class="modal__header">
+          <h2>Neo Scheduled Date</h2>
+          <button id="neo-date-close" class="icon-button">✕</button>
+        </div>
+        <form id="neo-date-form" class="modal__body modal__body--single" autocomplete="off">
+          <div class="modal__section">
+            <div class="date-input-group">
+              <input id="neo-date-input" type="text" inputmode="numeric" maxlength="10" placeholder="MM/DD/YYYY" />
+              <button id="neo-date-picker-button" class="date-picker-button" type="button" aria-label="Pick date">📅</button>
+              <input id="neo-date-picker" class="date-picker-hidden" type="date" aria-hidden="true" tabindex="-1" />
+            </div>
+          </div>
+        </form>
+        <div class="modal__footer">
+          <div class="modal__actions">
+            <button id="neo-date-cancel" class="button button--danger" type="button">Cancel</button>
+            <button id="neo-date-save" class="button button--primary" type="submit" form="neo-date-form">Save Date</button>
           </div>
         </div>
       </div>
