@@ -60,9 +60,25 @@ def apply_round_mask(img: Image.Image, radius: int) -> Image.Image:
     return out
 
 
+def get_icon_font(size: int, target_ratio: float = 0.78) -> ImageFont.FreeTypeFont:
+    # Choose a font size that fills most of the icon while respecting padding.
+    font_size = int(size * 0.82)
+    probe = Image.new("RGB", (size, size))
+    draw = ImageDraw.Draw(probe)
+    font = load_font(font_size)
+    bbox = draw.textbbox((0, 0), "W", font=font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    if text_w == 0 or text_h == 0:
+        return font
+    scale = min((target_ratio * size) / text_w, (target_ratio * size) / text_h)
+    font_size = max(1, int(font_size * scale))
+    return load_font(font_size)
+
+
 def draw_w(img: Image.Image) -> Image.Image:
     size = img.size[0]
-    font = load_font(int(size * 0.7))
+    font = get_icon_font(size)
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     text = "W"
@@ -70,10 +86,10 @@ def draw_w(img: Image.Image) -> Image.Image:
     text_w = bbox[2] - bbox[0]
     text_h = bbox[3] - bbox[1]
     x = (size - text_w) / 2 - bbox[0]
-    y = (size - text_h) / 2 - bbox[1] - size * 0.01
+    y = (size - text_h) / 2 - bbox[1] - size * 0.005
 
     shadow_color = (9, 45, 110, 90)
-    draw.text((x, y + size * 0.015), text, font=font, fill=shadow_color)
+    draw.text((x, y + size * 0.012), text, font=font, fill=shadow_color)
     draw.text((x, y), text, font=font, fill=(255, 255, 255, 255))
     return Image.alpha_composite(img, overlay)
 
@@ -107,7 +123,7 @@ def write_svg(path: Path, size: int = 1080) -> None:
   <rect width="1080" height="1080" rx="220" fill="url(#bg)" />
   <rect width="1080" height="1080" rx="220" fill="url(#glow)" />
   <text x="540" y="540" text-anchor="middle" dominant-baseline="central"
-        font-family="Sora, Segoe UI, Arial, sans-serif" font-size="680" font-weight="700"
+        font-family="Sora, Segoe UI, Arial, sans-serif" font-size="780" font-weight="700"
         fill="#FFFFFF" filter="url(#shadow)">W</text>
 </svg>
 """

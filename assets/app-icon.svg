@@ -16,6 +16,6 @@
   <rect width="1080" height="1080" rx="220" fill="url(#bg)" />
   <rect width="1080" height="1080" rx="220" fill="url(#glow)" />
   <text x="540" y="540" text-anchor="middle" dominant-baseline="central"
-        font-family="Sora, Segoe UI, Arial, sans-serif" font-size="680" font-weight="700"
+        font-family="Sora, Segoe UI, Arial, sans-serif" font-size="780" font-weight="700"
         fill="#FFFFFF" filter="url(#shadow)">W</text>
 </svg>
