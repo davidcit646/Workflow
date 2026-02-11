@@ -45,6 +45,18 @@ def _sha256_hex(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _neutralize_csv_formula(value: object) -> str:
+    text = "" if value is None else str(value)
+    stripped = text.lstrip()
+    if not stripped:
+        return text
+    if stripped.startswith("'"):
+        return text
+    if stripped[0] in ("=", "+", "-", "@"):
+        return "'" + text
+    return text
+
+
 def _temp_cache_path(key: str) -> Path:
     # Don't leak cache keys to the filesystem; always hash.
     return _cache_temp_dir() / f"{_sha256_hex(key)}.json"
@@ -1339,6 +1351,7 @@ def handle(payload: dict) -> dict:
                         value = ""
                     else:
                         value = str(value)
+                    value = _neutralize_csv_formula(value)
                     row.append(value)
                 writer.writerow(row)
             

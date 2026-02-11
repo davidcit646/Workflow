@@ -1,19 +1,60 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
-const path = require('path');
-const fs = require('fs');
-const crypto = require('crypto');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require("electron");
+const path = require("path");
+const fs = require("fs");
+const crypto = require("crypto");
 
-const APP_NAME = 'Workflow';
-const ICON_NAME = process.platform === 'win32' ? 'app-icon.ico' : 'app-icon.png';
-const ICON_PATH = path.join(__dirname, 'assets', ICON_NAME);
-const AUTH_FILE = path.join(app.getPath('userData'), 'auth.json');
-const DATA_FILE = path.join(app.getPath('userData'), 'workflow.enc');
-const LAST_COLUMN_MESSAGE = 'Please remove candidate cards from the last remaining column before deleting it.';
+let keytar = null;
+try {
+  keytar = require("keytar");
+} catch (err) {
+  keytar = null;
+}
+
+const APP_NAME = "Workflow";
+const KEYTAR_SERVICE = "WorkflowTracker";
+const KEYTAR_ACCOUNT = "auth";
+const ICON_NAME = process.platform === "win32" ? "app-icon.ico" : "app-icon.png";
+const ICON_PATH = path.join(__dirname, "assets", ICON_NAME);
+const AUTH_FILE = path.join(app.getPath("userData"), "auth.json");
+const DATA_FILE = path.join(app.getPath("userData"), "workflow.enc");
+const LAST_COLUMN_MESSAGE =
+  "Please remove candidate cards from the last remaining column before deleting it.";
 
 let authState = { configured: false, authenticated: false };
 let activePassword = null;
 let dbCache = null;
 let mainWindow = null;
+
+const AUTH_MAX_ATTEMPTS = 5;
+const AUTH_LOCK_MS = 30 * 1000;
+const AUTH_WINDOW_MS = 5 * 60 * 1000;
+const authLimiter = { failures: 0, lockUntil: 0, lastFailureAt: 0 };
+
+const checkAuthRateLimit = () => {
+  const now = Date.now();
+  if (authLimiter.lastFailureAt && now - authLimiter.lastFailureAt > AUTH_WINDOW_MS) {
+    authLimiter.failures = 0;
+  }
+  if (authLimiter.lockUntil && now < authLimiter.lockUntil) {
+    return { ok: false, retryAfterMs: authLimiter.lockUntil - now };
+  }
+  return { ok: true };
+};
+
+const recordAuthFailure = () => {
+  const now = Date.now();
+  authLimiter.failures += 1;
+  authLimiter.lastFailureAt = now;
+  if (authLimiter.failures >= AUTH_MAX_ATTEMPTS) {
+    authLimiter.lockUntil = now + AUTH_LOCK_MS;
+  }
+};
+
+const recordAuthSuccess = () => {
+  authLimiter.failures = 0;
+  authLimiter.lockUntil = 0;
+  authLimiter.lastFailureAt = 0;
+};
 
 const ensureDir = (dirPath) => {
   try {
@@ -23,10 +64,24 @@ const ensureDir = (dirPath) => {
   }
 };
 
+const enforceFilePermissions = (filePath) => {
+  try {
+    fs.chmodSync(filePath, 0o600);
+  } catch (err) {
+    // ignore (not supported on some platforms)
+  }
+};
+
+const safeWriteFile = (filePath, contents) => {
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(filePath, contents, { mode: 0o600 });
+  enforceFilePermissions(filePath);
+};
+
 const loadAuthFile = () => {
   try {
     if (!fs.existsSync(AUTH_FILE)) return null;
-    const raw = fs.readFileSync(AUTH_FILE, 'utf-8');
+    const raw = fs.readFileSync(AUTH_FILE, "utf-8");
     return JSON.parse(raw);
   } catch (err) {
     return null;
@@ -34,52 +89,321 @@ const loadAuthFile = () => {
 };
 
 const saveAuthFile = (payload) => {
-  ensureDir(path.dirname(AUTH_FILE));
-  fs.writeFileSync(AUTH_FILE, JSON.stringify(payload, null, 2));
+  safeWriteFile(AUTH_FILE, JSON.stringify(payload, null, 2));
+};
+
+const loadAuthData = async () => {
+  if (keytar) {
+    try {
+      const raw = await keytar.getPassword(KEYTAR_SERVICE, KEYTAR_ACCOUNT);
+      if (raw) return JSON.parse(raw);
+    } catch (err) {
+      // fallback to file
+    }
+  }
+  return loadAuthFile();
+};
+
+const saveAuthData = async (payload) => {
+  if (keytar) {
+    try {
+      await keytar.setPassword(KEYTAR_SERVICE, KEYTAR_ACCOUNT, JSON.stringify(payload));
+      return true;
+    } catch (err) {
+      // fallback to file
+    }
+  }
+  saveAuthFile(payload);
+  return true;
 };
 
 const deriveKey = (password, salt, iterations = 200000) => {
-  return crypto.pbkdf2Sync(password, salt, iterations, 32, 'sha256');
+  return crypto.pbkdf2Sync(password, salt, iterations, 32, "sha256");
 };
 
 const hashPassword = (password, salt, iterations = 200000) => {
   const key = deriveKey(password, salt, iterations);
-  return key.toString('base64');
+  return key.toString("base64");
+};
+
+const safeCompare = (a, b) => {
+  const aBuf = Buffer.from(String(a));
+  const bBuf = Buffer.from(String(b));
+  if (aBuf.length !== bBuf.length) return false;
+  return crypto.timingSafeEqual(aBuf, bBuf);
 };
 
 const encryptPayload = (payload, password) => {
   const salt = crypto.randomBytes(16);
   const iv = crypto.randomBytes(12);
   const key = deriveKey(password, salt);
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
   const plaintext = Buffer.from(JSON.stringify(payload));
   const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   const tag = cipher.getAuthTag();
 
   return {
     v: 1,
-    salt: salt.toString('base64'),
-    iv: iv.toString('base64'),
-    tag: tag.toString('base64'),
-    data: encrypted.toString('base64'),
+    salt: salt.toString("base64"),
+    iv: iv.toString("base64"),
+    tag: tag.toString("base64"),
+    data: encrypted.toString("base64"),
   };
 };
 
 const decryptPayload = (payload, password) => {
   if (!payload || !payload.salt || !payload.iv || !payload.tag || !payload.data) return null;
-  const salt = Buffer.from(payload.salt, 'base64');
-  const iv = Buffer.from(payload.iv, 'base64');
-  const tag = Buffer.from(payload.tag, 'base64');
-  const encrypted = Buffer.from(payload.data, 'base64');
+  const salt = Buffer.from(payload.salt, "base64");
+  const iv = Buffer.from(payload.iv, "base64");
+  const tag = Buffer.from(payload.tag, "base64");
+  const encrypted = Buffer.from(payload.data, "base64");
   const key = deriveKey(password, salt);
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
   decipher.setAuthTag(tag);
   const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
-  return JSON.parse(decrypted.toString('utf-8'));
+  return JSON.parse(decrypted.toString("utf-8"));
+};
+
+const DB_VERSION = 2;
+const RECYCLE_LIMIT = 20;
+const RECYCLE_TTL_MS = 15 * 60 * 1000;
+const MAX_FIELD_LEN = 200;
+const MAX_NOTE_LEN = 2000;
+const MAX_TODO_LEN = 200;
+const MAX_COLUMN_NAME_LEN = 60;
+const MAX_ID_LEN = 128;
+
+const clampString = (value, maxLen, { trim = false } = {}) => {
+  if (value === null || value === undefined) return "";
+  let text = String(value);
+  if (trim) text = text.trim();
+  if (text) {
+    text = Array.from(text)
+      .filter((ch) => {
+        const code = ch.charCodeAt(0);
+        return code >= 32 && code !== 127;
+      })
+      .join("");
+  }
+  if (text.length > maxLen) text = text.slice(0, maxLen);
+  return text;
+};
+
+const clampId = (value) => clampString(value, MAX_ID_LEN, { trim: true });
+
+const sanitizeRecord = (record, limits) => {
+  const out = {};
+  if (!record || typeof record !== "object") return out;
+  Object.keys(limits).forEach((key) => {
+    if (record[key] !== undefined) {
+      out[key] = clampString(record[key], limits[key]);
+    }
+  });
+  return out;
+};
+
+const sanitizeCardPayload = (payload) => {
+  const limits = {
+    candidate_name: 120,
+    icims_id: 64,
+    employee_id: 64,
+    job_id: 64,
+    job_name: 120,
+    job_location: 120,
+    manager: 80,
+    branch: 80,
+    contact_phone: 32,
+    contact_email: 120,
+    column_id: MAX_ID_LEN,
+  };
+  return sanitizeRecord(payload, limits);
+};
+
+const sanitizePiiPayload = (data) => {
+  const limits = {};
+  KANBAN_CANDIDATE_FIELDS.forEach((field) => {
+    if (field === "Additional Details" || field === "Additional Notes") {
+      limits[field] = MAX_NOTE_LEN;
+    } else {
+      limits[field] = MAX_FIELD_LEN;
+    }
+  });
+  return sanitizeRecord(data, limits);
+};
+
+const sanitizeWeeklyEntries = (entries) => {
+  const days = ["Friday", "Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"];
+  const sanitized = {};
+  if (!entries || typeof entries !== "object") return sanitized;
+  days.forEach((day) => {
+    const entry = entries[day] || {};
+    sanitized[day] = {
+      start: clampString(entry.start, 16),
+      end: clampString(entry.end, 16),
+      content: clampString(entry.content, MAX_NOTE_LEN),
+    };
+  });
+  return sanitized;
+};
+
+const sanitizeTodos = (todos) => {
+  if (!Array.isArray(todos)) return [];
+  return todos.slice(0, 500).map((todo) => ({
+    id: clampId(todo && todo.id ? todo.id : ""),
+    text: clampString(todo && todo.text ? todo.text : "", MAX_TODO_LEN),
+    done: !!(todo && todo.done),
+    createdAt: clampString(todo && todo.createdAt ? todo.createdAt : "", 64),
+  }));
+};
+
+const sanitizeRowIds = (rowIds) => {
+  if (!Array.isArray(rowIds)) return [];
+  return rowIds.map((id) => clampId(id)).filter((id) => id);
+};
+
+const ensureDbShape = (db) => {
+  if (!db || typeof db !== "object") return defaultDb();
+  if (!db.kanban || typeof db.kanban !== "object") {
+    db.kanban = { columns: [], cards: [], candidates: [] };
+  }
+  if (!Array.isArray(db.kanban.columns)) db.kanban.columns = [];
+  if (!Array.isArray(db.kanban.cards)) db.kanban.cards = [];
+  if (!Array.isArray(db.kanban.candidates)) db.kanban.candidates = [];
+  if (!db.weekly || typeof db.weekly !== "object") db.weekly = {};
+  if (!Array.isArray(db.todos)) db.todos = [];
+  if (!db.recycle || typeof db.recycle !== "object") db.recycle = { items: [] };
+  if (!Array.isArray(db.recycle.items)) db.recycle.items = [];
+  return db;
+};
+
+const migrateDb = (db) => {
+  const next = ensureDbShape(db);
+  let version = Number.isFinite(next.version) ? Number(next.version) : 0;
+  if (!version) version = 1;
+  if (version < 2) {
+    if (!next.recycle) next.recycle = { items: [] };
+    if (!Array.isArray(next.recycle.items)) next.recycle.items = [];
+  }
+  next.version = DB_VERSION;
+  return next;
+};
+
+const pruneRecycleBin = (db) => {
+  if (!db || !db.recycle || !Array.isArray(db.recycle.items)) return;
+  const now = Date.now();
+  db.recycle.items = db.recycle.items.filter((item) => {
+    if (!item || !item.deleted_at) return false;
+    const ts = Date.parse(item.deleted_at);
+    if (Number.isNaN(ts)) return false;
+    return now - ts <= RECYCLE_TTL_MS;
+  });
+  if (db.recycle.items.length > RECYCLE_LIMIT) {
+    db.recycle.items = db.recycle.items.slice(-RECYCLE_LIMIT);
+  }
+};
+
+const pushRecycleItem = (db, item) => {
+  if (!db || !item) return null;
+  ensureDbShape(db);
+  const entry = {
+    id: crypto.randomUUID(),
+    deleted_at: new Date().toISOString(),
+    ...item,
+  };
+  db.recycle.items.push(entry);
+  pruneRecycleBin(db);
+  return entry.id;
+};
+
+const popRecycleItem = (db, id) => {
+  if (!db || !db.recycle || !Array.isArray(db.recycle.items)) return null;
+  const idx = db.recycle.items.findIndex((item) => item && item.id === id);
+  if (idx === -1) return null;
+  const [item] = db.recycle.items.splice(idx, 1);
+  return item || null;
+};
+
+const restoreRecycleItem = (db, item) => {
+  if (!db || !item || !item.type) return false;
+  ensureDbShape(db);
+  switch (item.type) {
+    case "kanban_cards": {
+      const cards = Array.isArray(item.cards) ? item.cards : [];
+      const rows = Array.isArray(item.candidates) ? item.candidates : [];
+      const existingCardIds = new Set(db.kanban.cards.map((card) => card.uuid));
+      const existingRowIds = new Set(db.kanban.candidates.map((row) => row["candidate UUID"]));
+      cards.forEach((card) => {
+        if (card && card.uuid && !existingCardIds.has(card.uuid)) {
+          db.kanban.cards.push(card);
+        }
+      });
+      rows.forEach((row) => {
+        const rowId = row && row["candidate UUID"];
+        if (rowId && !existingRowIds.has(rowId)) {
+          db.kanban.candidates.push(row);
+        }
+      });
+      return true;
+    }
+    case "kanban_columns": {
+      const columns = Array.isArray(item.columns) ? item.columns : [];
+      const cards = Array.isArray(item.cards) ? item.cards : [];
+      const existingColumnIds = new Set(db.kanban.columns.map((col) => col.id));
+      columns.forEach((col) => {
+        if (col && col.id && !existingColumnIds.has(col.id)) {
+          db.kanban.columns.push(col);
+        }
+      });
+      const cardIds = new Set(cards.map((card) => card && card.uuid).filter(Boolean));
+      db.kanban.cards = db.kanban.cards.filter((card) => !cardIds.has(card.uuid));
+      cards.forEach((card) => {
+        if (card && card.uuid) db.kanban.cards.push(card);
+      });
+      return true;
+    }
+    case "candidate_rows": {
+      const rows = Array.isArray(item.candidates) ? item.candidates : [];
+      const existingRowIds = new Set(db.kanban.candidates.map((row) => row["candidate UUID"]));
+      rows.forEach((row) => {
+        const rowId = row && row["candidate UUID"];
+        if (rowId && !existingRowIds.has(rowId)) {
+          db.kanban.candidates.push(row);
+        }
+      });
+      return true;
+    }
+    case "weekly_entries": {
+      const entries = Array.isArray(item.entries) ? item.entries : [];
+      entries.forEach((entry) => {
+        if (!entry || !entry.week_start || !entry.day) return;
+        if (!db.weekly[entry.week_start]) {
+          db.weekly[entry.week_start] = {
+            week_start: entry.week_start,
+            week_end: entry.week_end || "",
+            entries: {},
+          };
+        }
+        db.weekly[entry.week_start].entries[entry.day] = entry.payload || {};
+      });
+      return true;
+    }
+    case "todos": {
+      const todos = Array.isArray(item.todos) ? item.todos : [];
+      const existingIds = new Set(db.todos.map((todo) => todo.id));
+      todos.forEach((todo) => {
+        if (todo && todo.id && !existingIds.has(todo.id)) {
+          db.todos.push(todo);
+        }
+      });
+      return true;
+    }
+    default:
+      return false;
+  }
 };
 
 const defaultDb = () => ({
-  version: 1,
+  version: DB_VERSION,
   kanban: {
     columns: [],
     cards: [],
@@ -87,43 +411,46 @@ const defaultDb = () => ({
   },
   weekly: {},
   todos: [],
+  recycle: {
+    items: [],
+  },
 });
 
 const loadDb = () => {
   if (dbCache) return dbCache;
   if (!activePassword) return null;
   if (!fs.existsSync(DATA_FILE)) {
-    dbCache = defaultDb();
+    dbCache = migrateDb(defaultDb());
     saveDb(dbCache);
     return dbCache;
   }
   try {
-    const raw = fs.readFileSync(DATA_FILE, 'utf-8');
+    const raw = fs.readFileSync(DATA_FILE, "utf-8");
     const encrypted = JSON.parse(raw);
-    dbCache = decryptPayload(encrypted, activePassword) || defaultDb();
+    dbCache = migrateDb(decryptPayload(encrypted, activePassword) || defaultDb());
+    pruneRecycleBin(dbCache);
     return dbCache;
   } catch (err) {
-    dbCache = defaultDb();
+    dbCache = migrateDb(defaultDb());
     return dbCache;
   }
 };
 
 const saveDb = (db) => {
   if (!activePassword) return;
-  ensureDir(path.dirname(DATA_FILE));
   const encrypted = encryptPayload(db, activePassword);
-  fs.writeFileSync(DATA_FILE, JSON.stringify(encrypted, null, 2));
+  safeWriteFile(DATA_FILE, JSON.stringify(encrypted, null, 2));
 };
 
-const ensureAuthState = () => {
-  const auth = loadAuthFile();
+const ensureAuthState = async () => {
+  const auth = await loadAuthData();
   authState.configured = !!auth;
   authState.authenticated = !!(auth && authState.authenticated && activePassword);
 };
 
 const requireAuth = () => {
   if (!authState.authenticated || !activePassword) {
-    throw new Error('Not authenticated');
+    throw new Error("Not authenticated");
   }
 };
 
@@ -143,20 +470,22 @@ const getCurrentWeek = () => {
 };
 
 const parseWeeklyTime = (value) => {
-  const raw = String(value || '').trim().toLowerCase();
+  const raw = String(value || "")
+    .trim()
+    .toLowerCase();
   if (!raw) return null;
 
   const meridiemMatch = raw.match(/\b([ap])(?:\.?m\.?)?\b/);
   const meridiem = meridiemMatch ? meridiemMatch[1] : null;
-  const cleaned = raw.replace(/[^\d:]/g, '');
+  const cleaned = raw.replace(/[^\d:]/g, "");
   if (!cleaned) return null;
 
   let hours = null;
   let minutes = null;
 
-  if (cleaned.includes(':')) {
-    const [h, m] = cleaned.split(':');
-    if (!/^\d{1,2}$/.test(h || '') || !/^\d{1,2}$/.test(m || '')) return null;
+  if (cleaned.includes(":")) {
+    const [h, m] = cleaned.split(":");
+    if (!/^\d{1,2}$/.test(h || "") || !/^\d{1,2}$/.test(m || "")) return null;
     hours = Number(h);
     minutes = Number(m);
   } else {
@@ -180,7 +509,7 @@ const parseWeeklyTime = (value) => {
 
   if (meridiem) {
     if (hours < 1 || hours > 12) return null;
-    if (meridiem === 'a') {
+    if (meridiem === "a") {
       hours = hours === 12 ? 0 : hours;
     } else {
       hours = hours === 12 ? 12 : hours + 12;
@@ -193,9 +522,9 @@ const parseWeeklyTime = (value) => {
 };
 
 const formatHours = (minutes) => {
-  if (minutes === null || minutes === undefined) return '—';
+  if (minutes === null || minutes === undefined) return "—";
   const hours = minutes / 60;
-  return Number.isFinite(hours) ? hours.toFixed(2) : '—';
+  return Number.isFinite(hours) ? hours.toFixed(2) : "—";
 };
 
 const buildWeeklySummary = (weekData) => {
@@ -207,9 +536,9 @@ const buildWeeklySummary = (weekData) => {
   let hasTotals = false;
 
   const dayBlocks = days.map((day) => {
-    const entry = entries[day] || { start: '', end: '', content: '' };
-    const startText = String(entry.start || '').trim();
-    const endText = String(entry.end || '').trim();
+    const entry = entries[day] || { start: "", end: "", content: "" };
+    const startText = String(entry.start || "").trim();
+    const endText = String(entry.end || "").trim();
     const startMinutes = parseWeeklyTime(startText);
     const endMinutes = parseWeeklyTime(endText);
     let dayMinutes = null;
@@ -220,103 +549,103 @@ const buildWeeklySummary = (weekData) => {
       hasTotals = true;
     }
 
-    const contentLines = String(entry.content || '')
+    const contentLines = String(entry.content || "")
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean);
     const activities = contentLines.length
       ? contentLines.map((line) => `- ${line}`)
-      : ['_No activities entered._'];
+      : ["_No activities entered._"];
 
     return {
       day,
-      startText: startText || '—',
-      endText: endText || '—',
+      startText: startText || "—",
+      endText: endText || "—",
       hoursText: formatHours(dayMinutes),
       activities,
     };
   });
 
-  const totalHoursText = hasTotals ? formatHours(totalMinutes) : '—';
+  const totalHoursText = hasTotals ? formatHours(totalMinutes) : "—";
 
-  lines.push('# Weekly Work Tracker');
-  lines.push('');
+  lines.push("# Weekly Work Tracker");
+  lines.push("");
   lines.push(`**Work Week:** ${week_start} – ${week_end}`);
   lines.push(`**Generated:** ${now.toLocaleString()}`);
-  lines.push('');
-  lines.push('---');
-  lines.push('');
-  lines.push('## Summary');
-  lines.push('');
-  lines.push('| Metric | Value |');
-  lines.push('| --- | --- |');
+  lines.push("");
+  lines.push("---");
+  lines.push("");
+  lines.push("## Summary");
+  lines.push("");
+  lines.push("| Metric | Value |");
+  lines.push("| --- | --- |");
   lines.push(`| Total Hours | **${totalHoursText}** |`);
-  lines.push('');
-  lines.push('## Overview');
-  lines.push('');
-  lines.push('| Day | Start | End | Hours |');
-  lines.push('| --- | --- | --- | --- |');
+  lines.push("");
+  lines.push("## Overview");
+  lines.push("");
+  lines.push("| Day | Start | End | Hours |");
+  lines.push("| --- | --- | --- | --- |");
   dayBlocks.forEach((block) => {
     lines.push(`| ${block.day} | ${block.startText} | ${block.endText} | ${block.hoursText} |`);
   });
-  lines.push('');
+  lines.push("");
 
   dayBlocks.forEach((block) => {
     lines.push(`## ${block.day}`);
-    lines.push('');
-    lines.push('**Activities**');
+    lines.push("");
+    lines.push("**Activities**");
     lines.push(...block.activities);
-    lines.push('');
+    lines.push("");
   });
 
-  return lines.join('\n');
+  return lines.join("\n");
 };
 
 const KANBAN_CANDIDATE_FIELDS = [
-  'Candidate Name',
-  'Hire Date',
-  'ICIMS ID',
-  'Employee ID',
-  'Neo Arrival Time',
-  'Neo Departure Time',
-  'Total Neo Hours',
-  'Job ID Name',
-  'Job Location',
-  'Manager',
-  'Branch',
-  'Contact Phone',
-  'Contact Email',
-  'Background Provider',
-  'Background Cleared Date',
-  'Background MVR Flag',
-  'License Type',
-  'MA CORI Status',
-  'MA CORI Date',
-  'NH GC Status',
-  'NH GC Expiration Date',
-  'NH GC ID Number',
-  'ME GC Status',
-  'ME GC Expiration Date',
-  'ID Type',
-  'State Abbreviation',
-  'ID Number',
-  'DOB',
-  'EXP',
-  'Other ID Type',
-  'Social',
-  'Bank Name',
-  'Account Type',
-  'Routing Number',
-  'Account Number',
-  'Shirt Size',
-  'Pants Size',
-  'Boots Size',
-  'Emergency Contact Name',
-  'Emergency Contact Relationship',
-  'Emergency Contact Phone',
-  'Additional Details',
-  'Additional Notes',
-  'candidate UUID',
+  "Candidate Name",
+  "Hire Date",
+  "ICIMS ID",
+  "Employee ID",
+  "Neo Arrival Time",
+  "Neo Departure Time",
+  "Total Neo Hours",
+  "Job ID Name",
+  "Job Location",
+  "Manager",
+  "Branch",
+  "Contact Phone",
+  "Contact Email",
+  "Background Provider",
+  "Background Cleared Date",
+  "Background MVR Flag",
+  "License Type",
+  "MA CORI Status",
+  "MA CORI Date",
+  "NH GC Status",
+  "NH GC Expiration Date",
+  "NH GC ID Number",
+  "ME GC Status",
+  "ME GC Expiration Date",
+  "ID Type",
+  "State Abbreviation",
+  "ID Number",
+  "DOB",
+  "EXP",
+  "Other ID Type",
+  "Social",
+  "Bank Name",
+  "Account Type",
+  "Routing Number",
+  "Account Number",
+  "Shirt Size",
+  "Pants Size",
+  "Boots Size",
+  "Emergency Contact Name",
+  "Emergency Contact Relationship",
+  "Emergency Contact Phone",
+  "Additional Details",
+  "Additional Notes",
+  "candidate UUID",
 ];
 
 const normalizeTodos = (todos = []) => {
@@ -326,7 +655,7 @@ const normalizeTodos = (todos = []) => {
       todo.id = crypto.randomUUID();
       changed = true;
     }
-    if (typeof todo.done !== 'boolean') {
+    if (typeof todo.done !== "boolean") {
       todo.done = !!todo.done;
       changed = true;
     }
@@ -335,7 +664,7 @@ const normalizeTodos = (todos = []) => {
 };
 
 const parseDateValue = (value) => {
-  const text = String(value || '').trim();
+  const text = String(value || "").trim();
   if (!text) return null;
   const ts = Date.parse(text);
   return Number.isNaN(ts) ? null : ts;
@@ -343,14 +672,14 @@ const parseDateValue = (value) => {
 
 const sortCandidateRowsByHireDate = (rows) => {
   return rows.sort((a, b) => {
-    const aTime = parseDateValue(a['Hire Date']);
-    const bTime = parseDateValue(b['Hire Date']);
+    const aTime = parseDateValue(a["Hire Date"]);
+    const bTime = parseDateValue(b["Hire Date"]);
     if (aTime === null && bTime === null) return 0;
     if (aTime === null) return 1;
     if (bTime === null) return -1;
     if (aTime !== bTime) return aTime - bTime;
-    const aName = String(a['Candidate Name'] || '');
-    const bName = String(b['Candidate Name'] || '');
+    const aName = String(a["Candidate Name"] || "");
+    const bName = String(b["Candidate Name"] || "");
     return aName.localeCompare(bName);
   });
 };
@@ -387,16 +716,60 @@ const moveCardsToColumn = (db, fromColumnIds, targetColumnId) => {
     });
 };
 
+const removeKanbanColumns = (db, columnIds) => {
+  const ids = new Set(columnIds || []);
+  const removedColumns = db.kanban.columns.filter((col) => ids.has(col.id));
+  const remaining = db.kanban.columns.filter((col) => !ids.has(col.id));
+  const removedCards = db.kanban.cards.filter((card) => ids.has(card.column_id));
+  if (remaining.length === 0 && removedCards.length) {
+    return { ok: false, error: "last_column", message: LAST_COLUMN_MESSAGE };
+  }
+  const removedColumnsSnapshot = removedColumns.map((col) => ({ ...col }));
+  const removedCardsSnapshot = removedCards.map((card) => ({ ...card }));
+
+  if (remaining.length > 0 && removedCards.length) {
+    const target = pickFallbackColumn(db.kanban.columns, removedColumns[0]?.id);
+    if (target) {
+      moveCardsToColumn(db, new Set(removedColumns.map((col) => col.id)), target.id);
+    }
+  }
+  db.kanban.columns = remaining;
+
+  let undoId = null;
+  if (removedColumnsSnapshot.length) {
+    undoId = pushRecycleItem(db, {
+      type: "kanban_columns",
+      columns: removedColumnsSnapshot,
+      cards: removedCardsSnapshot,
+    });
+  }
+
+  return { ok: true, columns: db.kanban.columns, cards: db.kanban.cards, undoId };
+};
+
 const sanitizeFilename = (name) => {
-  const safe = String(name || '')
-    .replace(/[^\w\- ]+/g, '')
+  const safe = String(name || "")
+    .replace(/[^\w\- ]+/g, "")
     .trim()
-    .replace(/\s+/g, '_');
-  return safe || 'export';
+    .replace(/\s+/g, "_");
+  return safe || "export";
+};
+
+const shouldNeutralizeCsv = (value) => {
+  const text = value === null || value === undefined ? "" : String(value);
+  const trimmed = text.trimStart();
+  if (!trimmed) return false;
+  if (trimmed.startsWith("'")) return false;
+  return /^[=+\-@]/.test(trimmed);
+};
+
+const neutralizeCsvFormula = (value) => {
+  const text = value === null || value === undefined ? "" : String(value);
+  return shouldNeutralizeCsv(text) ? `'${text}` : text;
 };
 
 const csvEscape = (value) => {
-  const str = value === null || value === undefined ? '' : String(value);
+  const str = neutralizeCsvFormula(value);
   if (/[",\n\r]/.test(str)) {
     return `"${str.replace(/"/g, '""')}"`;
   }
@@ -404,61 +777,61 @@ const csvEscape = (value) => {
 };
 
 const rowsToCsv = (columns, rows) => {
-  let cols = Array.isArray(columns) ? columns.filter((col) => col && col !== '__rowId') : [];
+  let cols = Array.isArray(columns) ? columns.filter((col) => col && col !== "__rowId") : [];
   const dataRows = Array.isArray(rows) ? rows : [];
   if (!cols.length && dataRows.length) {
-    cols = Object.keys(dataRows[0]).filter((col) => col !== '__rowId');
+    cols = Object.keys(dataRows[0]).filter((col) => col !== "__rowId");
   }
   const lines = [];
   if (cols.length) {
-    lines.push(cols.map(csvEscape).join(','));
+    lines.push(cols.map(csvEscape).join(","));
   }
   dataRows.forEach((row) => {
-    const line = cols.map((col) => csvEscape(row ? row[col] : '')).join(',');
+    const line = cols.map((col) => csvEscape(row ? row[col] : "")).join(",");
     lines.push(line);
   });
-  return lines.join('\n');
+  return lines.join("\n");
 };
 
 const SENSITIVE_PII_FIELDS = [
-  'Contact Phone',
-  'Contact Email',
-  'Background Provider',
-  'Background Cleared Date',
-  'Background MVR Flag',
-  'License Type',
-  'MA CORI Status',
-  'MA CORI Date',
-  'NH GC Status',
-  'NH GC Expiration Date',
-  'NH GC ID Number',
-  'ME GC Status',
-  'ME GC Expiration Date',
-  'ID Type',
-  'State Abbreviation',
-  'ID Number',
-  'DOB',
-  'EXP',
-  'Other ID Type',
-  'Social',
-  'Bank Name',
-  'Account Type',
-  'Routing Number',
-  'Account Number',
-  'Shirt Size',
-  'Pants Size',
-  'Boots Size',
-  'Emergency Contact Name',
-  'Emergency Contact Relationship',
-  'Emergency Contact Phone',
-  'Additional Details',
-  'Additional Notes',
+  "Contact Phone",
+  "Contact Email",
+  "Background Provider",
+  "Background Cleared Date",
+  "Background MVR Flag",
+  "License Type",
+  "MA CORI Status",
+  "MA CORI Date",
+  "NH GC Status",
+  "NH GC Expiration Date",
+  "NH GC ID Number",
+  "ME GC Status",
+  "ME GC Expiration Date",
+  "ID Type",
+  "State Abbreviation",
+  "ID Number",
+  "DOB",
+  "EXP",
+  "Other ID Type",
+  "Social",
+  "Bank Name",
+  "Account Type",
+  "Routing Number",
+  "Account Number",
+  "Shirt Size",
+  "Pants Size",
+  "Boots Size",
+  "Emergency Contact Name",
+  "Emergency Contact Relationship",
+  "Emergency Contact Phone",
+  "Additional Details",
+  "Additional Notes",
 ];
 
-const SENSITIVE_CARD_FIELDS = ['icims_id', 'employee_id'];
+const SENSITIVE_CARD_FIELDS = ["icims_id", "employee_id"];
 
 const parseMilitaryTime = (value) => {
-  const digits = String(value || '').replace(/\D/g, '');
+  const digits = String(value || "").replace(/\D/g, "");
   if (digits.length !== 4) return null;
   const hours = Number(digits.slice(0, 2));
   const minutes = Number(digits.slice(2, 4));
@@ -475,73 +848,75 @@ const roundToQuarterHour = (minutes) => {
 };
 
 const formatMilitaryTime = (minutes) => {
-  if (minutes === null || minutes === undefined) return '';
+  if (minutes === null || minutes === undefined) return "";
   const hours = Math.floor(minutes / 60);
   const mins = minutes % 60;
-  return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+  return `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
 };
 
 const formatTotalHours = (minutes) => {
-  if (minutes === null || minutes === undefined) return '';
+  if (minutes === null || minutes === undefined) return "";
   const hours = minutes / 60;
-  return Number.isFinite(hours) ? hours.toFixed(2) : '';
+  return Number.isFinite(hours) ? hours.toFixed(2) : "";
 };
 
 const TABLE_DEFS = {
   kanban_columns: {
-    name: 'Kanban Columns',
-    columns: ['id', 'name', 'order', 'created_at', 'updated_at'],
-    rows: (db) => (db.kanban.columns || []).map((col) => ({
-      __rowId: col.id,
-      id: col.id,
-      name: col.name,
-      order: col.order ?? '',
-      created_at: col.created_at ?? '',
-      updated_at: col.updated_at ?? '',
-    })),
+    name: "Kanban Columns",
+    columns: ["id", "name", "order", "created_at", "updated_at"],
+    rows: (db) =>
+      (db.kanban.columns || []).map((col) => ({
+        __rowId: col.id,
+        id: col.id,
+        name: col.name,
+        order: col.order ?? "",
+        created_at: col.created_at ?? "",
+        updated_at: col.updated_at ?? "",
+      })),
   },
   kanban_cards: {
-    name: 'Kanban Cards',
+    name: "Kanban Cards",
     columns: [
-      'uuid',
-      'candidate_name',
-      'icims_id',
-      'employee_id',
-      'job_id',
-      'job_name',
-      'job_location',
-      'manager',
-      'branch',
-      'column_id',
-      'order',
-      'created_at',
-      'updated_at',
+      "uuid",
+      "candidate_name",
+      "icims_id",
+      "employee_id",
+      "job_id",
+      "job_name",
+      "job_location",
+      "manager",
+      "branch",
+      "column_id",
+      "order",
+      "created_at",
+      "updated_at",
     ],
-    rows: (db) => (db.kanban.cards || []).map((card) => ({
-      __rowId: card.uuid,
-      uuid: card.uuid,
-      candidate_name: card.candidate_name || '',
-      icims_id: card.icims_id || '',
-      employee_id: card.employee_id || '',
-      job_id: card.job_id || '',
-      job_name: card.job_name || '',
-      job_location: card.job_location || '',
-      manager: card.manager || '',
-      branch: card.branch || '',
-      column_id: card.column_id || '',
-      order: card.order ?? '',
-      created_at: card.created_at || '',
-      updated_at: card.updated_at || '',
-    })),
+    rows: (db) =>
+      (db.kanban.cards || []).map((card) => ({
+        __rowId: card.uuid,
+        uuid: card.uuid,
+        candidate_name: card.candidate_name || "",
+        icims_id: card.icims_id || "",
+        employee_id: card.employee_id || "",
+        job_id: card.job_id || "",
+        job_name: card.job_name || "",
+        job_location: card.job_location || "",
+        manager: card.manager || "",
+        branch: card.branch || "",
+        column_id: card.column_id || "",
+        order: card.order ?? "",
+        created_at: card.created_at || "",
+        updated_at: card.updated_at || "",
+      })),
   },
   candidate_data: {
-    name: 'Onboarding Candidate Data',
+    name: "Onboarding Candidate Data",
     columns: [...KANBAN_CANDIDATE_FIELDS],
     rows: (db) => {
       const rows = (db.kanban.candidates || []).map((row) => ({
-        __rowId: row['candidate UUID'] || row['Candidate Name'] || crypto.randomUUID(),
+        __rowId: row["candidate UUID"] || row["Candidate Name"] || crypto.randomUUID(),
         ...KANBAN_CANDIDATE_FIELDS.reduce((acc, key) => {
-          acc[key] = row[key] ?? '';
+          acc[key] = row[key] ?? "";
           return acc;
         }, {}),
       }));
@@ -549,8 +924,8 @@ const TABLE_DEFS = {
     },
   },
   weekly_entries: {
-    name: 'Weekly Tracker Entries',
-    columns: ['week_start', 'week_end', 'day', 'start', 'end', 'content'],
+    name: "Weekly Tracker Entries",
+    columns: ["week_start", "week_end", "day", "start", "end", "content"],
     rows: (db) => {
       const rows = [];
       const weeks = db.weekly || {};
@@ -560,12 +935,12 @@ const TABLE_DEFS = {
           const entry = entries[day] || {};
           rows.push({
             __rowId: `${week.week_start}-${day}`,
-            week_start: week.week_start || '',
-            week_end: week.week_end || '',
+            week_start: week.week_start || "",
+            week_end: week.week_end || "",
             day,
-            start: entry.start || '',
-            end: entry.end || '',
-            content: entry.content || '',
+            start: entry.start || "",
+            end: entry.end || "",
+            content: entry.content || "",
           });
         });
       });
@@ -573,16 +948,16 @@ const TABLE_DEFS = {
     },
   },
   todos: {
-    name: 'Todos',
-    columns: ['id', 'text', 'done', 'createdAt'],
+    name: "Todos",
+    columns: ["id", "text", "done", "createdAt"],
     rows: (db) => {
       const todos = db.todos || [];
       return todos.map((todo) => ({
         __rowId: todo.id,
         id: todo.id,
-        text: todo.text || '',
+        text: todo.text || "",
         done: !!todo.done,
-        createdAt: todo.createdAt || '',
+        createdAt: todo.createdAt || "",
       }));
     },
   },
@@ -600,72 +975,94 @@ const buildTable = (tableId, db) => {
 };
 
 const ensureCandidateRow = (db, candidateId) => {
-  let row = db.kanban.candidates.find((item) => item['candidate UUID'] === candidateId);
+  let row = db.kanban.candidates.find((item) => item["candidate UUID"] === candidateId);
   if (!row) {
     row = {};
-    KANBAN_CANDIDATE_FIELDS.forEach((field) => { row[field] = ''; });
-    row['candidate UUID'] = candidateId;
+    KANBAN_CANDIDATE_FIELDS.forEach((field) => {
+      row[field] = "";
+    });
+    row["candidate UUID"] = candidateId;
     const card = db.kanban.cards.find((c) => c.uuid === candidateId);
     if (card) {
-      row['Candidate Name'] = card.candidate_name || '';
+      row["Candidate Name"] = card.candidate_name || "";
     }
     db.kanban.candidates.push(row);
   } else {
     KANBAN_CANDIDATE_FIELDS.forEach((field) => {
-      if (row[field] === undefined) row[field] = '';
+      if (row[field] === undefined) row[field] = "";
     });
-    if (!row['candidate UUID']) row['candidate UUID'] = candidateId;
+    if (!row["candidate UUID"]) row["candidate UUID"] = candidateId;
   }
   return row;
 };
 
 const jobIdName = (jobId, jobName) => {
-  return [jobId, jobName].filter(Boolean).join(' ').trim();
+  return [jobId, jobName].filter(Boolean).join(" ").trim();
 };
 
 const createWindow = () => {
-  const isMac = process.platform === 'darwin';
+  const isMac = process.platform === "darwin";
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
-    backgroundColor: '#f6f7fb',
+    backgroundColor: "#f6f7fb",
     title: APP_NAME,
     icon: ICON_PATH,
     frame: false,
     autoHideMenuBar: !isMac,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
+      enableRemoteModule: false,
     },
   });
 
-  mainWindow.loadFile(path.join(__dirname, '..', 'web', 'index.html'));
+  mainWindow.loadFile(path.join(__dirname, "..", "web", "index.html"));
 
-  mainWindow.on('maximize', () => {
-    if (mainWindow) mainWindow.webContents.send('window:maximized');
+  const isSafeInternalUrl = (url) => url.startsWith("file://");
+  const isSafeExternalUrl = (url) => /^https?:\/\//.test(url);
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isSafeExternalUrl(url)) {
+      shell.openExternal(url);
+    }
+    return { action: "deny" };
   });
-  mainWindow.on('unmaximize', () => {
-    if (mainWindow) mainWindow.webContents.send('window:unmaximized');
+
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (isSafeInternalUrl(url)) return;
+    event.preventDefault();
+    if (isSafeExternalUrl(url)) {
+      shell.openExternal(url);
+    }
+  });
+
+  mainWindow.on("maximize", () => {
+    if (mainWindow) mainWindow.webContents.send("window:maximized");
+  });
+  mainWindow.on("unmaximize", () => {
+    if (mainWindow) mainWindow.webContents.send("window:unmaximized");
   });
 };
 
-ipcMain.handle('window:minimize', () => {
+ipcMain.handle("window:minimize", () => {
   if (mainWindow) mainWindow.minimize();
   return true;
 });
 
-ipcMain.handle('window:maximize', () => {
+ipcMain.handle("window:maximize", () => {
   if (mainWindow && !mainWindow.isMaximized()) mainWindow.maximize();
   return true;
 });
 
-ipcMain.handle('window:unmaximize', () => {
+ipcMain.handle("window:unmaximize", () => {
   if (mainWindow && mainWindow.isMaximized()) mainWindow.unmaximize();
   return true;
 });
 
-ipcMain.handle('window:toggleMaximize', () => {
+ipcMain.handle("window:toggleMaximize", () => {
   if (!mainWindow) return false;
   if (mainWindow.isMaximized()) {
     mainWindow.unmaximize();
@@ -675,255 +1072,290 @@ ipcMain.handle('window:toggleMaximize', () => {
   return true;
 });
 
-ipcMain.handle('window:isMaximized', () => {
+ipcMain.handle("window:isMaximized", () => {
   return mainWindow ? mainWindow.isMaximized() : false;
 });
 
-ipcMain.handle('window:close', () => {
+ipcMain.handle("window:close", () => {
   if (mainWindow) mainWindow.close();
   return true;
 });
 
-app.whenReady().then(() => {
-  ensureAuthState();
-  if (process.platform === 'win32') {
+app.whenReady().then(async () => {
+  await ensureAuthState();
+  if (process.platform === "win32") {
     app.setAppUserModelId(APP_NAME);
   }
-  if (process.platform !== 'darwin') {
+  if (process.platform !== "darwin") {
     Menu.setApplicationMenu(null);
   }
   createWindow();
 
-  app.on('activate', () => {
+  app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") app.quit();
 });
 
-ipcMain.handle('auth:status', () => {
-  ensureAuthState();
-  return { ...authState };
+ipcMain.handle("auth:status", async () => {
+  await ensureAuthState();
+  const rate = checkAuthRateLimit();
+  return {
+    ...authState,
+    locked: !rate.ok,
+    retryAfterMs: rate.ok ? 0 : rate.retryAfterMs,
+  };
 });
 
-ipcMain.handle('auth:setup', (_event, password) => {
-  if (!password) return false;
+ipcMain.handle("auth:setup", async (_event, password) => {
+  const rate = checkAuthRateLimit();
+  if (!rate.ok) return { ok: false, error: "Too many attempts", retryAfterMs: rate.retryAfterMs };
+  const safePassword = clampString(password, 256, { trim: false });
+  if (!safePassword) return { ok: false, error: "Password is required." };
   const salt = crypto.randomBytes(16);
   const iterations = 200000;
-  const hash = hashPassword(password, salt, iterations);
-  saveAuthFile({ salt: salt.toString('base64'), hash, iterations });
+  const hash = hashPassword(safePassword, salt, iterations);
+  await saveAuthData({ salt: salt.toString("base64"), hash, iterations });
   authState = { configured: true, authenticated: true };
-  activePassword = password;
+  activePassword = safePassword;
   dbCache = null;
   loadDb();
-  return true;
+  recordAuthSuccess();
+  return { ok: true };
 });
 
-ipcMain.handle('auth:login', (_event, password) => {
-  const auth = loadAuthFile();
-  if (!auth || !password) return false;
-  const salt = Buffer.from(auth.salt, 'base64');
+ipcMain.handle("auth:login", async (_event, password) => {
+  const rate = checkAuthRateLimit();
+  if (!rate.ok) return { ok: false, error: "Too many attempts", retryAfterMs: rate.retryAfterMs };
+  const auth = await loadAuthData();
+  const safePassword = clampString(password, 256, { trim: false });
+  if (!auth || !safePassword) return { ok: false, error: "Invalid password." };
+  const salt = Buffer.from(auth.salt, "base64");
   const iterations = auth.iterations || 200000;
-  const hash = hashPassword(password, salt, iterations);
-  if (hash !== auth.hash) return false;
+  const hash = hashPassword(safePassword, salt, iterations);
+  if (!safeCompare(hash, auth.hash)) {
+    recordAuthFailure();
+    return { ok: false, error: "Invalid password." };
+  }
   authState = { configured: true, authenticated: true };
-  activePassword = password;
+  activePassword = safePassword;
   dbCache = null;
   loadDb();
-  return true;
+  recordAuthSuccess();
+  return { ok: true };
 });
 
-ipcMain.handle('auth:change', (_event, { current, next }) => {
-  const auth = loadAuthFile();
-  if (!auth || !current || !next) return false;
-  const salt = Buffer.from(auth.salt, 'base64');
+ipcMain.handle("auth:change", async (_event, { current, next }) => {
+  const rate = checkAuthRateLimit();
+  if (!rate.ok) return { ok: false, error: "Too many attempts", retryAfterMs: rate.retryAfterMs };
+  const auth = await loadAuthData();
+  const safeCurrent = clampString(current, 256, { trim: false });
+  const safeNext = clampString(next, 256, { trim: false });
+  if (!auth || !safeCurrent || !safeNext) return { ok: false, error: "Invalid password." };
+  const salt = Buffer.from(auth.salt, "base64");
   const iterations = auth.iterations || 200000;
-  const hash = hashPassword(current, salt, iterations);
-  if (hash !== auth.hash) return false;
+  const hash = hashPassword(safeCurrent, salt, iterations);
+  if (!safeCompare(hash, auth.hash)) {
+    recordAuthFailure();
+    return { ok: false, error: "Invalid password." };
+  }
   const newSalt = crypto.randomBytes(16);
-  const newHash = hashPassword(next, newSalt, iterations);
-  saveAuthFile({ salt: newSalt.toString('base64'), hash: newHash, iterations });
-  activePassword = next;
+  const newHash = hashPassword(safeNext, newSalt, iterations);
+  await saveAuthData({ salt: newSalt.toString("base64"), hash: newHash, iterations });
+  activePassword = safeNext;
   authState.authenticated = true;
   if (dbCache) saveDb(dbCache);
   dbCache = null;
   loadDb();
-  return true;
+  recordAuthSuccess();
+  return { ok: true };
 });
 
-ipcMain.handle('kanban:get', () => {
+ipcMain.handle("kanban:get", () => {
   requireAuth();
   const db = loadDb();
   return { columns: db.kanban.columns, cards: db.kanban.cards };
 });
 
-ipcMain.handle('kanban:addColumn', (_event, name) => {
+ipcMain.handle("kanban:addColumn", (_event, name) => {
   requireAuth();
   const db = loadDb();
+  const safeName = clampString(name, MAX_COLUMN_NAME_LEN, { trim: true });
+  if (!safeName) {
+    return { ok: false, error: "Column name is required.", columns: db.kanban.columns };
+  }
   const order = Math.max(0, ...db.kanban.columns.map((c) => c.order || 0)) + 1;
   const column = {
     id: crypto.randomUUID(),
-    name: String(name || '').trim(),
+    name: safeName,
     order,
     created_at: new Date().toISOString(),
   };
   db.kanban.columns.push(column);
   saveDb(db);
-  return { columns: db.kanban.columns };
+  return { ok: true, columns: db.kanban.columns };
 });
 
-ipcMain.handle('kanban:removeColumn', (_event, columnId) => {
+ipcMain.handle("kanban:removeColumn", (_event, columnId) => {
   requireAuth();
   const db = loadDb();
-  const exists = db.kanban.columns.some((col) => col.id === columnId);
+  const safeId = clampId(columnId);
+  const exists = db.kanban.columns.some((col) => col.id === safeId);
   if (!exists) {
     return { ok: true, columns: db.kanban.columns, cards: db.kanban.cards };
   }
-  const remaining = db.kanban.columns.filter((col) => col.id !== columnId);
-  const cardsInColumn = db.kanban.cards.filter((card) => card.column_id === columnId);
-  if (remaining.length === 0) {
-    if (cardsInColumn.length) {
-      return { ok: false, error: 'last_column', message: LAST_COLUMN_MESSAGE };
-    }
-    db.kanban.columns = remaining;
-    saveDb(db);
-    return { ok: true, columns: db.kanban.columns, cards: db.kanban.cards };
-  }
-
-  const target = pickFallbackColumn(db.kanban.columns, columnId);
-  if (target) {
-    moveCardsToColumn(db, new Set([columnId]), target.id);
-  }
-  db.kanban.columns = remaining;
+  const result = removeKanbanColumns(db, [safeId]);
+  if (!result.ok) return result;
   saveDb(db);
-  return { ok: true, columns: db.kanban.columns, cards: db.kanban.cards };
+  return result;
 });
 
-ipcMain.handle('kanban:addCard', (_event, payload) => {
+ipcMain.handle("kanban:addCard", (_event, payload) => {
   requireAuth();
   const db = loadDb();
-  const columnId = payload.column_id;
-  const order = Math.max(0, ...db.kanban.cards.filter((c) => c.column_id === columnId).map((c) => c.order || 0)) + 1;
+  const safePayload = sanitizeCardPayload(payload || {});
+  const columnId = clampId(safePayload.column_id || payload?.column_id);
+  if (!columnId || !db.kanban.columns.some((col) => col.id === columnId)) {
+    return { ok: false, error: "Invalid column." };
+  }
+  const order =
+    Math.max(
+      0,
+      ...db.kanban.cards.filter((c) => c.column_id === columnId).map((c) => c.order || 0),
+    ) + 1;
   const card = {
     uuid: crypto.randomUUID(),
     column_id: columnId,
     order,
-    candidate_name: payload.candidate_name || '',
-    icims_id: payload.icims_id || '',
-    employee_id: payload.employee_id || '',
-    job_id: payload.job_id || '',
-    job_name: payload.job_name || '',
-    job_location: payload.job_location || '',
-    manager: payload.manager || '',
-    branch: payload.branch || '',
+    candidate_name: safePayload.candidate_name || "",
+    icims_id: safePayload.icims_id || "",
+    employee_id: safePayload.employee_id || "",
+    job_id: safePayload.job_id || "",
+    job_name: safePayload.job_name || "",
+    job_location: safePayload.job_location || "",
+    manager: safePayload.manager || "",
+    branch: safePayload.branch || "",
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
   db.kanban.cards.push(card);
 
   const candidateRow = {};
-  KANBAN_CANDIDATE_FIELDS.forEach((field) => { candidateRow[field] = ''; });
-  candidateRow['Candidate Name'] = card.candidate_name;
-  candidateRow['ICIMS ID'] = card.icims_id;
-  candidateRow['Employee ID'] = card.employee_id;
-  candidateRow['Contact Phone'] = payload.contact_phone || '';
-  candidateRow['Contact Email'] = payload.contact_email || '';
-  candidateRow['Job ID Name'] = jobIdName(card.job_id, card.job_name);
-  candidateRow['Job Location'] = card.job_location;
-  candidateRow['Manager'] = card.manager;
-  candidateRow['Branch'] = card.branch;
-  candidateRow['candidate UUID'] = card.uuid;
+  KANBAN_CANDIDATE_FIELDS.forEach((field) => {
+    candidateRow[field] = "";
+  });
+  candidateRow["Candidate Name"] = card.candidate_name;
+  candidateRow["ICIMS ID"] = card.icims_id;
+  candidateRow["Employee ID"] = card.employee_id;
+  candidateRow["Contact Phone"] = safePayload.contact_phone || "";
+  candidateRow["Contact Email"] = safePayload.contact_email || "";
+  candidateRow["Job ID Name"] = jobIdName(card.job_id, card.job_name);
+  candidateRow["Job Location"] = card.job_location;
+  candidateRow["Manager"] = card.manager;
+  candidateRow["Branch"] = card.branch;
+  candidateRow["candidate UUID"] = card.uuid;
   db.kanban.candidates.push(candidateRow);
 
   saveDb(db);
-  return { card };
+  return { ok: true, card };
 });
 
-ipcMain.handle('kanban:updateCard', (_event, { id, payload }) => {
+ipcMain.handle("kanban:updateCard", (_event, { id, payload }) => {
   requireAuth();
   const db = loadDb();
-  const card = db.kanban.cards.find((c) => c.uuid === id);
+  const safeId = clampId(id);
+  const card = db.kanban.cards.find((c) => c.uuid === safeId);
   if (!card) return { cards: db.kanban.cards };
   const updates = {};
   const allowed = new Set([
-    'candidate_name',
-    'icims_id',
-    'employee_id',
-    'job_id',
-    'job_name',
-    'job_location',
-    'manager',
-    'branch',
-    'column_id',
-    'order',
+    "candidate_name",
+    "icims_id",
+    "employee_id",
+    "job_id",
+    "job_name",
+    "job_location",
+    "manager",
+    "branch",
+    "column_id",
+    "order",
   ]);
-  if (payload && typeof payload === 'object') {
+  const safePayload = sanitizeCardPayload(payload || {});
+  if (payload && typeof payload === "object") {
     Object.keys(payload).forEach((key) => {
-      if (allowed.has(key)) updates[key] = payload[key];
+      if (allowed.has(key)) updates[key] = safePayload[key];
     });
+  }
+  if (updates.column_id && !db.kanban.columns.some((col) => col.id === updates.column_id)) {
+    delete updates.column_id;
   }
   Object.assign(card, updates);
   card.updated_at = new Date().toISOString();
 
-  const candidateRow = ensureCandidateRow(db, id);
-  candidateRow['Candidate Name'] = card.candidate_name || '';
-  candidateRow['ICIMS ID'] = card.icims_id || '';
-  candidateRow['Employee ID'] = card.employee_id || '';
-  if (payload.contact_phone !== undefined) {
-    candidateRow['Contact Phone'] = payload.contact_phone || '';
+  const candidateRow = ensureCandidateRow(db, safeId);
+  candidateRow["Candidate Name"] = card.candidate_name || "";
+  candidateRow["ICIMS ID"] = card.icims_id || "";
+  candidateRow["Employee ID"] = card.employee_id || "";
+  if (payload && Object.prototype.hasOwnProperty.call(payload, "contact_phone")) {
+    candidateRow["Contact Phone"] = safePayload.contact_phone || "";
   }
-  if (payload.contact_email !== undefined) {
-    candidateRow['Contact Email'] = payload.contact_email || '';
+  if (payload && Object.prototype.hasOwnProperty.call(payload, "contact_email")) {
+    candidateRow["Contact Email"] = safePayload.contact_email || "";
   }
-  candidateRow['Job ID Name'] = jobIdName(card.job_id, card.job_name);
-  candidateRow['Job Location'] = card.job_location || '';
-  candidateRow['Manager'] = card.manager || '';
-  candidateRow['Branch'] = card.branch || '';
+  candidateRow["Job ID Name"] = jobIdName(card.job_id, card.job_name);
+  candidateRow["Job Location"] = card.job_location || "";
+  candidateRow["Manager"] = card.manager || "";
+  candidateRow["Branch"] = card.branch || "";
 
   saveDb(db);
   return { cards: db.kanban.cards };
 });
 
-ipcMain.handle('candidate:getPII', (_event, candidateId) => {
+ipcMain.handle("candidate:getPII", (_event, candidateId) => {
   requireAuth();
   const db = loadDb();
-  const row = ensureCandidateRow(db, candidateId);
-  const card = db.kanban.cards.find((c) => c.uuid === candidateId);
+  const safeId = clampId(candidateId);
+  const row = ensureCandidateRow(db, safeId);
+  const card = db.kanban.cards.find((c) => c.uuid === safeId);
   if (card && card.candidate_name) {
-    row['Candidate Name'] = card.candidate_name;
+    row["Candidate Name"] = card.candidate_name;
   }
   saveDb(db);
-  return { row, candidateName: row['Candidate Name'] || (card ? card.candidate_name : '') };
+  return { row, candidateName: row["Candidate Name"] || (card ? card.candidate_name : "") };
 });
 
-ipcMain.handle('candidate:savePII', (_event, { candidateId, data }) => {
+ipcMain.handle("candidate:savePII", (_event, { candidateId, data }) => {
   requireAuth();
   const db = loadDb();
-  const row = ensureCandidateRow(db, candidateId);
-  const blocked = new Set(['Candidate Name', 'candidate UUID']);
-  if (data && typeof data === 'object') {
-    Object.keys(data).forEach((key) => {
-      if (blocked.has(key)) return;
-      row[key] = data[key];
-    });
-  }
+  const safeId = clampId(candidateId);
+  const row = ensureCandidateRow(db, safeId);
+  const blocked = new Set(["Candidate Name", "candidate UUID"]);
+  const sanitized = sanitizePiiPayload(data || {});
+  Object.keys(sanitized).forEach((key) => {
+    if (blocked.has(key)) return;
+    if (!KANBAN_CANDIDATE_FIELDS.includes(key)) return;
+    row[key] = sanitized[key];
+  });
   saveDb(db);
   return true;
 });
 
-ipcMain.handle('kanban:processCandidate', (_event, { candidateId, arrival, departure }) => {
+ipcMain.handle("kanban:processCandidate", (_event, { candidateId, arrival, departure }) => {
   requireAuth();
   const db = loadDb();
-  if (!candidateId) return { ok: false, message: 'Missing candidate.' };
-  const card = db.kanban.cards.find((c) => c.uuid === candidateId);
-  if (!card) return { ok: false, message: 'Candidate not found.' };
+  const safeId = clampId(candidateId);
+  if (!safeId) return { ok: false, message: "Missing candidate." };
+  const card = db.kanban.cards.find((c) => c.uuid === safeId);
+  if (!card) return { ok: false, message: "Candidate not found." };
+  const preProcessCard = { ...card };
+  const preProcessRow = { ...ensureCandidateRow(db, safeId) };
 
   const arrivalMinutes = roundToQuarterHour(parseMilitaryTime(arrival));
   const departureMinutes = roundToQuarterHour(parseMilitaryTime(departure));
   if (arrivalMinutes === null || departureMinutes === null) {
-    return { ok: false, message: 'Invalid time format. Use 4-digit 24H time.' };
+    return { ok: false, message: "Invalid time format. Use 4-digit 24H time." };
   }
 
   const arrivalText = formatMilitaryTime(arrivalMinutes);
@@ -932,48 +1364,66 @@ ipcMain.handle('kanban:processCandidate', (_event, { candidateId, arrival, depar
   if (totalMinutes < 0) totalMinutes += 24 * 60;
   const totalHours = formatTotalHours(totalMinutes);
 
-  const row = ensureCandidateRow(db, candidateId);
-  row['Candidate Name'] = card.candidate_name || row['Candidate Name'] || '';
-  row['ICIMS ID'] = card.icims_id || row['ICIMS ID'] || '';
-  row['Employee ID'] = card.employee_id || row['Employee ID'] || '';
-  row['Job ID Name'] = jobIdName(card.job_id, card.job_name);
-  row['Job Location'] = card.job_location || row['Job Location'] || '';
-  row['Manager'] = card.manager || row['Manager'] || '';
-  row['Branch'] = card.branch || row['Branch'] || '';
-  row['Neo Arrival Time'] = arrivalText;
-  row['Neo Departure Time'] = departureText;
-  row['Total Neo Hours'] = totalHours;
+  const row = ensureCandidateRow(db, safeId);
+  row["Candidate Name"] = card.candidate_name || row["Candidate Name"] || "";
+  row["ICIMS ID"] = card.icims_id || row["ICIMS ID"] || "";
+  row["Employee ID"] = card.employee_id || row["Employee ID"] || "";
+  row["Job ID Name"] = jobIdName(card.job_id, card.job_name);
+  row["Job Location"] = card.job_location || row["Job Location"] || "";
+  row["Manager"] = card.manager || row["Manager"] || "";
+  row["Branch"] = card.branch || row["Branch"] || "";
+  row["Neo Arrival Time"] = arrivalText;
+  row["Neo Departure Time"] = departureText;
+  row["Total Neo Hours"] = totalHours;
 
-  SENSITIVE_PII_FIELDS.forEach((field) => { row[field] = ''; });
-  SENSITIVE_CARD_FIELDS.forEach((field) => { card[field] = ''; });
+  SENSITIVE_PII_FIELDS.forEach((field) => {
+    row[field] = "";
+  });
+  SENSITIVE_CARD_FIELDS.forEach((field) => {
+    card[field] = "";
+  });
   card.updated_at = new Date().toISOString();
-  db.kanban.cards = db.kanban.cards.filter((c) => c.uuid !== candidateId);
+  db.kanban.cards = db.kanban.cards.filter((c) => c.uuid !== safeId);
+
+  const undoId = pushRecycleItem(db, {
+    type: "kanban_cards",
+    cards: [preProcessCard],
+    candidates: [preProcessRow],
+  });
 
   saveDb(db);
-  return { ok: true, cards: db.kanban.cards };
+  return { ok: true, cards: db.kanban.cards, undoId };
 });
 
-ipcMain.handle('kanban:removeCandidate', (_event, candidateId) => {
+ipcMain.handle("kanban:removeCandidate", (_event, candidateId) => {
   requireAuth();
   const db = loadDb();
-  if (!candidateId) return { ok: false, message: 'Missing candidate.' };
-  db.kanban.cards = db.kanban.cards.filter((card) => card.uuid !== candidateId);
-  db.kanban.candidates = db.kanban.candidates.filter(
-    (row) => row['candidate UUID'] !== candidateId
-  );
+  const safeId = clampId(candidateId);
+  if (!safeId) return { ok: false, message: "Missing candidate." };
+  const removedCards = db.kanban.cards.filter((card) => card.uuid === safeId);
+  const removedRows = db.kanban.candidates.filter((row) => row["candidate UUID"] === safeId);
+  db.kanban.cards = db.kanban.cards.filter((card) => card.uuid !== safeId);
+  db.kanban.candidates = db.kanban.candidates.filter((row) => row["candidate UUID"] !== safeId);
+  const undoId = pushRecycleItem(db, {
+    type: "kanban_cards",
+    cards: removedCards.map((card) => ({ ...card })),
+    candidates: removedRows.map((row) => ({ ...row })),
+  });
   saveDb(db);
-  return { ok: true, columns: db.kanban.columns, cards: db.kanban.cards };
+  return { ok: true, columns: db.kanban.columns, cards: db.kanban.cards, undoId };
 });
 
-ipcMain.handle('kanban:reorderColumn', (_event, { columnId, cardIds }) => {
+ipcMain.handle("kanban:reorderColumn", (_event, { columnId, cardIds }) => {
   requireAuth();
   const db = loadDb();
-  const columnCards = db.kanban.cards.filter((c) => c.column_id === columnId);
+  const safeColumnId = clampId(columnId);
+  const safeCardIds = sanitizeRowIds(cardIds);
+  const columnCards = db.kanban.cards.filter((c) => c.column_id === safeColumnId);
   const map = new Map(columnCards.map((c) => [c.uuid, c]));
   const seen = new Set();
   const ordered = [];
 
-  (cardIds || []).forEach((id) => {
+  (safeCardIds || []).forEach((id) => {
     const card = map.get(id);
     if (card && !seen.has(id)) {
       ordered.push(card);
@@ -995,7 +1445,7 @@ ipcMain.handle('kanban:reorderColumn', (_event, { columnId, cardIds }) => {
   return { cards: db.kanban.cards };
 });
 
-ipcMain.handle('weekly:get', () => {
+ipcMain.handle("weekly:get", () => {
   requireAuth();
   const db = loadDb();
   const { weekStart, weekEnd } = getCurrentWeek();
@@ -1006,24 +1456,25 @@ ipcMain.handle('weekly:get', () => {
   return db.weekly[weekStart];
 });
 
-ipcMain.handle('weekly:save', (_event, entries) => {
+ipcMain.handle("weekly:save", (_event, entries) => {
   requireAuth();
   const db = loadDb();
   const { weekStart, weekEnd } = getCurrentWeek();
+  const safeEntries = sanitizeWeeklyEntries(entries);
   db.weekly[weekStart] = {
     week_start: weekStart,
     week_end: weekEnd,
-    entries: entries || {},
+    entries: safeEntries,
   };
   saveDb(db);
   return true;
 });
 
-ipcMain.handle('weekly:summary', () => {
+ipcMain.handle("weekly:summary", () => {
   requireAuth();
   const db = loadDb();
   const { weekStart } = getCurrentWeek();
-  const data = db.weekly[weekStart] || { week_start: weekStart, week_end: '', entries: {} };
+  const data = db.weekly[weekStart] || { week_start: weekStart, week_end: "", entries: {} };
   const content = buildWeeklySummary(data);
   return {
     filename: `Weekly_${weekStart}_Summary.md`,
@@ -1031,7 +1482,7 @@ ipcMain.handle('weekly:summary', () => {
   };
 });
 
-ipcMain.handle('todos:get', () => {
+ipcMain.handle("todos:get", () => {
   requireAuth();
   const db = loadDb();
   const changed = normalizeTodos(db.todos || []);
@@ -1039,16 +1490,16 @@ ipcMain.handle('todos:get', () => {
   return db.todos || [];
 });
 
-ipcMain.handle('todos:save', (_event, todos) => {
+ipcMain.handle("todos:save", (_event, todos) => {
   requireAuth();
   const db = loadDb();
-  db.todos = Array.isArray(todos) ? todos : [];
-  const changed = normalizeTodos(db.todos);
+  db.todos = sanitizeTodos(todos);
+  normalizeTodos(db.todos);
   saveDb(db);
   return true;
 });
 
-ipcMain.handle('db:listTables', () => {
+ipcMain.handle("db:listTables", () => {
   requireAuth();
   const db = loadDb();
   return Object.keys(TABLE_DEFS).map((id) => {
@@ -1058,97 +1509,141 @@ ipcMain.handle('db:listTables', () => {
   });
 });
 
-ipcMain.handle('db:getTable', (_event, tableId) => {
+ipcMain.handle("db:getTable", (_event, tableId) => {
   requireAuth();
   const db = loadDb();
-  const table = buildTable(tableId, db);
-  return table || { id: tableId, name: 'Unknown', columns: [], rows: [] };
+  const safeTableId = clampId(tableId);
+  const table = buildTable(safeTableId, db);
+  return table || { id: safeTableId, name: "Unknown", columns: [], rows: [] };
 });
 
-ipcMain.handle('db:exportCsv', async (_event, payload) => {
+ipcMain.handle("db:exportCsv", async (_event, payload) => {
   requireAuth();
   const { tableId, tableName, columns, rows } = payload || {};
   let exportColumns = Array.isArray(columns) ? columns : [];
   let exportRows = Array.isArray(rows) ? rows : [];
-  if ((!exportColumns.length || !exportRows.length) && tableId) {
+  const safeTableId = clampId(tableId);
+  const safeTableName = clampString(tableName, 80, { trim: true });
+  if ((!exportColumns.length || !exportRows.length) && safeTableId) {
     const db = loadDb();
-    const table = buildTable(tableId, db);
+    const table = buildTable(safeTableId, db);
     if (table) {
       if (!exportColumns.length) exportColumns = table.columns;
       if (!exportRows.length) exportRows = table.rows;
     }
   }
-  const baseName = sanitizeFilename(tableName || tableId || 'table');
+  exportColumns = exportColumns.map((col) => clampString(col, 80)).filter((col) => col);
+  if (exportRows.length > 50000) exportRows = exportRows.slice(0, 50000);
+  const baseName = sanitizeFilename(safeTableName || safeTableId || "table");
   const defaultFilename = `${baseName}_${new Date().toISOString().slice(0, 10)}.csv`;
-  const defaultPath = path.join(app.getPath('documents'), defaultFilename);
+  const defaultPath = path.join(app.getPath("documents"), defaultFilename);
   const { canceled, filePath } = await dialog.showSaveDialog({
-    title: 'Export CSV',
+    title: "Export CSV",
     defaultPath,
-    buttonLabel: 'Save CSV',
-    filters: [{ name: 'CSV', extensions: ['csv'] }],
+    buttonLabel: "Save CSV",
+    filters: [{ name: "CSV", extensions: ["csv"] }],
   });
   if (canceled || !filePath) return { canceled: true };
 
   const csv = rowsToCsv(exportColumns, exportRows);
-  fs.writeFileSync(filePath, csv, 'utf-8');
+  fs.writeFileSync(filePath, csv, "utf-8");
   return { ok: true, filePath };
 });
 
-ipcMain.handle('db:deleteRows', (_event, { tableId, rowIds }) => {
+ipcMain.handle("db:deleteRows", (_event, { tableId, rowIds }) => {
   requireAuth();
   const db = loadDb();
-  const ids = new Set(rowIds || []);
+  const safeTableId = clampId(tableId);
+  const ids = new Set(sanitizeRowIds(rowIds));
+  let undoId = null;
 
-  switch (tableId) {
-    case 'kanban_columns': {
-      const removed = db.kanban.columns.filter((col) => ids.has(col.id));
-      const remaining = db.kanban.columns.filter((col) => !ids.has(col.id));
-      const removedColumnIds = new Set(removed.map((col) => col.id));
-      const removedCards = db.kanban.cards.filter((card) => removedColumnIds.has(card.column_id));
-      if (remaining.length === 0 && removedCards.length) {
-        return { ok: false, error: 'last_column', message: LAST_COLUMN_MESSAGE };
-      }
-      if (remaining.length > 0 && removedCards.length) {
-        const target = orderColumns(remaining)[0];
-        if (target) {
-          moveCardsToColumn(db, removedColumnIds, target.id);
-        }
-      }
-      db.kanban.columns = remaining;
+  switch (safeTableId) {
+    case "kanban_columns": {
+      const result = removeKanbanColumns(db, ids);
+      if (!result.ok) return result;
+      undoId = result.undoId;
       break;
     }
-    case 'kanban_cards': {
+    case "kanban_cards": {
+      const removedCards = db.kanban.cards.filter((card) => ids.has(card.uuid));
+      const removedRows = db.kanban.candidates.filter((row) => ids.has(row["candidate UUID"]));
       db.kanban.cards = db.kanban.cards.filter((card) => !ids.has(card.uuid));
-      db.kanban.candidates = db.kanban.candidates.filter((row) => !ids.has(row['candidate UUID']));
+      db.kanban.candidates = db.kanban.candidates.filter((row) => !ids.has(row["candidate UUID"]));
+      if (removedCards.length || removedRows.length) {
+        undoId = pushRecycleItem(db, {
+          type: "kanban_cards",
+          cards: removedCards.map((card) => ({ ...card })),
+          candidates: removedRows.map((row) => ({ ...row })),
+        });
+      }
       break;
     }
-    case 'candidate_data': {
-      db.kanban.candidates = db.kanban.candidates.filter((row) => !ids.has(row['candidate UUID']));
+    case "candidate_data": {
+      const removedRows = db.kanban.candidates.filter((row) => ids.has(row["candidate UUID"]));
+      db.kanban.candidates = db.kanban.candidates.filter((row) => !ids.has(row["candidate UUID"]));
+      if (removedRows.length) {
+        undoId = pushRecycleItem(db, {
+          type: "candidate_rows",
+          candidates: removedRows.map((row) => ({ ...row })),
+        });
+      }
       break;
     }
-    case 'weekly_entries': {
+    case "weekly_entries": {
       const weeks = db.weekly || {};
+      const removedEntries = [];
       Object.values(weeks).forEach((week) => {
         const entries = week.entries || {};
         Object.keys(entries).forEach((day) => {
           const rowId = `${week.week_start}-${day}`;
           if (ids.has(rowId)) {
+            removedEntries.push({
+              week_start: week.week_start,
+              week_end: week.week_end,
+              day,
+              payload: { ...entries[day] },
+            });
             delete entries[day];
           }
         });
         week.entries = entries;
       });
       db.weekly = weeks;
+      if (removedEntries.length) {
+        undoId = pushRecycleItem(db, {
+          type: "weekly_entries",
+          entries: removedEntries,
+        });
+      }
       break;
     }
-    case 'todos': {
+    case "todos": {
+      const removedTodos = (db.todos || []).filter((todo) => ids.has(todo.id));
       db.todos = (db.todos || []).filter((todo) => !ids.has(todo.id));
+      if (removedTodos.length) {
+        undoId = pushRecycleItem(db, {
+          type: "todos",
+          todos: removedTodos.map((todo) => ({ ...todo })),
+        });
+      }
       break;
     }
     default:
-      break;
+      return { ok: false, error: "Invalid table." };
   }
 
+  saveDb(db);
+  return { ok: true, undoId };
+});
+
+ipcMain.handle("recycle:undo", (_event, id) => {
+  requireAuth();
+  const db = loadDb();
+  const safeId = clampId(id);
+  const item = popRecycleItem(db, safeId);
+  if (!item) return { ok: false, error: "Nothing to undo." };
+  const restored = restoreRecycleItem(db, item);
+  if (!restored) return { ok: false, error: "Unable to restore." };
   saveDb(db);
   return { ok: true };
 });

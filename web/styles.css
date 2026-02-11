@@ -1,3 +1,43 @@
+@font-face {
+  font-family: "Sora";
+  src:
+    url("./assets/fonts/Sora-Regular.woff2") format("woff2"),
+    url("./assets/fonts/Sora-Regular.woff") format("woff");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Sora";
+  src:
+    url("./assets/fonts/Sora-Medium.woff2") format("woff2"),
+    url("./assets/fonts/Sora-Medium.woff") format("woff");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Sora";
+  src:
+    url("./assets/fonts/Sora-SemiBold.woff2") format("woff2"),
+    url("./assets/fonts/Sora-SemiBold.woff") format("woff");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Sora";
+  src:
+    url("./assets/fonts/Sora-Bold.woff2") format("woff2"),
+    url("./assets/fonts/Sora-Bold.woff") format("woff");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* Flyout Panels (Weekly + Todo) */
 .flyout {
   position: fixed;
@@ -14,7 +54,9 @@
   flex-direction: column;
   opacity: 0;
   transform: translateY(16px) scale(0.98);
-  transition: opacity 220ms ease, transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition:
+    opacity 220ms ease,
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
   pointer-events: none;
 }
 
@@ -242,6 +284,35 @@
   padding: 24px;
 }
 
+.db-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--outline);
+}
+
+.db-pagination {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.db-page-info {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.db-page-size {
+  border: 1px solid var(--outline);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: var(--panel);
+  color: var(--text);
+}
+
 #db-delete:not(:disabled) {
   box-shadow: 0 10px 18px rgba(220, 53, 69, 0.3);
 }
@@ -285,6 +356,45 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.toast-root {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 200;
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--panel);
+  border: 1px solid var(--outline);
+  box-shadow: var(--shadow-soft);
+  min-width: 220px;
+  pointer-events: auto;
+}
+
+.toast__text {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.toast__action {
+  border: none;
+  background: var(--primary);
+  color: #fff;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
 }
 
 .titlebar {
@@ -428,7 +538,8 @@ body {
   height: 100%;
   flex: 1;
   padding: 24px;
-  transition: grid-template-columns 350ms cubic-bezier(0.4, 0, 0.2, 1),
+  transition:
+    grid-template-columns 350ms cubic-bezier(0.4, 0, 0.2, 1),
     gap 350ms cubic-bezier(0.4, 0, 0.2, 1),
     padding 350ms cubic-bezier(0.4, 0, 0.2, 1);
   overflow: hidden;
@@ -645,7 +756,10 @@ body {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease;
   box-shadow: 0 4px 10px rgba(26, 115, 232, 0.12);
 }
 
@@ -833,7 +947,9 @@ body {
   overflow: hidden;
   opacity: 0;
   transform: translateX(18px);
-  transition: opacity 220ms ease, transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition:
+    opacity 220ms ease,
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
   pointer-events: none;
 }
 
@@ -877,7 +993,9 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  transition: transform 0.15s ease, box-shadow 0.2s ease;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.2s ease;
 }
 
 .details-drawer__pill:hover {
@@ -1020,7 +1138,9 @@ body {
   gap: 12px;
   overflow-y: auto;
   border: 1px dashed transparent;
-  transition: border 0.2s ease, background 0.2s ease;
+  transition:
+    border 0.2s ease,
+    background 0.2s ease;
 }
 
 .kanban__column-body.is-over {
@@ -1155,7 +1275,10 @@ body {
   border-color: var(--primary);
   color: #ffffff;
   box-shadow: 0 10px 18px rgba(26, 115, 232, 0.35);
-  transition: transform 0.15s ease, box-shadow 0.2s ease, background 0.2s ease;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease;
 }
 
 .kanban__column-header .icon-button:hover {
@@ -1243,7 +1366,6 @@ body {
   background: rgba(240, 93, 94, 0.2);
   color: var(--danger);
 }
-
 
 .check {
   display: flex;
@@ -1546,7 +1668,10 @@ body {
   border-radius: 999px;
   font-size: 12px;
   cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease, border 0.2s ease;
+  transition:
+    background 0.2s ease,
+    color 0.2s ease,
+    border 0.2s ease;
 }
 
 .kanban-chip--active {

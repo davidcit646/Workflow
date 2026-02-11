@@ -1,15 +1,13 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Workflow</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&display=swap"
-      rel="stylesheet"
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'"
     />
+    <title>Workflow</title>
     <link rel="icon" href="./favicon.ico" sizes="any" />
     <link rel="icon" href="./favicon-32.png" type="image/png" sizes="32x32" />
     <link rel="apple-touch-icon" href="./icon-180.png" />
@@ -19,9 +17,30 @@
   <body>
     <div class="titlebar">
       <div class="titlebar__controls">
-        <button id="window-close" class="window-control window-control--close" type="button" aria-label="Close">×</button>
-        <button id="window-min" class="window-control window-control--min" type="button" aria-label="Minimize">–</button>
-        <button id="window-max" class="window-control window-control--max" type="button" aria-label="Maximize">□</button>
+        <button
+          id="window-close"
+          class="window-control window-control--close"
+          type="button"
+          aria-label="Close"
+        >
+          ×
+        </button>
+        <button
+          id="window-min"
+          class="window-control window-control--min"
+          type="button"
+          aria-label="Minimize"
+        >
+          –
+        </button>
+        <button
+          id="window-max"
+          class="window-control window-control--max"
+          type="button"
+          aria-label="Maximize"
+        >
+          □
+        </button>
       </div>
       <div class="titlebar__brand">
         <img class="titlebar__logo" src="./assets/app-icon.svg" alt="Workflow" />
@@ -52,7 +71,9 @@
           <header class="topbar">
             <div>
               <div class="topbar__title">Dashboard</div>
-              <div class="topbar__subtitle">Move candidates through onboarding with a simple Kanban flow.</div>
+              <div class="topbar__subtitle">
+                Move candidates through onboarding with a simple Kanban flow.
+              </div>
             </div>
             <div class="topbar__actions">
               <button id="weekly-toggle" class="button button--primary">Weekly Tracker</button>
@@ -71,15 +92,31 @@
                 <div class="details-drawer__header">
                   <div class="details-drawer__title" id="details-drawer-name">Candidate</div>
                   <div class="details-drawer__meta">
-                  <button class="details-drawer__pill hidden" id="details-drawer-scheduled" type="button">
-                    Neo Scheduled Date
-                  </button>
+                    <button
+                      class="details-drawer__pill hidden"
+                      id="details-drawer-scheduled"
+                      type="button"
+                    >
+                      Neo Scheduled Date
+                    </button>
                   </div>
-                  <button id="details-drawer-close" class="icon-button" aria-label="Close details drawer">✕</button>
+                  <button
+                    id="details-drawer-close"
+                    class="icon-button"
+                    aria-label="Close details drawer"
+                  >
+                    ✕
+                  </button>
                 </div>
                 <div class="details-drawer__body" id="details-drawer-body"></div>
                 <div class="details-drawer__footer">
-                  <button id="details-process" class="button button--primary button--full" type="button">Process Candidate</button>
+                  <button
+                    id="details-process"
+                    class="button button--primary button--full"
+                    type="button"
+                  >
+                    Process Candidate
+                  </button>
                 </div>
               </aside>
             </div>
@@ -94,11 +131,22 @@
             </div>
             <div class="topbar__actions topbar__actions--db">
               <div class="search search--db">
-                <input id="db-search" type="text" placeholder="Search current table..." autocomplete="off" />
+                <input
+                  id="db-search"
+                  type="text"
+                  placeholder="Search current table..."
+                  autocomplete="off"
+                />
               </div>
-              <button id="db-export" class="button button--primary" type="button">Export CSV</button>
-              <button id="db-clear-selection" class="button button--primary" type="button" disabled>Clear Selection</button>
-              <button id="db-delete" class="button button--danger" type="button" disabled>Delete Selected</button>
+              <button id="db-export" class="button button--primary" type="button">
+                Export CSV
+              </button>
+              <button id="db-clear-selection" class="button button--primary" type="button" disabled>
+                Clear Selection
+              </button>
+              <button id="db-delete" class="button button--danger" type="button" disabled>
+                Delete Selected
+              </button>
             </div>
           </header>
           <div class="page__body settings-body">
@@ -108,6 +156,19 @@
                   <thead></thead>
                   <tbody></tbody>
                 </table>
+              </div>
+              <div class="db-footer">
+                <div id="db-table-meta" class="muted">0 rows</div>
+                <div class="db-pagination">
+                  <button id="db-page-prev" class="button button--ghost" type="button">Prev</button>
+                  <div id="db-page-info" class="db-page-info">Page 1 of 1</div>
+                  <button id="db-page-next" class="button button--ghost" type="button">Next</button>
+                  <select id="db-page-size" class="db-page-size">
+                    <option value="25">25</option>
+                    <option value="50" selected>50</option>
+                    <option value="100">100</option>
+                  </select>
+                </div>
               </div>
             </div>
           </div>
@@ -126,8 +187,17 @@
               <div class="kanban-settings">
                 <div class="kanban-settings__list" id="kanban-columns-list"></div>
                 <div class="kanban-settings__actions">
-                  <button id="settings-add-column" class="button button--primary" type="button">Add Kanban Column</button>
-                  <button id="settings-remove-column" class="button button--danger" type="button" disabled>Remove KanBan Column</button>
+                  <button id="settings-add-column" class="button button--primary" type="button">
+                    Add Kanban Column
+                  </button>
+                  <button
+                    id="settings-remove-column"
+                    class="button button--danger"
+                    type="button"
+                    disabled
+                  >
+                    Remove KanBan Column
+                  </button>
                   <div class="muted">Select a column to remove.</div>
                 </div>
               </div>
@@ -137,7 +207,9 @@
               <div class="field">
                 <label>Program Password</label>
                 <div class="setting-row">
-                  <button id="change-password-button" class="button button--ghost" type="button">Change password</button>
+                  <button id="change-password-button" class="button button--ghost" type="button">
+                    Change password
+                  </button>
                   <div class="muted">Change the program password. Current password required.</div>
                 </div>
               </div>
@@ -158,10 +230,14 @@
       </div>
       <form id="weekly-form" class="flyout__body weekly__body"></form>
       <div class="flyout__footer">
-        <button id="weekly-export" class="button button--ghost" type="button">Export Summary</button>
+        <button id="weekly-export" class="button button--ghost" type="button">
+          Export Summary
+        </button>
         <div class="flyout__actions">
           <button id="weekly-cancel" class="button button--ghost" type="button">Close</button>
-          <button id="weekly-save" class="button button--primary" type="submit" form="weekly-form">Save Week</button>
+          <button id="weekly-save" class="button button--primary" type="submit" form="weekly-form">
+            Save Week
+          </button>
         </div>
       </div>
     </aside>
@@ -170,7 +246,9 @@
       <div class="flyout__header">
         <div>
           <div class="flyout__title">Todo List</div>
-          <div class="flyout__subtitle">Track onboarding tasks and roll them into the weekly tracker.</div>
+          <div class="flyout__subtitle">
+            Track onboarding tasks and roll them into the weekly tracker.
+          </div>
         </div>
         <button id="todo-close" class="icon-button" aria-label="Close todo list">✕</button>
       </div>
@@ -198,6 +276,8 @@
       </div>
     </div>
 
+    <div id="toast-root" class="toast-root"></div>
+
     <div id="auth-modal" class="modal hidden">
       <div class="modal__card modal__card--small">
         <div class="modal__header">
@@ -211,7 +291,9 @@
           </div>
         </form>
         <div class="modal__footer">
-          <button id="auth-submit" class="button button--primary" type="submit" form="auth-form">Continue</button>
+          <button id="auth-submit" class="button button--primary" type="submit" form="auth-form">
+            Continue
+          </button>
         </div>
       </div>
     </div>
@@ -237,7 +319,14 @@
           </div>
         </form>
         <div class="modal__footer">
-          <button id="change-password-submit" class="button button--primary" type="submit" form="change-password-form">Change password</button>
+          <button
+            id="change-password-submit"
+            class="button button--primary"
+            type="submit"
+            form="change-password-form"
+          >
+            Change password
+          </button>
         </div>
       </div>
     </div>
@@ -255,8 +344,17 @@
         </form>
         <div class="modal__footer">
           <div class="modal__actions">
-            <button id="add-column-cancel" class="button button--danger" type="button">Cancel</button>
-            <button id="add-column-submit" class="button button--primary" type="submit" form="add-column-form">Add Column</button>
+            <button id="add-column-cancel" class="button button--danger" type="button">
+              Cancel
+            </button>
+            <button
+              id="add-column-submit"
+              class="button button--primary"
+              type="submit"
+              form="add-column-form"
+            >
+              Add Column
+            </button>
           </div>
         </div>
       </div>
@@ -269,20 +367,43 @@
             <h2 id="candidate-modal-title">Add Candidate</h2>
             <div class="modal__subtitle" id="candidate-modal-subtitle"></div>
           </div>
-          <input id="candidate-name" type="text" placeholder="Candidate Name" autocomplete="off" form="candidate-form" />
+          <input
+            id="candidate-name"
+            type="text"
+            placeholder="Candidate Name"
+            autocomplete="off"
+            form="candidate-form"
+          />
           <button id="candidate-close" class="icon-button">✕</button>
         </div>
         <form id="candidate-form" class="modal__body modal__body--candidate" autocomplete="off">
           <div class="candidate-grid">
             <div class="candidate-column">
               <div class="modal__section">
-                <input id="candidate-icims" type="text" inputmode="numeric" maxlength="12" placeholder="ICIMS ID" />
-                <input id="candidate-employee" type="text" inputmode="numeric" maxlength="12" placeholder="Employee ID" />
+                <input
+                  id="candidate-icims"
+                  type="text"
+                  inputmode="numeric"
+                  maxlength="12"
+                  placeholder="ICIMS ID"
+                />
+                <input
+                  id="candidate-employee"
+                  type="text"
+                  inputmode="numeric"
+                  maxlength="12"
+                  placeholder="Employee ID"
+                />
               </div>
             </div>
             <div class="candidate-column">
               <div class="modal__section">
-                <input id="candidate-phone" type="text" placeholder="Phone Number" inputmode="numeric" />
+                <input
+                  id="candidate-phone"
+                  type="text"
+                  placeholder="Phone Number"
+                  inputmode="numeric"
+                />
                 <input id="candidate-email" type="email" placeholder="Email" />
               </div>
             </div>
@@ -298,15 +419,29 @@
                   <option value="Portland">Portland</option>
                   <option value="Other">Other</option>
                 </select>
-                <input id="candidate-branch-other" type="text" placeholder="Other Branch" class="hidden" />
+                <input
+                  id="candidate-branch-other"
+                  type="text"
+                  placeholder="Other Branch"
+                  class="hidden"
+                />
               </div>
             </div>
           </div>
         </form>
         <div class="modal__footer">
           <div class="modal__actions">
-            <button id="candidate-cancel" class="button button--danger" type="button">Cancel</button>
-            <button id="candidate-submit" class="button button--primary" type="submit" form="candidate-form">Add Candidate</button>
+            <button id="candidate-cancel" class="button button--danger" type="button">
+              Cancel
+            </button>
+            <button
+              id="candidate-submit"
+              class="button button--primary"
+              type="submit"
+              form="candidate-form"
+            >
+              Add Candidate
+            </button>
           </div>
         </div>
       </div>
@@ -331,7 +466,13 @@
                   <option value="Accurate">Accurate</option>
                   <option value="Accurate with MVR">Accurate with MVR</option>
                 </select>
-                <input id="pii-background-date" type="text" placeholder="Cleared Date" inputmode="numeric" class="hidden" />
+                <input
+                  id="pii-background-date"
+                  type="text"
+                  placeholder="Cleared Date"
+                  inputmode="numeric"
+                  class="hidden"
+                />
                 <input id="pii-background-mvr" type="hidden" value="1" />
               </div>
               <div class="pii-card">
@@ -349,7 +490,12 @@
                     <option value="Submitted">Submitted</option>
                     <option value="Cleared">Cleared</option>
                   </select>
-                  <input id="pii-cori-date" type="text" placeholder="CORI Date" inputmode="numeric" />
+                  <input
+                    id="pii-cori-date"
+                    type="text"
+                    placeholder="CORI Date"
+                    inputmode="numeric"
+                  />
                 </div>
                 <div id="pii-license-nh" class="pii-license-section hidden">
                   <select id="pii-nh-status">
@@ -358,8 +504,18 @@
                     <option value="Submitted">Submitted</option>
                     <option value="Cleared">Cleared</option>
                   </select>
-                  <input id="pii-nh-expiration" type="text" placeholder="NH Expiration Date" inputmode="numeric" />
-                  <input id="pii-nh-id" type="text" placeholder="NH GC ID Number" inputmode="numeric" />
+                  <input
+                    id="pii-nh-expiration"
+                    type="text"
+                    placeholder="NH Expiration Date"
+                    inputmode="numeric"
+                  />
+                  <input
+                    id="pii-nh-id"
+                    type="text"
+                    placeholder="NH GC ID Number"
+                    inputmode="numeric"
+                  />
                 </div>
                 <div id="pii-license-me" class="pii-license-section hidden">
                   <select id="pii-me-status">
@@ -368,7 +524,12 @@
                     <option value="Submitted">Submitted</option>
                     <option value="Cleared">Cleared</option>
                   </select>
-                  <input id="pii-me-expiration" type="text" placeholder="ME Expiration Date" inputmode="numeric" />
+                  <input
+                    id="pii-me-expiration"
+                    type="text"
+                    placeholder="ME Expiration Date"
+                    inputmode="numeric"
+                  />
                 </div>
               </div>
             </div>
@@ -383,8 +544,18 @@
                   <option value="Checking">Checking</option>
                   <option value="Savings">Savings</option>
                 </select>
-                <input id="pii-routing" type="text" placeholder="Routing Number" inputmode="numeric" />
-                <input id="pii-account" type="text" placeholder="Account Number" inputmode="numeric" />
+                <input
+                  id="pii-routing"
+                  type="text"
+                  placeholder="Routing Number"
+                  inputmode="numeric"
+                />
+                <input
+                  id="pii-account"
+                  type="text"
+                  placeholder="Account Number"
+                  inputmode="numeric"
+                />
               </div>
               <div class="pii-card">
                 <div class="pii-card__title">Uniforms</div>
@@ -396,7 +567,12 @@
                 <div class="pii-card__title">Emergency Contact</div>
                 <input id="pii-emergency-name" type="text" placeholder="Emergency Contact Name" />
                 <input id="pii-emergency-relationship" type="text" placeholder="Relationship" />
-                <input id="pii-emergency-phone" type="text" placeholder="Emergency Contact Phone" inputmode="numeric" />
+                <input
+                  id="pii-emergency-phone"
+                  type="text"
+                  placeholder="Emergency Contact Phone"
+                  inputmode="numeric"
+                />
               </div>
             </div>
 
@@ -412,16 +588,35 @@
                   <option value="Military ID">Military ID</option>
                   <option value="Other">Other</option>
                 </select>
-                <input id="pii-id-other-type" type="text" placeholder="Other ID Type" maxlength="24" class="hidden" />
+                <input
+                  id="pii-id-other-type"
+                  type="text"
+                  placeholder="Other ID Type"
+                  maxlength="24"
+                  class="hidden"
+                />
                 <div id="pii-id-row" class="pii-row hidden">
-                  <input id="pii-id-state" type="text" placeholder="State" maxlength="2" class="pii-input--short" />
+                  <input
+                    id="pii-id-state"
+                    type="text"
+                    placeholder="State"
+                    maxlength="2"
+                    class="pii-input--short"
+                  />
                   <input id="pii-id-number" type="text" placeholder="ID Number" maxlength="20" />
                 </div>
                 <div id="pii-id-dates" class="pii-row hidden">
                   <input id="pii-id-dob" type="text" placeholder="DOB" inputmode="numeric" />
                   <input id="pii-id-exp" type="text" placeholder="EXP" inputmode="numeric" />
                 </div>
-                <input id="pii-social" type="text" placeholder="Social (###-##-####)" inputmode="numeric" maxlength="11" class="hidden" />
+                <input
+                  id="pii-social"
+                  type="text"
+                  placeholder="Social (###-##-####)"
+                  inputmode="numeric"
+                  maxlength="11"
+                  class="hidden"
+                />
               </div>
               <div class="pii-card">
                 <div class="pii-card__title">Additional Details</div>
@@ -433,7 +628,9 @@
         <div class="modal__footer">
           <div class="modal__actions">
             <button id="pii-cancel" class="button button--danger" type="button">Cancel</button>
-            <button id="pii-submit" class="button button--primary" type="submit" form="pii-form">Save PII</button>
+            <button id="pii-submit" class="button button--primary" type="submit" form="pii-form">
+              Save PII
+            </button>
           </div>
         </div>
       </div>
@@ -448,16 +645,42 @@
         <form id="neo-date-form" class="modal__body modal__body--single" autocomplete="off">
           <div class="modal__section">
             <div class="date-input-group">
-              <input id="neo-date-input" type="text" inputmode="numeric" maxlength="10" placeholder="MM/DD/YYYY" />
-              <button id="neo-date-picker-button" class="date-picker-button" type="button" aria-label="Pick date">📅</button>
-              <input id="neo-date-picker" class="date-picker-hidden" type="date" aria-hidden="true" tabindex="-1" />
+              <input
+                id="neo-date-input"
+                type="text"
+                inputmode="numeric"
+                maxlength="10"
+                placeholder="MM/DD/YYYY"
+              />
+              <button
+                id="neo-date-picker-button"
+                class="date-picker-button"
+                type="button"
+                aria-label="Pick date"
+              >
+                📅
+              </button>
+              <input
+                id="neo-date-picker"
+                class="date-picker-hidden"
+                type="date"
+                aria-hidden="true"
+                tabindex="-1"
+              />
             </div>
           </div>
         </form>
         <div class="modal__footer">
           <div class="modal__actions">
             <button id="neo-date-cancel" class="button button--danger" type="button">Cancel</button>
-            <button id="neo-date-save" class="button button--primary" type="submit" form="neo-date-form">Save Date</button>
+            <button
+              id="neo-date-save"
+              class="button button--primary"
+              type="submit"
+              form="neo-date-form"
+            >
+              Save Date
+            </button>
           </div>
         </div>
       </div>
@@ -474,23 +697,39 @@
             <div class="process-grid">
               <div class="field">
                 <label>Arrival Time</label>
-                <input id="process-arrival" type="text" inputmode="numeric" maxlength="4" placeholder="24H" />
+                <input
+                  id="process-arrival"
+                  type="text"
+                  inputmode="numeric"
+                  maxlength="4"
+                  placeholder="24H"
+                />
               </div>
               <div class="field">
                 <label>Departure Time</label>
-                <input id="process-departure" type="text" inputmode="numeric" maxlength="4" placeholder="24H" />
+                <input
+                  id="process-departure"
+                  type="text"
+                  inputmode="numeric"
+                  maxlength="4"
+                  placeholder="24H"
+                />
               </div>
             </div>
           </div>
         </div>
         <div class="modal__footer">
           <div class="modal__actions">
-            <button id="process-confirm" class="button button--primary" type="button">Process Candidate</button>
-            <button id="process-remove" class="button button--danger" type="button">Remove Candidate</button>
+            <button id="process-confirm" class="button button--primary" type="button">
+              Process Candidate
+            </button>
+            <button id="process-remove" class="button button--danger" type="button">
+              Remove Candidate
+            </button>
           </div>
         </div>
       </div>
     </div>
-    <script src="./app.js"></script>
+    <script type="module" src="./app.js"></script>
   </body>
 </html>

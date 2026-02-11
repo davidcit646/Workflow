@@ -1,14 +1,14 @@
-const { contextBridge, ipcRenderer } = require('electron/renderer');
+const { contextBridge, ipcRenderer } = require("electron/renderer");
 
-contextBridge.exposeInMainWorld('electronAPI', {
+contextBridge.exposeInMainWorld("electronAPI", {
   getVersion: () => process.platform,
 
   // Backend API (no HTTP server)
-  apiRequest: (request) => ipcRenderer.invoke('workflow:api', request),
+  apiRequest: (request) => ipcRenderer.invoke("workflow:api", request),
 });
 
 // Handle any DOM events that need to communicate with the main process
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener("DOMContentLoaded", () => {
   // Add any DOM manipulation or event handling here
-  console.log('Electron app loaded successfully');
+  console.log("Electron app loaded successfully");
 });
