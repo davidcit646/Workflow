@@ -1,0 +1,6 @@
+{
+  "appId": "com.workflow.tracker",
+  "appName": "Workflow Tracker",
+  "webDir": "web",
+  "bundledWebRuntime": false
+}

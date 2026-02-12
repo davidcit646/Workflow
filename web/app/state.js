@@ -37,10 +37,18 @@ export const state = {
     selectedRowIds: new Set(),
     page: 1,
     pageSize: 50,
+    sources: [],
+    activeSourceId: "current",
+    readOnly: false,
+    pendingImport: null,
   },
   flyouts: {
     weekly: false,
     todo: false,
+  },
+  history: {
+    undoStack: [],
+    redoStack: [],
   },
   page: "dashboard",
 };

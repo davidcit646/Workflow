@@ -24,12 +24,19 @@ contextBridge.exposeInMainWorld("workflowApi", {
   todosGet: () => ipcRenderer.invoke("todos:get"),
   todosSave: (todos) => ipcRenderer.invoke("todos:save", todos),
 
-  dbListTables: () => ipcRenderer.invoke("db:listTables"),
-  dbGetTable: (tableId) => ipcRenderer.invoke("db:getTable", tableId),
-  dbDeleteRows: (tableId, rowIds) => ipcRenderer.invoke("db:deleteRows", { tableId, rowIds }),
+  dbSources: () => ipcRenderer.invoke("db:sources"),
+  dbSetSource: (sourceId) => ipcRenderer.invoke("db:setSource", sourceId),
+  dbListTables: (sourceId) => ipcRenderer.invoke("db:listTables", sourceId),
+  dbGetTable: (tableId, sourceId) => ipcRenderer.invoke("db:getTable", tableId, sourceId),
+  dbDeleteRows: (tableId, rowIds, sourceId) =>
+    ipcRenderer.invoke("db:deleteRows", { tableId, rowIds, sourceId }),
   dbExportCsv: (payload) => ipcRenderer.invoke("db:exportCsv", payload),
+  dbImportPick: () => ipcRenderer.invoke("db:importPick"),
+  dbImportApply: (payload) => ipcRenderer.invoke("db:importApply", payload),
+  dbValidateCurrent: () => ipcRenderer.invoke("db:validateCurrent"),
 
   recycleUndo: (id) => ipcRenderer.invoke("recycle:undo", id),
+  recycleRedo: (id) => ipcRenderer.invoke("recycle:redo", id),
 
   piiGet: (candidateId) => ipcRenderer.invoke("candidate:getPII", candidateId),
   piiSave: (candidateId, data) => ipcRenderer.invoke("candidate:savePII", { candidateId, data }),

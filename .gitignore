@@ -30,6 +30,18 @@ pyinstaller.log
 .DS_Store
 Thumbs.db
 .vscode/
+.idea/
+
+# Android/Gradle
+android/.gradle/
+android/.idea/
+android/local.properties
+android/**/build/
+android/captures/
+native/**/build/
+native/**/.gradle/
+*.jks
+*.keystore
 
 # App data (local/sensitive)
 data/
@@ -46,3 +58,4 @@ electron-dist/
 # Misc
 npm-debug.log*
 yarn-error.log*
+pnpm-debug.log*

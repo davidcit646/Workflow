@@ -24,6 +24,10 @@ export const showToast = ({ message, actionLabel, onAction, duration = 5000 }) =
   text.textContent = message || "";
   toast.appendChild(text);
 
+  const dismissToast = () => {
+    toast.remove();
+  };
+
   if (actionLabel && typeof onAction === "function") {
     const actionBtn = document.createElement("button");
     actionBtn.type = "button";
@@ -34,18 +38,40 @@ export const showToast = ({ message, actionLabel, onAction, duration = 5000 }) =
       try {
         await onAction();
       } finally {
-        toast.remove();
+        dismissToast();
       }
     });
     toast.appendChild(actionBtn);
   }
 
-  root.appendChild(toast);
-  const timer = window.setTimeout(() => {
-    toast.remove();
-  }, duration);
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "toast__close";
+  closeBtn.setAttribute("aria-label", "Dismiss notification");
+  closeBtn.textContent = "X";
+  closeBtn.addEventListener("click", (event) => {
+    event.preventDefault();
+    dismissToast();
+  });
+  toast.appendChild(closeBtn);
 
-  toast.addEventListener("mouseenter", () => window.clearTimeout(timer), { once: true });
+  root.appendChild(toast);
+  let remaining = Math.max(1000, duration);
+  let start = Date.now();
+  let timer = window.setTimeout(dismissToast, remaining);
+
+  toast.addEventListener("mouseenter", () => {
+    if (!timer) return;
+    window.clearTimeout(timer);
+    timer = null;
+    remaining -= Date.now() - start;
+  });
+  toast.addEventListener("mouseleave", () => {
+    if (timer) return;
+    remaining = Math.max(1000, remaining);
+    start = Date.now();
+    timer = window.setTimeout(dismissToast, remaining);
+  });
 };
 
 export const withOptimisticUpdate = async ({
@@ -152,26 +178,10 @@ export const initWindowControls = () => {
       ? "platform-mac"
       : platform === "win32"
         ? "platform-win"
+        : platform === "android"
+          ? "platform-android"
         : "platform-linux";
   body.classList.add(platformClass);
-
-  const controls = workflowApi && workflowApi.windowControls ? workflowApi.windowControls : null;
-  const closeBtn = $("window-close");
-  const minBtn = $("window-min");
-  const maxBtn = $("window-max");
-  if (!controls || !closeBtn || !minBtn || !maxBtn) return;
-
-  closeBtn.addEventListener("click", () => controls.close());
-  minBtn.addEventListener("click", () => controls.minimize());
-  maxBtn.addEventListener("click", () => controls.toggleMaximize());
-
-  const titlebar = document.querySelector(".titlebar");
-  if (titlebar) {
-    titlebar.addEventListener("dblclick", (event) => {
-      if ((event.target && event.target.closest(".window-control")) || !controls) return;
-      controls.toggleMaximize();
-    });
-  }
 };
 
 export const initPasswordToggles = () => {

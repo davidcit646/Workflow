@@ -66,6 +66,155 @@ import {
     }
   };
 
+  const updateUndoRedoButtons = () => {
+    const undoBtn = $("dashboard-undo");
+    const redoBtn = $("dashboard-redo");
+    if (undoBtn) undoBtn.disabled = state.history.undoStack.length === 0;
+    if (redoBtn) redoBtn.disabled = state.history.redoStack.length === 0;
+  };
+
+  let topbarScrollCleanup = null;
+
+  const setTopbarHidden = (page, topbar, hidden) => {
+    if (!page || !topbar) return;
+    page.classList.toggle("page--topbar-hidden", hidden);
+    topbar.classList.toggle("topbar--hidden", hidden);
+  };
+
+  const getTopbarScrollTarget = (page) => {
+    if (!page) return null;
+    const candidates = [
+      page.querySelector("#kanban-board"),
+      page.querySelector(".page__body"),
+      document.querySelector(".main"),
+      document.scrollingElement,
+    ].filter(Boolean);
+    const isScrollable = (el) => el && el.scrollHeight - el.clientHeight > 1;
+    return candidates.find(isScrollable) || candidates[0] || null;
+  };
+
+  const bindTopbarAutoHide = () => {
+    if (topbarScrollCleanup) {
+      topbarScrollCleanup();
+      topbarScrollCleanup = null;
+    }
+    const page = document.querySelector(".page--active");
+    if (!page) return;
+    const topbar = page.querySelector(".topbar");
+    if (!topbar) return;
+    setTopbarHidden(page, topbar, false);
+
+    const scrollEl = getTopbarScrollTarget(page);
+    if (!scrollEl) return;
+    const threshold = 6;
+    let lastScrollTop = scrollEl.scrollTop || 0;
+    const onScroll = () => {
+      if (document.querySelector(".modal:not(.hidden)")) {
+        setTopbarHidden(page, topbar, false);
+        lastScrollTop = scrollEl.scrollTop || 0;
+        return;
+      }
+      const current = scrollEl.scrollTop || 0;
+      const delta = current - lastScrollTop;
+      if (current <= 4) {
+        setTopbarHidden(page, topbar, false);
+      } else if (delta > threshold) {
+        setTopbarHidden(page, topbar, true);
+      } else if (delta < -threshold) {
+        setTopbarHidden(page, topbar, false);
+      }
+      lastScrollTop = current;
+    };
+    scrollEl.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+    topbarScrollCleanup = () => scrollEl.removeEventListener("scroll", onScroll);
+  };
+
+  const pushUndo = (undoId, { clearRedo = true } = {}) => {
+    if (!undoId) return;
+    state.history.undoStack.unshift({ id: undoId, at: Date.now() });
+    state.history.undoStack = state.history.undoStack.slice(0, 50);
+    if (clearRedo) state.history.redoStack = [];
+    updateUndoRedoButtons();
+  };
+
+  const pushRedo = (redoId) => {
+    if (!redoId) return;
+    state.history.redoStack.unshift({ id: redoId, at: Date.now() });
+    state.history.redoStack = state.history.redoStack.slice(0, 50);
+    updateUndoRedoButtons();
+  };
+
+  const removeUndoFromStack = (undoId) => {
+    if (!undoId) return;
+    state.history.undoStack = state.history.undoStack.filter((item) => item.id !== undoId);
+    updateUndoRedoButtons();
+  };
+
+  const applyUndoFromToast = async (undoId, reloadFn) => {
+    const undo = await workflowApi.recycleUndo(undoId);
+    if (undo && undo.ok) {
+      if (undo.redoId) pushRedo(undo.redoId);
+      removeUndoFromStack(undoId);
+      if (reloadFn) await reloadFn();
+      return true;
+    }
+    await showMessageModal("Undo Failed", (undo && undo.error) || "Unable to restore.");
+    return false;
+  };
+
+  const handleUndo = async () => {
+    if (!state.history.undoStack.length) return;
+    const entry = state.history.undoStack.shift();
+    updateUndoRedoButtons();
+    try {
+      const result = await workflowApi.recycleUndo(entry.id);
+      if (!result || result.ok === false) {
+        state.history.undoStack.unshift(entry);
+        updateUndoRedoButtons();
+        await showMessageModal("Undo Failed", (result && result.error) || "Unable to restore.");
+        return;
+      }
+      if (result && result.redoId) pushRedo(result.redoId);
+      if (state.page === "database") {
+        await loadDatabaseTables();
+      } else {
+        await loadKanban();
+        renderKanbanSettings();
+      }
+    } catch (err) {
+      state.history.undoStack.unshift(entry);
+      updateUndoRedoButtons();
+      await showMessageModal("Undo Failed", "Unable to restore.");
+    }
+  };
+
+  const handleRedo = async () => {
+    if (!state.history.redoStack.length) return;
+    const entry = state.history.redoStack.shift();
+    updateUndoRedoButtons();
+    try {
+      const result = await workflowApi.recycleRedo(entry.id);
+      if (!result || result.ok === false) {
+        state.history.redoStack.unshift(entry);
+        updateUndoRedoButtons();
+        await showMessageModal("Redo Failed", (result && result.error) || "Unable to redo.");
+        return;
+      }
+      if (result && result.undoId) pushUndo(result.undoId, { clearRedo: false });
+      if (state.page === "database") {
+        await loadDatabaseTables();
+      } else {
+        await loadKanban();
+        renderKanbanSettings();
+      }
+    } catch (err) {
+      state.history.redoStack.unshift(entry);
+      updateUndoRedoButtons();
+      await showMessageModal("Redo Failed", "Unable to redo.");
+    }
+  };
+
   const ensureKanbanCache = () => {
     if (!state.kanban.cache) return;
     if (!state.kanban.cache.dirty && state.kanban.cache.columns) return;
@@ -105,6 +254,7 @@ import {
     title.textContent = status.configured ? "Sign In" : "Create Program Password";
     if (status.authenticated) return true;
     modal.classList.remove("hidden");
+    await refreshBiometricAuthButton();
     return new Promise((resolve) => {
       const onSuccess = () => {
         window.removeEventListener("workflow:auth-success", onSuccess);
@@ -176,6 +326,8 @@ import {
       switchPage("dashboard");
       await loadKanban();
       await loadTodos();
+      await refreshBiometricSettings();
+      await refreshBiometricAuthButton();
     } catch (err) {
       console.error("Auth submit error", err);
       await showMessageModal("Error", "Unable to authenticate.");
@@ -203,6 +355,56 @@ import {
   const hideChangePasswordModal = () => {
     const modal = $("change-password-modal");
     if (modal) modal.classList.add("hidden");
+  };
+
+  const promptForPassword = ({
+    title = "Confirm With Password",
+    note = "Biometrics are disabled for this action. Enter your password to continue.",
+    confirmLabel = "Confirm",
+    danger = true,
+  } = {}) => {
+    const modal = $("db-import-password-modal");
+    const titleEl = $("db-import-password-title");
+    const noteEl = $("db-import-password-note");
+    const input = $("db-import-password");
+    const form = $("db-import-password-form");
+    const confirmBtn = $("db-import-password-confirm");
+    const cancelBtn = $("db-import-password-cancel");
+    const closeBtn = $("db-import-password-close");
+    if (!modal || !input || !form || !confirmBtn) return Promise.resolve("");
+
+    if (titleEl) titleEl.textContent = title;
+    if (noteEl) noteEl.textContent = note;
+    confirmBtn.textContent = confirmLabel;
+    confirmBtn.classList.toggle("button--danger", danger);
+    confirmBtn.classList.toggle("button--primary", !danger);
+    input.value = "";
+    initPasswordToggles();
+    modal.classList.remove("hidden");
+
+    return new Promise((resolve) => {
+      const cleanup = () => {
+        form.removeEventListener("submit", onSubmit);
+        if (cancelBtn) cancelBtn.removeEventListener("click", onCancel);
+        if (closeBtn) closeBtn.removeEventListener("click", onCancel);
+        modal.classList.add("hidden");
+      };
+      const onCancel = (event) => {
+        event && event.preventDefault();
+        cleanup();
+        resolve("");
+      };
+      const onSubmit = (event) => {
+        event.preventDefault();
+        const value = input.value;
+        if (!value) return;
+        cleanup();
+        resolve(value);
+      };
+      form.addEventListener("submit", onSubmit);
+      if (cancelBtn) cancelBtn.addEventListener("click", onCancel);
+      if (closeBtn) closeBtn.addEventListener("click", onCancel);
+    });
   };
 
   const handleChangePasswordSubmit = async (event) => {
@@ -233,6 +435,123 @@ import {
     }
     await showMessageModal("Updated", "Password changed successfully.");
     hideChangePasswordModal();
+    if (workflowApi && workflowApi.biometricStatus && workflowApi.biometricEnable) {
+      const status = await workflowApi.biometricStatus();
+      if (status && status.enabled) {
+        await workflowApi.biometricEnable(nw);
+      }
+      await refreshBiometricSettings();
+    }
+  };
+
+  const getBiometryLabel = (type) => {
+    if (!type) return "Biometrics";
+    const lower = String(type).toLowerCase();
+    if (lower.includes("face")) return "Face ID";
+    if (lower.includes("finger")) return "Fingerprint";
+    return "Biometrics";
+  };
+
+  const refreshBiometricAuthButton = async () => {
+    const btn = $("auth-biometric");
+    if (!btn) return;
+    if (!workflowApi || !workflowApi.biometricStatus) {
+      btn.classList.add("hidden");
+      return;
+    }
+    const status = await workflowApi.biometricStatus();
+    if (!status || !status.available || !status.enabled) {
+      btn.classList.add("hidden");
+      return;
+    }
+    btn.textContent = `Use ${getBiometryLabel(status.biometryType)}`;
+    btn.classList.remove("hidden");
+  };
+
+  const handleAuthBiometric = async () => {
+    const btn = $("auth-biometric");
+    const input = $("auth-password");
+    if (!btn || !workflowApi || !workflowApi.biometricUnlock || !input) return;
+    if (btn.disabled) return;
+    btn.disabled = true;
+    try {
+      const result = await workflowApi.biometricUnlock();
+      if (!result || !result.ok || !result.password) {
+        await showMessageModal(
+          "Biometric Failed",
+          (result && result.error) || "Unable to authenticate with biometrics.",
+        );
+        return;
+      }
+      input.value = result.password;
+      await handleAuthSubmit({ preventDefault: () => {} });
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  const refreshBiometricSettings = async () => {
+    const btn = $("biometric-toggle");
+    const statusEl = $("biometric-status");
+    if (!btn || !statusEl) return;
+    if (!workflowApi || !workflowApi.biometricStatus) {
+      btn.disabled = true;
+      btn.textContent = "Biometrics unavailable";
+      statusEl.textContent = "Biometrics are not supported on this device.";
+      return;
+    }
+    const status = await workflowApi.biometricStatus();
+    if (!status || !status.available) {
+      btn.disabled = true;
+      btn.textContent = "Biometrics unavailable";
+      statusEl.textContent = "No biometric hardware detected.";
+      return;
+    }
+    btn.disabled = false;
+    if (status.enabled) {
+      btn.textContent = "Disable biometrics";
+      statusEl.textContent = "Biometrics are enabled for quick sign-in.";
+    } else {
+      btn.textContent = "Enable biometrics";
+      statusEl.textContent = "Biometrics are not enabled yet.";
+    }
+  };
+
+  const handleBiometricToggle = async () => {
+    if (!workflowApi || !workflowApi.biometricStatus) return;
+    const status = await workflowApi.biometricStatus();
+    if (!status || !status.available) {
+      await showMessageModal("Biometrics Unavailable", "No biometric hardware detected.");
+      return;
+    }
+    if (status.enabled) {
+      const result = await workflowApi.biometricDisable();
+      if (!result || result.ok === false) {
+        await showMessageModal(
+          "Unable to Disable",
+          (result && result.error) || "Unable to disable biometrics.",
+        );
+      }
+      await refreshBiometricSettings();
+      await refreshBiometricAuthButton();
+      return;
+    }
+    const password = await promptForPassword({
+      title: "Enable Biometrics",
+      note: "Enter your password to store it securely for biometric sign-in.",
+      confirmLabel: "Enable",
+      danger: false,
+    });
+    if (!password) return;
+    const result = await workflowApi.biometricEnable(password);
+    if (!result || result.ok === false) {
+      await showMessageModal(
+        "Unable to Enable",
+        (result && result.error) || "Unable to enable biometrics.",
+      );
+    }
+    await refreshBiometricSettings();
+    await refreshBiometricAuthButton();
   };
 
   const getColumnName = (columnId) => {
@@ -665,17 +984,15 @@ import {
         invalidateKanbanCache();
         renderKanbanBoard();
         if (payload && payload.undoId) {
+          pushUndo(payload.undoId);
           showToast({
             message: "Candidate processed.",
             actionLabel: "Undo",
             onAction: async () => {
-              const undo = await workflowApi.recycleUndo(payload.undoId);
-              if (undo && undo.ok) {
+              await applyUndoFromToast(payload.undoId, async () => {
                 await loadKanban();
                 renderKanbanSettings();
-              } else {
-                await showMessageModal("Undo Failed", (undo && undo.error) || "Unable to restore.");
-              }
+              });
             },
           });
         }
@@ -714,17 +1031,15 @@ import {
         renderKanbanBoard();
         renderKanbanSettings();
         if (payload && payload.undoId) {
+          pushUndo(payload.undoId);
           showToast({
             message: "Candidate removed.",
             actionLabel: "Undo",
             onAction: async () => {
-              const undo = await workflowApi.recycleUndo(payload.undoId);
-              if (undo && undo.ok) {
+              await applyUndoFromToast(payload.undoId, async () => {
                 await loadKanban();
                 renderKanbanSettings();
-              } else {
-                await showMessageModal("Undo Failed", (undo && undo.error) || "Unable to restore.");
-              }
+              });
             },
           });
         }
@@ -994,17 +1309,15 @@ import {
         renderKanbanBoard();
         renderKanbanSettings();
         if (payload && payload.undoId) {
+          pushUndo(payload.undoId);
           showToast({
             message: "Column removed.",
             actionLabel: "Undo",
             onAction: async () => {
-              const undo = await workflowApi.recycleUndo(payload.undoId);
-              if (undo && undo.ok) {
+              await applyUndoFromToast(payload.undoId, async () => {
                 await loadKanban();
                 renderKanbanSettings();
-              } else {
-                await showMessageModal("Undo Failed", (undo && undo.error) || "Unable to restore.");
-              }
+              });
             },
           });
         }
@@ -1745,6 +2058,189 @@ import {
     }
   };
 
+  const initSidebarToggle = () => {
+    const appRoot = document.querySelector(".app");
+    const toggleButtons = document.querySelectorAll("[data-sidebar-toggle]");
+    const scrim = $("sidebar-scrim");
+    if (!appRoot || toggleButtons.length === 0) return;
+    const storageKey = "workflow.sidebarOpen";
+
+    const apply = (open) => {
+      appRoot.classList.toggle("app--drawer-open", open);
+      toggleButtons.forEach((toggle) => {
+        toggle.setAttribute("aria-pressed", open ? "true" : "false");
+        toggle.setAttribute("aria-label", open ? "Close menu" : "Open menu");
+        toggle.title = open ? "Close menu" : "Open menu";
+      });
+      if (scrim) scrim.setAttribute("aria-hidden", open ? "false" : "true");
+      localStorage.setItem(storageKey, open ? "1" : "0");
+    };
+
+    const stored = localStorage.getItem(storageKey);
+    const preferOpen = window.innerWidth > 900;
+    const initialOpen = stored === null ? preferOpen : stored === "1";
+    apply(initialOpen);
+
+    toggleButtons.forEach((toggle) => {
+      toggle.addEventListener("click", () => {
+        const next = !appRoot.classList.contains("app--drawer-open");
+        apply(next);
+      });
+    });
+
+    if (scrim) {
+      scrim.addEventListener("click", () => apply(false));
+    }
+
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let tracking = false;
+    const swipeThreshold = 60;
+    const maxVertical = 50;
+    const edgeOpen = 48;
+
+    const onTouchStart = (event) => {
+      if (window.innerWidth > 900) return;
+      if (!event.touches || event.touches.length !== 1) return;
+      const touch = event.touches[0];
+      touchStartX = touch.clientX;
+      touchStartY = touch.clientY;
+      tracking = true;
+    };
+
+    const onTouchEnd = (event) => {
+      if (!tracking) return;
+      tracking = false;
+      const touch = event.changedTouches && event.changedTouches[0];
+      if (!touch) return;
+      const deltaX = touch.clientX - touchStartX;
+      const deltaY = touch.clientY - touchStartY;
+      if (Math.abs(deltaY) > maxVertical) return;
+      if (Math.abs(deltaX) <= Math.abs(deltaY)) return;
+      const open = appRoot.classList.contains("app--drawer-open");
+      if (!open && touchStartX <= edgeOpen && deltaX > swipeThreshold) {
+        apply(true);
+      }
+      if (open && deltaX < -swipeThreshold) {
+        apply(false);
+      }
+    };
+
+    document.addEventListener("touchstart", onTouchStart, { passive: true });
+    document.addEventListener("touchend", onTouchEnd, { passive: true });
+  };
+
+  const initAndroidWorkflowActions = () => {
+    const platform = workflowApi && workflowApi.platform ? workflowApi.platform : "";
+    if (platform !== "android") return;
+    const actions = document.querySelector("#page-dashboard .topbar__actions");
+    const target = $("sidebar-workflow-actions");
+    const section = $("sidebar-workflow-section");
+    if (!actions || !target) return;
+    const items = Array.from(actions.children);
+    if (items.length === 0) return;
+    items.forEach((item) => target.appendChild(item));
+    if (section) section.classList.remove("hidden");
+  };
+
+  const initResponsiveModes = () => {
+    const apply = () => {
+      const compact = window.innerWidth <= 1200 || window.innerHeight <= 820;
+      document.body.classList.toggle("app-compact", compact);
+      bindTopbarAutoHide();
+    };
+    apply();
+    window.addEventListener("resize", debounce(apply, 150));
+  };
+
+  const initSetupExperience = async () => {
+    if (!workflowApi || !workflowApi.setupStatus) return;
+    const modal = $("setup-modal");
+    const continueBtn = $("setup-continue");
+    if (!modal || !continueBtn) return;
+    const status = await workflowApi.setupStatus();
+    if (!status || !status.needsSetup) return;
+    const pathEl = $("setup-folder-path");
+    if (pathEl && status.folder) pathEl.textContent = status.folder;
+    const warning = $("setup-storage-warning");
+    if (warning) {
+      warning.classList.toggle("hidden", !status.fallback);
+    }
+    modal.classList.remove("hidden");
+    await new Promise((resolve) => {
+      const onContinue = async () => {
+        continueBtn.removeEventListener("click", onContinue);
+        modal.classList.add("hidden");
+        const selected = document.querySelector('input[name="donate-choice"]:checked');
+        const choice = selected ? selected.value : "not_now";
+        if (workflowApi.setupComplete) await workflowApi.setupComplete({ donationChoice: choice });
+        if (choice === "donate_now") {
+          switchPage("settings");
+          const donateBtn = $("donate-button");
+          if (donateBtn) donateBtn.focus();
+        }
+        resolve();
+      };
+      continueBtn.addEventListener("click", onContinue);
+    });
+  };
+
+  const initDonation = async () => {
+    const donateBtn = $("donate-button");
+    if (!donateBtn) return;
+    if (!workflowApi || !workflowApi.donate || workflowApi.platform !== "android") {
+      const card = donateBtn.closest(".card");
+      if (card) card.classList.add("hidden");
+      return;
+    }
+    const preference =
+      workflowApi.donationPreference && (await workflowApi.donationPreference());
+    if (preference && preference.choice === "never") {
+      const inSettings = !!donateBtn.closest("#page-settings");
+      if (!inSettings) {
+        const card = donateBtn.closest(".card");
+        if (card) card.classList.add("hidden");
+        return;
+      }
+    }
+
+    donateBtn.addEventListener("click", async () => {
+      await showMessageModal(
+        "Coming Soon",
+        "Donation checkout will be added soon. Thanks for supporting the project!",
+      );
+    });
+  };
+
+  const initKanbanWheelScroll = () => {
+    const board = $("kanban-board");
+    if (!board || board.dataset.wheelScroll) return;
+    board.dataset.wheelScroll = "1";
+    board.addEventListener(
+      "wheel",
+      (event) => {
+        if (!(event.target instanceof HTMLElement)) return;
+        if (board.scrollWidth <= board.clientWidth) return;
+        if (Math.abs(event.deltaX) > 0) return;
+
+        const columnBody = event.target.closest(".kanban__column-body");
+        if (columnBody) {
+          const delta = event.deltaY;
+          if (delta < 0 && columnBody.scrollTop > 0) return;
+          if (delta > 0 && columnBody.scrollTop + columnBody.clientHeight < columnBody.scrollHeight) {
+            return;
+          }
+        }
+
+        if (event.deltaY !== 0) {
+          board.scrollLeft += event.deltaY;
+          event.preventDefault();
+        }
+      },
+      { passive: false },
+    );
+  };
+
   const openWeeklyTracker = async () => {
     const panel = $("weekly-panel");
     const form = $("weekly-form");
@@ -2003,6 +2499,59 @@ import {
     });
   };
 
+  const renderDatabaseSourceSelect = () => {
+    const select = $("db-source-select");
+    const note = $("db-source-note");
+    if (!select) return;
+    select.innerHTML = "";
+    const fragment = document.createDocumentFragment();
+    state.data.sources.forEach((source) => {
+      const option = document.createElement("option");
+      option.value = source.id;
+      option.textContent = source.readonly ? `${source.name} (view only)` : source.name;
+      fragment.appendChild(option);
+    });
+    select.appendChild(fragment);
+    if (state.data.activeSourceId) {
+      select.value = state.data.activeSourceId;
+    }
+    if (note) {
+      if (state.data.readOnly) {
+        const active =
+          state.data.sources.find((source) => source.id === state.data.activeSourceId) || null;
+        note.textContent = `Viewing ${active ? active.name : "an imported database"} (read-only).`;
+        note.classList.remove("hidden");
+      } else {
+        note.classList.add("hidden");
+      }
+    }
+  };
+
+  const loadDatabaseSources = async () => {
+    if (!workflowApi || !workflowApi.dbSources) return;
+    try {
+      const result = await workflowApi.dbSources();
+      state.data.sources = (result && result.sources) || [];
+      state.data.activeSourceId = (result && result.activeId) || "current";
+      state.data.readOnly = state.data.activeSourceId !== "current";
+      renderDatabaseSourceSelect();
+    } catch (err) {
+      // ignore
+    }
+  };
+
+  const setDatabaseSource = async (sourceId) => {
+    if (!workflowApi || !workflowApi.dbSetSource) return;
+    const result = await workflowApi.dbSetSource(sourceId);
+    if (result && result.activeId) {
+      state.data.activeSourceId = result.activeId;
+      state.data.readOnly = state.data.activeSourceId !== "current";
+      renderDatabaseSourceSelect();
+      clearDatabaseSelection();
+      await loadDatabaseTables();
+    }
+  };
+
   const renderDatabaseTableSelect = () => {
     const select = $("db-table-select");
     if (!select) return;
@@ -2072,8 +2621,9 @@ import {
     const btn = $("db-delete");
     const clearBtn = $("db-clear-selection");
     const hasSelection = state.data.selectedRowIds.size > 0;
-    if (btn) btn.disabled = !hasSelection;
-    if (clearBtn) clearBtn.disabled = !hasSelection;
+    const canEdit = !state.data.readOnly;
+    if (btn) btn.disabled = !canEdit || !hasSelection;
+    if (clearBtn) clearBtn.disabled = !canEdit || !hasSelection;
   };
 
   const clearDatabaseSelection = (shouldRender = true) => {
@@ -2103,6 +2653,7 @@ import {
     selectAll.dataset.selectAll = "1";
     selectAll.checked =
       rows.length > 0 && rows.every((row) => state.data.selectedRowIds.has(row.__rowId));
+    selectAll.disabled = state.data.readOnly;
     selectTh.appendChild(selectAll);
     headerRow.appendChild(selectTh);
 
@@ -2136,6 +2687,7 @@ import {
       checkbox.className = "table-checkbox db-row-checkbox";
       checkbox.dataset.rowId = row.__rowId;
       checkbox.checked = state.data.selectedRowIds.has(row.__rowId);
+      checkbox.disabled = state.data.readOnly;
       selectTd.appendChild(checkbox);
       tr.appendChild(selectTd);
 
@@ -2158,7 +2710,7 @@ import {
     if (!tableId) return;
     let table = null;
     try {
-      table = await workflowApi.dbGetTable(tableId);
+      table = await workflowApi.dbGetTable(tableId, state.data.activeSourceId);
     } catch (error) {
       await showMessageModal(
         "Database Unavailable",
@@ -2179,7 +2731,7 @@ import {
   const loadDatabaseTables = async () => {
     let tables = [];
     try {
-      tables = (await workflowApi.dbListTables()) || [];
+      tables = (await workflowApi.dbListTables(state.data.activeSourceId)) || [];
     } catch (error) {
       await showMessageModal(
         "Database Unavailable",
@@ -2197,6 +2749,13 @@ import {
   };
 
   const handleDatabaseDelete = async () => {
+    if (state.data.readOnly) {
+      await showMessageModal(
+        "Read-only Database",
+        "Imported databases are view-only. Switch back to the current database to delete rows.",
+      );
+      return;
+    }
     if (!state.data.tableId || state.data.selectedRowIds.size === 0) return;
     const ids = Array.from(state.data.selectedRowIds);
     const previousRows = state.data.rows.map((row) => ({ ...row }));
@@ -2214,7 +2773,7 @@ import {
         state.data.selectedRowIds = previousSelection;
         renderDatabaseTable();
       },
-      request: () => workflowApi.dbDeleteRows(state.data.tableId, ids),
+      request: () => workflowApi.dbDeleteRows(state.data.tableId, ids, state.data.activeSourceId),
       onSuccess: async (payload) => {
         if (payload && payload.ok === false) {
           throw new Error(payload.message || "Unable to delete rows.");
@@ -2224,21 +2783,19 @@ import {
           await loadKanban();
         }
         if (payload && payload.undoId) {
+          pushUndo(payload.undoId);
           showToast({
             message: "Rows deleted.",
             actionLabel: "Undo",
             onAction: async () => {
-              const undo = await workflowApi.recycleUndo(payload.undoId);
-              if (undo && undo.ok) {
+              await applyUndoFromToast(payload.undoId, async () => {
                 await loadDatabaseTables();
                 if (
                   ["kanban_columns", "kanban_cards", "candidate_data"].includes(state.data.tableId)
                 ) {
                   await loadKanban();
                 }
-              } else {
-                await showMessageModal("Undo Failed", (undo && undo.error) || "Unable to restore.");
-              }
+              });
             },
           });
         }
@@ -2277,6 +2834,7 @@ import {
         tableName: table ? table.name : state.data.tableId,
         columns: state.data.columns,
         rows: rowsToExport,
+        sourceId: state.data.activeSourceId,
       });
       if (result && result.ok === false) {
         await showMessageModal("Export Failed", result.message || "Unable to export CSV.");
@@ -2289,6 +2847,232 @@ import {
     } finally {
       clearDatabaseSelection();
     }
+  };
+
+  const showDbImportActionModal = (fileName) => {
+    const modal = $("db-import-action-modal");
+    const nameEl = $("db-import-file-name");
+    const appendBtn = $("db-import-action-append");
+    const viewBtn = $("db-import-action-view");
+    const replaceBtn = $("db-import-action-replace");
+    const cancelBtn = $("db-import-action-cancel");
+    const closeBtn = $("db-import-action-close");
+    if (!modal || !appendBtn || !viewBtn || !replaceBtn || !cancelBtn) {
+      return Promise.resolve(null);
+    }
+    if (nameEl) nameEl.textContent = fileName || "selected database";
+    modal.classList.remove("hidden");
+    return new Promise((resolve) => {
+      const cleanup = () => {
+        appendBtn.removeEventListener("click", onAppend);
+        viewBtn.removeEventListener("click", onView);
+        replaceBtn.removeEventListener("click", onReplace);
+        cancelBtn.removeEventListener("click", onCancel);
+        if (closeBtn) closeBtn.removeEventListener("click", onCancel);
+        modal.classList.add("hidden");
+      };
+      const onAppend = () => {
+        cleanup();
+        resolve("append");
+      };
+      const onView = () => {
+        cleanup();
+        resolve("view");
+      };
+      const onReplace = () => {
+        cleanup();
+        resolve("replace");
+      };
+      const onCancel = () => {
+        cleanup();
+        resolve(null);
+      };
+      appendBtn.addEventListener("click", onAppend);
+      viewBtn.addEventListener("click", onView);
+      replaceBtn.addEventListener("click", onReplace);
+      cancelBtn.addEventListener("click", onCancel);
+      if (closeBtn) closeBtn.addEventListener("click", onCancel);
+    });
+  };
+
+  const showDbImportWarningModal = ({ action, fileName }) => {
+    const modal = $("db-import-warning-modal");
+    const actionEl = $("db-import-warning-action");
+    const nameEl = $("db-import-warning-name");
+    const proceedBtn = $("db-import-warning-proceed");
+    const cancelBtn = $("db-import-warning-cancel");
+    const closeBtn = $("db-import-warning-close");
+    if (!modal || !proceedBtn || !cancelBtn) return Promise.resolve(false);
+    if (actionEl) actionEl.textContent = action.toUpperCase();
+    if (nameEl) nameEl.textContent = fileName || "selected database";
+    modal.classList.remove("hidden");
+    return new Promise((resolve) => {
+      const cleanup = () => {
+        proceedBtn.removeEventListener("click", onProceed);
+        cancelBtn.removeEventListener("click", onCancel);
+        if (closeBtn) closeBtn.removeEventListener("click", onCancel);
+        modal.classList.add("hidden");
+      };
+      const onProceed = () => {
+        cleanup();
+        resolve(true);
+      };
+      const onCancel = () => {
+        cleanup();
+        resolve(false);
+      };
+      proceedBtn.addEventListener("click", onProceed);
+      cancelBtn.addEventListener("click", onCancel);
+      if (closeBtn) closeBtn.addEventListener("click", onCancel);
+    });
+  };
+
+  const showDbImportSuccessModal = ({ message, showView }) => {
+    const modal = $("db-import-success-modal");
+    const messageEl = $("db-import-success-message");
+    const viewBtn = $("db-import-success-view");
+    const continueBtn = $("db-import-success-continue");
+    const closeBtn = $("db-import-success-close");
+    if (!modal || !continueBtn || !messageEl) return Promise.resolve("continue");
+    messageEl.textContent = message || "Database import completed.";
+    if (viewBtn) viewBtn.classList.toggle("hidden", !showView);
+    modal.classList.remove("hidden");
+    return new Promise((resolve) => {
+      const cleanup = () => {
+        if (viewBtn) viewBtn.removeEventListener("click", onView);
+        continueBtn.removeEventListener("click", onContinue);
+        if (closeBtn) closeBtn.removeEventListener("click", onContinue);
+        modal.classList.add("hidden");
+      };
+      const onView = () => {
+        cleanup();
+        resolve("view");
+      };
+      const onContinue = () => {
+        cleanup();
+        resolve("continue");
+      };
+      if (viewBtn) viewBtn.addEventListener("click", onView);
+      continueBtn.addEventListener("click", onContinue);
+      if (closeBtn) closeBtn.addEventListener("click", onContinue);
+    });
+  };
+
+  const showDbImportErrorModal = ({ title, message, detail }) => {
+    const modal = $("db-import-error-modal");
+    const titleEl = $("db-import-error-title");
+    const messageEl = $("db-import-error-message");
+    const detailEl = $("db-import-error-detail");
+    const okBtn = $("db-import-error-ok");
+    const closeBtn = $("db-import-error-close");
+    if (!modal || !okBtn || !messageEl) return Promise.resolve();
+    if (titleEl) titleEl.textContent = title || "Import Blocked";
+    messageEl.textContent = message || "";
+    if (detailEl) detailEl.textContent = detail || "";
+    modal.classList.remove("hidden");
+    return new Promise((resolve) => {
+      const cleanup = () => {
+        okBtn.removeEventListener("click", onClose);
+        if (closeBtn) closeBtn.removeEventListener("click", onClose);
+        modal.classList.add("hidden");
+        resolve();
+      };
+      const onClose = (event) => {
+        event && event.preventDefault();
+        cleanup();
+      };
+      okBtn.addEventListener("click", onClose);
+      if (closeBtn) closeBtn.addEventListener("click", onClose);
+    });
+  };
+
+  const handleDatabaseImport = async () => {
+    if (!workflowApi || !workflowApi.dbImportPick || !workflowApi.dbImportApply) {
+      await showMessageModal("Unavailable", "Database import is not available.");
+      return;
+    }
+    const pick = await workflowApi.dbImportPick();
+    if (!pick || pick.canceled) return;
+    if (pick.ok === false) {
+      await showMessageModal("Import Failed", pick.error || "Unable to open the import file.");
+      return;
+    }
+    const action = await showDbImportActionModal(pick.name);
+    if (!action) return;
+    const proceed = await showDbImportWarningModal({ action, fileName: pick.name });
+    if (!proceed) return;
+    const password = await promptForPassword({
+      title: "Confirm Database Import",
+      note: "Biometrics are disabled for this action. Enter your password to continue.",
+      confirmLabel: "Proceed",
+      danger: true,
+    });
+    if (!password) return;
+
+    const result = await workflowApi.dbImportApply({
+      action,
+      fileName: pick.name,
+      fileData: pick.data,
+      password,
+    });
+
+    if (!result || result.ok === false) {
+      if (result && result.code === "password") {
+        await showMessageModal("Invalid Password", result.error || "Password is incorrect.");
+        return;
+      }
+      if (result && result.code === "fraud") {
+        await showDbImportErrorModal({
+          title: "WARNING FROM THE DEV",
+          message:
+            "This database looks fraudulent or unsafe. We refused to import it to protect your data.",
+          detail:
+            result.error ||
+            "If you can’t figure out how to fix it manually, you probably shouldn’t.",
+        });
+        return;
+      }
+      await showDbImportErrorModal({
+        title: "WARNING",
+        message: "We won't import this database because it's broken. From the dev: Shit's broke.",
+        detail: (result && result.error) || "Fix the file and try again.",
+      });
+      return;
+    }
+
+    await loadDatabaseSources();
+    if (action === "append" || action === "replace") {
+      await loadKanban();
+      renderKanbanSettings();
+    }
+    await loadDatabaseTables();
+
+    const successMessage =
+      action === "replace"
+        ? "Database replaced successfully."
+        : action === "append"
+          ? "Database appended successfully."
+          : "Database imported for viewing.";
+    const choice = await showDbImportSuccessModal({
+      message: successMessage,
+      showView: !!result.viewId,
+    });
+    if (choice === "view" && result.viewId) {
+      await setDatabaseSource(result.viewId);
+    }
+  };
+
+  const checkDatabaseIntegrity = async () => {
+    if (!workflowApi || !workflowApi.dbValidateCurrent) return;
+    const result = await workflowApi.dbValidateCurrent();
+    if (!result || result.ok) return;
+    await showDbImportErrorModal({
+      title: "Database Integrity Warning",
+      message:
+        "Your current database failed the integrity check. Some data may be corrupt or unsafe.",
+      detail: result.message || "Please restore from a backup before continuing.",
+    });
+    switchPage("dashboard");
   };
 
   const setupFlyoutDismiss = () => {
@@ -2327,6 +3111,11 @@ import {
       clearDatabaseSelection(false);
     }
     state.page = target;
+    document.body.dataset.page = target;
+    const workflowSection = $("sidebar-workflow-section");
+    if (workflowSection && document.body.classList.contains("platform-android")) {
+      workflowSection.classList.toggle("hidden", target !== "dashboard");
+    }
     document.querySelectorAll(".page").forEach((section) => {
       section.classList.toggle("page--active", section.id === `page-${target}`);
     });
@@ -2340,8 +3129,10 @@ import {
       renderKanbanSettings();
     }
     if (target === "database") {
-      loadDatabaseTables();
+      loadDatabaseSources().then(loadDatabaseTables);
     }
+    updateUndoRedoButtons();
+    bindTopbarAutoHide();
   };
 
   const setupEventListeners = () => {
@@ -2351,6 +3142,12 @@ import {
     const addColumnForm = $("add-column-form");
     const addColumnClose = $("add-column-close");
     const addColumnCancel = $("add-column-cancel");
+    const undoBtn = $("dashboard-undo");
+    const redoBtn = $("dashboard-redo");
+    const authBiometric = $("auth-biometric");
+    const biometricToggle = $("biometric-toggle");
+    const dbImport = $("db-import");
+    const dbSourceSelect = $("db-source-select");
     const candidateForm = $("candidate-form");
     const candidateClose = $("candidate-close");
     const candidateCancel = $("candidate-cancel");
@@ -2378,6 +3175,16 @@ import {
     if (addColumnForm) addColumnForm.addEventListener("submit", handleAddColumnSubmit);
     if (addColumnClose) addColumnClose.addEventListener("click", closeAddColumnModal);
     if (addColumnCancel) addColumnCancel.addEventListener("click", closeAddColumnModal);
+    if (undoBtn) undoBtn.addEventListener("click", handleUndo);
+    if (redoBtn) redoBtn.addEventListener("click", handleRedo);
+    if (authBiometric) authBiometric.addEventListener("click", handleAuthBiometric);
+    if (biometricToggle) biometricToggle.addEventListener("click", handleBiometricToggle);
+    if (dbImport) dbImport.addEventListener("click", handleDatabaseImport);
+    if (dbSourceSelect) {
+      dbSourceSelect.addEventListener("change", () =>
+        setDatabaseSource(dbSourceSelect.value || "current"),
+      );
+    }
     if (candidateForm) candidateForm.addEventListener("submit", handleCandidateSubmit);
     if (candidateClose) candidateClose.addEventListener("click", closeCandidateModal);
     if (candidateCancel) candidateCancel.addEventListener("click", closeCandidateModal);
@@ -2542,7 +3349,21 @@ import {
     });
 
     document.querySelectorAll(".nav-item").forEach((button) => {
-      button.addEventListener("click", () => switchPage(button.dataset.page));
+      button.addEventListener("click", () => {
+        switchPage(button.dataset.page);
+        const appRoot = document.querySelector(".app");
+        if (appRoot && appRoot.classList.contains("app--drawer-open") && window.innerWidth <= 900) {
+          appRoot.classList.remove("app--drawer-open");
+          const scrim = $("sidebar-scrim");
+          if (scrim) scrim.setAttribute("aria-hidden", "true");
+          document.querySelectorAll("[data-sidebar-toggle]").forEach((toggle) => {
+            toggle.setAttribute("aria-pressed", "false");
+            toggle.setAttribute("aria-label", "Open menu");
+            toggle.title = "Open menu";
+          });
+          localStorage.setItem("workflow.sidebarOpen", "0");
+        }
+      });
     });
   };
 
@@ -2552,13 +3373,22 @@ import {
       return;
     }
     initWindowControls();
+    initSidebarToggle();
+    initAndroidWorkflowActions();
+    initResponsiveModes();
     initPasswordToggles();
     observeNewPasswordFields();
     setupEventListeners();
+    initKanbanWheelScroll();
     setupFlyoutDismiss();
     setupTodoUI();
     initCandidateInputs();
     initPiiInputs();
+    updateUndoRedoButtons();
+    refreshBiometricSettings();
+
+    await initSetupExperience();
+    await initDonation();
 
     const status = await workflowApi.authStatus();
     state.auth = status;
@@ -2570,6 +3400,7 @@ import {
     switchPage("dashboard");
     await loadKanban();
     await loadTodos();
+    await checkDatabaseIntegrity();
   };
 
   initApp();

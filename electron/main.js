@@ -16,13 +16,16 @@ const KEYTAR_ACCOUNT = "auth";
 const ICON_NAME = process.platform === "win32" ? "app-icon.ico" : "app-icon.png";
 const ICON_PATH = path.join(__dirname, "assets", ICON_NAME);
 const AUTH_FILE = path.join(app.getPath("userData"), "auth.json");
+const META_FILE = path.join(app.getPath("userData"), "meta.json");
 const DATA_FILE = path.join(app.getPath("userData"), "workflow.enc");
+const DBS_DIR = path.join(app.getPath("userData"), "dbs");
 const LAST_COLUMN_MESSAGE =
   "Please remove candidate cards from the last remaining column before deleting it.";
 
 let authState = { configured: false, authenticated: false };
 let activePassword = null;
 let dbCache = null;
+let metaCache = null;
 let mainWindow = null;
 
 const AUTH_MAX_ATTEMPTS = 5;
@@ -115,6 +118,17 @@ const saveAuthData = async (payload) => {
   }
   saveAuthFile(payload);
   return true;
+};
+
+const verifyPassword = async (password) => {
+  const safePassword = clampString(password, 256, { trim: false });
+  if (!safePassword) return false;
+  const auth = await loadAuthData();
+  if (!auth || !auth.salt || !auth.hash) return false;
+  const salt = Buffer.from(auth.salt, "base64");
+  const iterations = auth.iterations || 200000;
+  const hash = hashPassword(safePassword, salt, iterations);
+  return safeCompare(hash, auth.hash);
 };
 
 const deriveKey = (password, salt, iterations = 200000) => {
@@ -271,8 +285,9 @@ const ensureDbShape = (db) => {
   if (!Array.isArray(db.kanban.candidates)) db.kanban.candidates = [];
   if (!db.weekly || typeof db.weekly !== "object") db.weekly = {};
   if (!Array.isArray(db.todos)) db.todos = [];
-  if (!db.recycle || typeof db.recycle !== "object") db.recycle = { items: [] };
+  if (!db.recycle || typeof db.recycle !== "object") db.recycle = { items: [], redo: [] };
   if (!Array.isArray(db.recycle.items)) db.recycle.items = [];
+  if (!Array.isArray(db.recycle.redo)) db.recycle.redo = [];
   return db;
 };
 
@@ -281,25 +296,33 @@ const migrateDb = (db) => {
   let version = Number.isFinite(next.version) ? Number(next.version) : 0;
   if (!version) version = 1;
   if (version < 2) {
-    if (!next.recycle) next.recycle = { items: [] };
+    if (!next.recycle) next.recycle = { items: [], redo: [] };
     if (!Array.isArray(next.recycle.items)) next.recycle.items = [];
+    if (!Array.isArray(next.recycle.redo)) next.recycle.redo = [];
   }
   next.version = DB_VERSION;
   return next;
 };
 
-const pruneRecycleBin = (db) => {
-  if (!db || !db.recycle || !Array.isArray(db.recycle.items)) return;
+const pruneRecycleList = (items) => {
+  if (!Array.isArray(items)) return [];
   const now = Date.now();
-  db.recycle.items = db.recycle.items.filter((item) => {
+  const filtered = items.filter((item) => {
     if (!item || !item.deleted_at) return false;
     const ts = Date.parse(item.deleted_at);
     if (Number.isNaN(ts)) return false;
     return now - ts <= RECYCLE_TTL_MS;
   });
-  if (db.recycle.items.length > RECYCLE_LIMIT) {
-    db.recycle.items = db.recycle.items.slice(-RECYCLE_LIMIT);
+  if (filtered.length > RECYCLE_LIMIT) {
+    return filtered.slice(-RECYCLE_LIMIT);
   }
+  return filtered;
+};
+
+const pruneRecycleBin = (db) => {
+  if (!db || !db.recycle) return;
+  db.recycle.items = pruneRecycleList(db.recycle.items);
+  db.recycle.redo = pruneRecycleList(db.recycle.redo);
 };
 
 const pushRecycleItem = (db, item) => {
@@ -320,6 +343,27 @@ const popRecycleItem = (db, id) => {
   const idx = db.recycle.items.findIndex((item) => item && item.id === id);
   if (idx === -1) return null;
   const [item] = db.recycle.items.splice(idx, 1);
+  return item || null;
+};
+
+const pushRedoItem = (db, item) => {
+  if (!db || !item) return null;
+  ensureDbShape(db);
+  const entry = {
+    id: crypto.randomUUID(),
+    deleted_at: new Date().toISOString(),
+    ...item,
+  };
+  db.recycle.redo.push(entry);
+  pruneRecycleBin(db);
+  return entry.id;
+};
+
+const popRedoItem = (db, id) => {
+  if (!db || !db.recycle || !Array.isArray(db.recycle.redo)) return null;
+  const idx = db.recycle.redo.findIndex((item) => item && item.id === id);
+  if (idx === -1) return null;
+  const [item] = db.recycle.redo.splice(idx, 1);
   return item || null;
 };
 
@@ -402,6 +446,60 @@ const restoreRecycleItem = (db, item) => {
   }
 };
 
+const reapplyRecycleItem = (db, item) => {
+  if (!db || !item || !item.type) return false;
+  ensureDbShape(db);
+  switch (item.type) {
+    case "kanban_cards": {
+      const cards = Array.isArray(item.cards) ? item.cards : [];
+      const rows = Array.isArray(item.candidates) ? item.candidates : [];
+      const cardIds = new Set(cards.map((card) => card && card.uuid).filter(Boolean));
+      const rowIds = new Set(rows.map((row) => row && row["candidate UUID"]).filter(Boolean));
+      db.kanban.cards = db.kanban.cards.filter((card) => !cardIds.has(card.uuid));
+      db.kanban.candidates = db.kanban.candidates.filter(
+        (row) => !rowIds.has(row["candidate UUID"]),
+      );
+      return true;
+    }
+    case "kanban_columns": {
+      const columnIds = new Set(
+        (Array.isArray(item.columns) ? item.columns : []).map((col) => col && col.id).filter(Boolean),
+      );
+      if (!columnIds.size) return false;
+      const result = removeKanbanColumns(db, columnIds, { recordUndo: false });
+      return !!(result && result.ok);
+    }
+    case "candidate_rows": {
+      const rows = Array.isArray(item.candidates) ? item.candidates : [];
+      const rowIds = new Set(rows.map((row) => row && row["candidate UUID"]).filter(Boolean));
+      db.kanban.candidates = db.kanban.candidates.filter(
+        (row) => !rowIds.has(row["candidate UUID"]),
+      );
+      return true;
+    }
+    case "weekly_entries": {
+      const entries = Array.isArray(item.entries) ? item.entries : [];
+      const weeks = db.weekly || {};
+      entries.forEach((entry) => {
+        if (!entry || !entry.week_start || !entry.day) return;
+        if (weeks[entry.week_start] && weeks[entry.week_start].entries) {
+          delete weeks[entry.week_start].entries[entry.day];
+        }
+      });
+      db.weekly = weeks;
+      return true;
+    }
+    case "todos": {
+      const todos = Array.isArray(item.todos) ? item.todos : [];
+      const ids = new Set(todos.map((todo) => todo && todo.id).filter(Boolean));
+      db.todos = (db.todos || []).filter((todo) => !ids.has(todo.id));
+      return true;
+    }
+    default:
+      return false;
+  }
+};
+
 const defaultDb = () => ({
   version: DB_VERSION,
   kanban: {
@@ -413,6 +511,7 @@ const defaultDb = () => ({
   todos: [],
   recycle: {
     items: [],
+    redo: [],
   },
 });
 
@@ -648,6 +747,400 @@ const KANBAN_CANDIDATE_FIELDS = [
   "candidate UUID",
 ];
 
+const isPlainObject = (value) =>
+  value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype;
+
+const SUSPICIOUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+const hasSuspiciousKey = (obj) =>
+  isPlainObject(obj) && Object.keys(obj).some((key) => SUSPICIOUS_KEYS.has(key));
+
+const hasSuspiciousText = (value) => {
+  const text = value === null || value === undefined ? "" : String(value);
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(text)) return true;
+  return /(;--|\/\*|\*\/|drop\s+table|alter\s+table|union\s+select|insert\s+into|delete\s+from)/i.test(
+    text,
+  );
+};
+
+const validateText = (value, maxLen, label) => {
+  const text = value === null || value === undefined ? "" : String(value);
+  if (text.length > maxLen) {
+    return {
+      ok: false,
+      code: "broken",
+      message: `${label} exceeds the maximum allowed length.`,
+    };
+  }
+  if (hasSuspiciousText(text)) {
+    return {
+      ok: false,
+      code: "fraud",
+      message: `${label} contains suspicious content.`,
+    };
+  }
+  return { ok: true };
+};
+
+const validateDb = (db) => {
+  if (!isPlainObject(db)) {
+    return { ok: false, code: "broken", message: "Database payload is not an object." };
+  }
+  if (hasSuspiciousKey(db)) {
+    return { ok: false, code: "fraud", message: "Database contains suspicious keys." };
+  }
+  if (Number.isFinite(db.version) && db.version > DB_VERSION) {
+    return {
+      ok: false,
+      code: "broken",
+      message: "Database version is newer than this app supports.",
+    };
+  }
+
+  if (!isPlainObject(db.kanban)) {
+    return { ok: false, code: "broken", message: "Kanban data is missing or invalid." };
+  }
+  if (!Array.isArray(db.kanban.columns)) {
+    return { ok: false, code: "broken", message: "Kanban columns are missing." };
+  }
+  if (!Array.isArray(db.kanban.cards)) {
+    return { ok: false, code: "broken", message: "Kanban cards are missing." };
+  }
+  if (!Array.isArray(db.kanban.candidates)) {
+    return { ok: false, code: "broken", message: "Candidate rows are missing." };
+  }
+
+  for (const column of db.kanban.columns) {
+    if (!isPlainObject(column) || hasSuspiciousKey(column)) {
+      return { ok: false, code: "fraud", message: "Column data looks suspicious." };
+    }
+    if (!column.id || typeof column.id !== "string") {
+      return { ok: false, code: "broken", message: "Column IDs are invalid." };
+    }
+    const nameCheck = validateText(column.name, MAX_COLUMN_NAME_LEN, "Column name");
+    if (!nameCheck.ok) return nameCheck;
+    if (column.order !== undefined && column.order !== null && !Number.isFinite(column.order)) {
+      return { ok: false, code: "broken", message: "Column order values are invalid." };
+    }
+  }
+
+  for (const card of db.kanban.cards) {
+    if (!isPlainObject(card) || hasSuspiciousKey(card)) {
+      return { ok: false, code: "fraud", message: "Card data looks suspicious." };
+    }
+    if (!card.uuid || typeof card.uuid !== "string") {
+      return { ok: false, code: "broken", message: "Card IDs are invalid." };
+    }
+    if (!card.column_id || typeof card.column_id !== "string") {
+      return { ok: false, code: "broken", message: "Card column references are invalid." };
+    }
+    const fields = [
+      ["Candidate name", card.candidate_name],
+      ["ICIMS", card.icims_id],
+      ["Employee", card.employee_id],
+      ["Job ID", card.job_id],
+      ["Job name", card.job_name],
+      ["Job location", card.job_location],
+      ["Manager", card.manager],
+      ["Branch", card.branch],
+    ];
+    for (const [label, value] of fields) {
+      const check = validateText(value, MAX_FIELD_LEN, label);
+      if (!check.ok) return check;
+    }
+    if (card.order !== undefined && card.order !== null && !Number.isFinite(card.order)) {
+      return { ok: false, code: "broken", message: "Card order values are invalid." };
+    }
+  }
+
+  const allowedCandidateKeys = new Set(KANBAN_CANDIDATE_FIELDS);
+  for (const row of db.kanban.candidates) {
+    if (!isPlainObject(row) || hasSuspiciousKey(row)) {
+      return { ok: false, code: "fraud", message: "Candidate rows look suspicious." };
+    }
+    const keys = Object.keys(row);
+    for (const key of keys) {
+      if (!allowedCandidateKeys.has(key)) {
+        return {
+          ok: false,
+          code: "broken",
+          message: "Candidate data columns do not match this app.",
+        };
+      }
+      const limit = key === "Additional Notes" || key === "Additional Details" ? MAX_NOTE_LEN : MAX_FIELD_LEN;
+      const check = validateText(row[key], limit, key);
+      if (!check.ok) return check;
+    }
+    const rowId = row["candidate UUID"];
+    if (!rowId || typeof rowId !== "string") {
+      return { ok: false, code: "broken", message: "Candidate UUIDs are missing." };
+    }
+  }
+
+  if (!isPlainObject(db.weekly)) {
+    return { ok: false, code: "broken", message: "Weekly data is invalid." };
+  }
+  for (const week of Object.values(db.weekly)) {
+    if (!isPlainObject(week) || hasSuspiciousKey(week)) {
+      return { ok: false, code: "fraud", message: "Weekly data looks suspicious." };
+    }
+    if (!isPlainObject(week.entries || {})) {
+      return { ok: false, code: "broken", message: "Weekly entries are invalid." };
+    }
+    const weekStartCheck = validateText(week.week_start, MAX_FIELD_LEN, "Week start");
+    if (!weekStartCheck.ok) return weekStartCheck;
+    const weekEndCheck = validateText(week.week_end, MAX_FIELD_LEN, "Week end");
+    if (!weekEndCheck.ok) return weekEndCheck;
+    for (const entry of Object.values(week.entries || {})) {
+      if (!isPlainObject(entry) || hasSuspiciousKey(entry)) {
+        return { ok: false, code: "fraud", message: "Weekly entry looks suspicious." };
+      }
+      const startCheck = validateText(entry.start, MAX_FIELD_LEN, "Weekly start");
+      if (!startCheck.ok) return startCheck;
+      const endCheck = validateText(entry.end, MAX_FIELD_LEN, "Weekly end");
+      if (!endCheck.ok) return endCheck;
+      const contentCheck = validateText(entry.content, MAX_NOTE_LEN, "Weekly content");
+      if (!contentCheck.ok) return contentCheck;
+    }
+  }
+
+  if (!Array.isArray(db.todos)) {
+    return { ok: false, code: "broken", message: "Todo data is invalid." };
+  }
+  for (const todo of db.todos) {
+    if (!isPlainObject(todo) || hasSuspiciousKey(todo)) {
+      return { ok: false, code: "fraud", message: "Todo data looks suspicious." };
+    }
+    if (!todo.id || typeof todo.id !== "string") {
+      return { ok: false, code: "broken", message: "Todo IDs are invalid." };
+    }
+    if (typeof todo.done !== "boolean") {
+      return { ok: false, code: "broken", message: "Todo status values are invalid." };
+    }
+    const textCheck = validateText(todo.text, MAX_TODO_LEN, "Todo text");
+    if (!textCheck.ok) return textCheck;
+    if (
+      todo.createdAt !== undefined &&
+      todo.createdAt !== null &&
+      typeof todo.createdAt !== "number" &&
+      typeof todo.createdAt !== "string"
+    ) {
+      return { ok: false, code: "broken", message: "Todo created date is invalid." };
+    }
+  }
+
+  return { ok: true };
+};
+
+const ensureMetaShape = (meta) => {
+  const next = meta && typeof meta === "object" ? meta : {};
+  if (!Array.isArray(next.databases)) next.databases = [];
+  if (!next.active_db) next.active_db = "current";
+  return next;
+};
+
+const loadMeta = () => {
+  if (metaCache) return metaCache;
+  try {
+    if (fs.existsSync(META_FILE)) {
+      const raw = fs.readFileSync(META_FILE, "utf-8");
+      metaCache = ensureMetaShape(JSON.parse(raw));
+      return metaCache;
+    }
+  } catch (err) {
+    // ignore
+  }
+  metaCache = ensureMetaShape({});
+  saveMeta(metaCache);
+  return metaCache;
+};
+
+const saveMeta = (meta) => {
+  metaCache = ensureMetaShape(meta || {});
+  safeWriteFile(META_FILE, JSON.stringify(metaCache, null, 2));
+};
+
+const listDbSources = (meta) => {
+  const sources = Array.isArray(meta.databases) ? meta.databases : [];
+  return [
+    { id: "current", name: "Current Database", readonly: false },
+    ...sources.map((entry) => ({
+      id: entry.id,
+      name: entry.name || entry.filename || "Imported Database",
+      readonly: true,
+    })),
+  ];
+};
+
+const getDbEntry = (meta, id) => {
+  if (!meta || !Array.isArray(meta.databases)) return null;
+  return meta.databases.find((entry) => entry && entry.id === id) || null;
+};
+
+const buildDbFilename = (id) => `${sanitizeFilename(id)}.enc`;
+
+const readDbFile = (filename, password) => {
+  const filePath = path.join(DBS_DIR, filename);
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    const raw = fs.readFileSync(filePath, "utf-8");
+    const encrypted = JSON.parse(raw);
+    const decrypted = decryptPayload(encrypted, password);
+    if (!decrypted) return null;
+    return migrateDb(decrypted);
+  } catch (err) {
+    return null;
+  }
+};
+
+const writeDbFile = (filename, db, password) => {
+  ensureDir(DBS_DIR);
+  const encrypted = encryptPayload(db, password);
+  const filePath = path.join(DBS_DIR, filename);
+  safeWriteFile(filePath, JSON.stringify(encrypted, null, 2));
+  return true;
+};
+
+const loadDbBySource = (sourceId) => {
+  const id = sourceId || "current";
+  if (id === "current") return loadDb();
+  if (!activePassword) return null;
+  const meta = loadMeta();
+  const entry = getDbEntry(meta, id);
+  if (!entry || !entry.filename) return null;
+  return readDbFile(entry.filename, activePassword);
+};
+
+const mergeDatabases = (target, incoming) => {
+  ensureDbShape(target);
+  ensureDbShape(incoming);
+  const now = new Date().toISOString();
+
+  const columnMap = new Map();
+  const existingColumns = new Set(target.kanban.columns.map((col) => col.id));
+  let maxColumnOrder = Math.max(0, ...target.kanban.columns.map((col) => col.order || 0));
+  [...incoming.kanban.columns]
+    .sort((a, b) => (a.order || 0) - (b.order || 0))
+    .forEach((col) => {
+      if (!col || !col.id) return;
+      let nextId = col.id;
+      if (existingColumns.has(nextId)) {
+        nextId = crypto.randomUUID();
+      }
+      columnMap.set(col.id, nextId);
+      existingColumns.add(nextId);
+      maxColumnOrder += 1;
+      target.kanban.columns.push({
+        ...col,
+        id: nextId,
+        order: maxColumnOrder,
+        updated_at: now,
+      });
+    });
+
+  const cardIdMap = new Map();
+  const existingCardIds = new Set(target.kanban.cards.map((card) => card.uuid));
+  const existingRowIds = new Set(
+    target.kanban.candidates.map((row) => row["candidate UUID"]).filter(Boolean),
+  );
+  const orderByColumn = new Map();
+  target.kanban.cards.forEach((card) => {
+    const colId = card.column_id;
+    if (!colId) return;
+    const currentMax = orderByColumn.get(colId) || 0;
+    orderByColumn.set(colId, Math.max(currentMax, card.order || 0));
+  });
+
+  [...incoming.kanban.cards]
+    .sort((a, b) => (a.order || 0) - (b.order || 0))
+    .forEach((card) => {
+      if (!card || !card.uuid) return;
+      let nextId = card.uuid;
+      if (existingCardIds.has(nextId)) {
+        nextId = crypto.randomUUID();
+      }
+      const mappedColumn = columnMap.get(card.column_id) || card.column_id;
+      const safeColumn =
+        mappedColumn && existingColumns.has(mappedColumn)
+          ? mappedColumn
+          : target.kanban.columns[0]?.id || mappedColumn;
+      const nextOrder = (orderByColumn.get(safeColumn) || 0) + 1;
+      orderByColumn.set(safeColumn, nextOrder);
+      target.kanban.cards.push({
+        ...card,
+        uuid: nextId,
+        column_id: safeColumn,
+        order: nextOrder,
+        updated_at: now,
+      });
+      existingCardIds.add(nextId);
+      cardIdMap.set(card.uuid, nextId);
+    });
+
+  incoming.kanban.candidates.forEach((row) => {
+    if (!row || typeof row !== "object") return;
+    const mapped = cardIdMap.get(row["candidate UUID"]);
+    let nextId = mapped || row["candidate UUID"];
+    if (!nextId || existingRowIds.has(nextId)) {
+      nextId = crypto.randomUUID();
+    }
+    const nextRow = { ...row, "candidate UUID": nextId };
+    KANBAN_CANDIDATE_FIELDS.forEach((field) => {
+      if (nextRow[field] === undefined) nextRow[field] = "";
+    });
+    target.kanban.candidates.push(nextRow);
+    existingRowIds.add(nextId);
+  });
+
+  const weeks = target.weekly || {};
+  Object.values(incoming.weekly || {}).forEach((week) => {
+    if (!week || !week.week_start) return;
+    if (!weeks[week.week_start]) {
+      weeks[week.week_start] = {
+        week_start: week.week_start,
+        week_end: week.week_end || "",
+        entries: {},
+      };
+    }
+    const targetEntries = weeks[week.week_start].entries || {};
+    Object.keys(week.entries || {}).forEach((day) => {
+      if (!targetEntries[day]) {
+        targetEntries[day] = { ...(week.entries[day] || {}) };
+      }
+    });
+    weeks[week.week_start].entries = targetEntries;
+  });
+  target.weekly = weeks;
+
+  const todoIds = new Set((target.todos || []).map((todo) => todo.id));
+  (incoming.todos || []).forEach((todo) => {
+    if (!todo) return;
+    let nextId = todo.id;
+    if (!nextId || todoIds.has(nextId)) {
+      nextId = crypto.randomUUID();
+    }
+    todoIds.add(nextId);
+    target.todos.push({ ...todo, id: nextId });
+  });
+};
+
+const storeImportedDatabase = (db, fileName, password) => {
+  const meta = loadMeta();
+  const id = crypto.randomUUID();
+  const filename = buildDbFilename(id);
+  writeDbFile(filename, db, password);
+  const entry = {
+    id,
+    filename,
+    name: fileName || `Imported ${new Date().toLocaleDateString()}`,
+    imported_at: new Date().toISOString(),
+  };
+  meta.databases = Array.isArray(meta.databases) ? meta.databases : [];
+  meta.databases.push(entry);
+  saveMeta(meta);
+  return entry;
+};
+
 const normalizeTodos = (todos = []) => {
   let changed = false;
   todos.forEach((todo) => {
@@ -716,7 +1209,7 @@ const moveCardsToColumn = (db, fromColumnIds, targetColumnId) => {
     });
 };
 
-const removeKanbanColumns = (db, columnIds) => {
+const removeKanbanColumns = (db, columnIds, { recordUndo = true } = {}) => {
   const ids = new Set(columnIds || []);
   const removedColumns = db.kanban.columns.filter((col) => ids.has(col.id));
   const remaining = db.kanban.columns.filter((col) => !ids.has(col.id));
@@ -736,7 +1229,7 @@ const removeKanbanColumns = (db, columnIds) => {
   db.kanban.columns = remaining;
 
   let undoId = null;
-  if (removedColumnsSnapshot.length) {
+  if (recordUndo && removedColumnsSnapshot.length) {
     undoId = pushRecycleItem(db, {
       type: "kanban_columns",
       columns: removedColumnsSnapshot,
@@ -1008,7 +1501,7 @@ const createWindow = () => {
     backgroundColor: "#f6f7fb",
     title: APP_NAME,
     icon: ICON_PATH,
-    frame: false,
+    frame: true,
     autoHideMenuBar: !isMac,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -1499,9 +1992,102 @@ ipcMain.handle("todos:save", (_event, todos) => {
   return true;
 });
 
-ipcMain.handle("db:listTables", () => {
+ipcMain.handle("db:sources", () => {
+  requireAuth();
+  const meta = loadMeta();
+  const sources = listDbSources(meta);
+  const activeId = sources.some((item) => item.id === meta.active_db) ? meta.active_db : "current";
+  return { sources, activeId };
+});
+
+ipcMain.handle("db:setSource", (_event, sourceId) => {
+  requireAuth();
+  const meta = loadMeta();
+  const sources = listDbSources(meta);
+  const nextId = sources.some((item) => item.id === sourceId) ? sourceId : "current";
+  meta.active_db = nextId;
+  saveMeta(meta);
+  return { ok: true, activeId: nextId };
+});
+
+ipcMain.handle("db:importPick", async () => {
+  requireAuth();
+  const result = await dialog.showOpenDialog({
+    title: "Import Database",
+    properties: ["openFile"],
+  });
+  if (result.canceled || !result.filePaths || !result.filePaths.length) {
+    return { canceled: true };
+  }
+  const filePath = result.filePaths[0];
+  try {
+    const data = fs.readFileSync(filePath, "utf-8");
+    return { ok: true, name: path.basename(filePath), data };
+  } catch (err) {
+    return { ok: false, error: "Unable to read the selected file." };
+  }
+});
+
+ipcMain.handle("db:importApply", async (_event, { action, fileName, fileData, password } = {}) => {
+  requireAuth();
+  const safeAction = clampString(action, 20, { trim: true }).toLowerCase();
+  if (!["append", "view", "replace"].includes(safeAction)) {
+    return { ok: false, code: "broken", error: "Invalid import action." };
+  }
+  const validPassword = await verifyPassword(password);
+  if (!validPassword) {
+    return { ok: false, code: "password", error: "Invalid password." };
+  }
+  let encrypted = null;
+  try {
+    encrypted = JSON.parse(String(fileData || ""));
+  } catch (err) {
+    return { ok: false, code: "broken", error: "Import file is not valid JSON." };
+  }
+  const imported = decryptPayload(encrypted, password);
+  if (!imported) {
+    return { ok: false, code: "broken", error: "Unable to decrypt the import file." };
+  }
+  const migrated = migrateDb(imported);
+  const validation = validateDb(migrated);
+  if (!validation.ok) {
+    return { ok: false, code: validation.code, error: validation.message };
+  }
+
+  let viewEntry = null;
+  if (safeAction === "append") {
+    const db = loadDb();
+    mergeDatabases(db, migrated);
+    saveDb(db);
+    viewEntry = storeImportedDatabase(migrated, fileName, activePassword || password);
+  } else if (safeAction === "replace") {
+    dbCache = migrated;
+    saveDb(migrated);
+    const meta = loadMeta();
+    meta.active_db = "current";
+    saveMeta(meta);
+  } else if (safeAction === "view") {
+    viewEntry = storeImportedDatabase(migrated, fileName, activePassword || password);
+  }
+
+  return {
+    ok: true,
+    action: safeAction,
+    viewId: viewEntry ? viewEntry.id : null,
+    viewName: viewEntry ? viewEntry.name : null,
+  };
+});
+
+ipcMain.handle("db:validateCurrent", () => {
   requireAuth();
   const db = loadDb();
+  return validateDb(db);
+});
+
+ipcMain.handle("db:listTables", (_event, sourceId) => {
+  requireAuth();
+  const db = loadDbBySource(sourceId);
+  if (!db) return [];
   return Object.keys(TABLE_DEFS).map((id) => {
     const def = TABLE_DEFS[id];
     const rows = def.rows(db);
@@ -1509,23 +2095,27 @@ ipcMain.handle("db:listTables", () => {
   });
 });
 
-ipcMain.handle("db:getTable", (_event, tableId) => {
+ipcMain.handle("db:getTable", (_event, tableId, sourceId) => {
   requireAuth();
-  const db = loadDb();
+  const db = loadDbBySource(sourceId);
   const safeTableId = clampId(tableId);
+  if (!db) return { id: safeTableId, name: "Unknown", columns: [], rows: [] };
   const table = buildTable(safeTableId, db);
   return table || { id: safeTableId, name: "Unknown", columns: [], rows: [] };
 });
 
 ipcMain.handle("db:exportCsv", async (_event, payload) => {
   requireAuth();
-  const { tableId, tableName, columns, rows } = payload || {};
+  const { tableId, tableName, columns, rows, sourceId } = payload || {};
   let exportColumns = Array.isArray(columns) ? columns : [];
   let exportRows = Array.isArray(rows) ? rows : [];
   const safeTableId = clampId(tableId);
   const safeTableName = clampString(tableName, 80, { trim: true });
   if ((!exportColumns.length || !exportRows.length) && safeTableId) {
-    const db = loadDb();
+    const db = loadDbBySource(sourceId);
+    if (!db) {
+      return { ok: false, message: "Database unavailable." };
+    }
     const table = buildTable(safeTableId, db);
     if (table) {
       if (!exportColumns.length) exportColumns = table.columns;
@@ -1550,8 +2140,11 @@ ipcMain.handle("db:exportCsv", async (_event, payload) => {
   return { ok: true, filePath };
 });
 
-ipcMain.handle("db:deleteRows", (_event, { tableId, rowIds }) => {
+ipcMain.handle("db:deleteRows", (_event, { tableId, rowIds, sourceId }) => {
   requireAuth();
+  if (sourceId && sourceId !== "current") {
+    return { ok: false, error: "Read-only database." };
+  }
   const db = loadDb();
   const safeTableId = clampId(tableId);
   const ids = new Set(sanitizeRowIds(rowIds));
@@ -1644,6 +2237,20 @@ ipcMain.handle("recycle:undo", (_event, id) => {
   if (!item) return { ok: false, error: "Nothing to undo." };
   const restored = restoreRecycleItem(db, item);
   if (!restored) return { ok: false, error: "Unable to restore." };
+  const redoId = pushRedoItem(db, item);
   saveDb(db);
-  return { ok: true };
+  return { ok: true, redoId };
+});
+
+ipcMain.handle("recycle:redo", (_event, id) => {
+  requireAuth();
+  const db = loadDb();
+  const safeId = clampId(id);
+  const item = popRedoItem(db, safeId);
+  if (!item) return { ok: false, error: "Nothing to redo." };
+  const reapplied = reapplyRecycleItem(db, item);
+  if (!reapplied) return { ok: false, error: "Unable to redo." };
+  const undoId = pushRecycleItem(db, item);
+  saveDb(db);
+  return { ok: true, undoId };
 });

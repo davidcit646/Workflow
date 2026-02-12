@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Workflow Tracker</string>
+    <string name="title_activity_main">Workflow Tracker</string>
+    <string name="package_name">com.workflow.tracker</string>
+    <string name="custom_url_scheme">com.workflow.tracker</string>
+</resources>

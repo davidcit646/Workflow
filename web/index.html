@@ -15,67 +15,112 @@
     <link rel="stylesheet" href="./overrides.css" />
   </head>
   <body>
-    <div class="titlebar">
-      <div class="titlebar__controls">
-        <button
-          id="window-close"
-          class="window-control window-control--close"
-          type="button"
-          aria-label="Close"
-        >
-          ×
-        </button>
-        <button
-          id="window-min"
-          class="window-control window-control--min"
-          type="button"
-          aria-label="Minimize"
-        >
-          –
-        </button>
-        <button
-          id="window-max"
-          class="window-control window-control--max"
-          type="button"
-          aria-label="Maximize"
-        >
-          □
-        </button>
-      </div>
-      <div class="titlebar__brand">
-        <img class="titlebar__logo" src="./assets/app-icon.svg" alt="Workflow" />
-        <div class="titlebar__text">Workflow</div>
-      </div>
-      <div class="titlebar__spacer"></div>
-    </div>
     <div class="app">
-      <aside class="sidebar">
+      <aside class="sidebar" aria-label="Primary">
         <div class="sidebar__brand">
           <img class="brand__logo" src="./assets/app-icon.svg" alt="Workflow" />
           <div class="brand__text">
             <div class="brand__title">Workflow Tracker</div>
           </div>
+          <button
+            id="sidebar-toggle"
+            class="sidebar__toggle"
+            type="button"
+            aria-label="Toggle sidebar"
+            aria-pressed="false"
+            title="Collapse sidebar"
+            data-sidebar-toggle
+          >
+            <svg class="icon icon--chevron" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M9 6l6 6-6 6"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
         </div>
         <nav class="sidebar__nav">
-          <button class="nav-item nav-item--active" data-page="dashboard">Dashboard</button>
-          <button class="nav-item" data-page="database">Database</button>
+          <button class="nav-item nav-item--active" data-page="dashboard">
+            <span class="nav-icon">D</span>
+            <span class="nav-label">Dashboard</span>
+          </button>
+          <button class="nav-item" data-page="database">
+            <span class="nav-icon">DB</span>
+            <span class="nav-label">Database</span>
+          </button>
         </nav>
+        <div id="sidebar-workflow-section" class="sidebar__section sidebar__section--actions hidden">
+          <div class="section__title">Workflow Actions</div>
+          <div id="sidebar-workflow-actions" class="sidebar__actions"></div>
+        </div>
+        <div class="sidebar__section">
+          <div class="section__title">Resources</div>
+          <a
+            class="nav-item nav-item--link"
+            href="https://github.com/your-username/workflow/blob/main/docs/USER_MANUAL.md"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <span class="nav-icon">?</span>
+            <span class="nav-label">User Manual</span>
+          </a>
+        </div>
         <div class="sidebar__spacer"></div>
         <div class="sidebar__footer">
-          <button id="settings-button" class="nav-item" data-page="settings">⚙️ Settings</button>
+          <button id="settings-button" class="nav-item" data-page="settings">
+            <span class="nav-icon">⚙</span>
+            <span class="nav-label">Settings</span>
+          </button>
         </div>
       </aside>
+      <div id="sidebar-scrim" class="sidebar__scrim" aria-hidden="true"></div>
 
       <main class="main">
         <section id="page-dashboard" class="page page--active">
           <header class="topbar">
-            <div>
-              <div class="topbar__title">Dashboard</div>
+            <div class="topbar__left">
+              <button class="topbar__menu" type="button" data-sidebar-toggle aria-label="Open menu">
+                <svg class="icon icon--chevron" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M9 6l6 6-6 6"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+              <div class="topbar__brand" aria-hidden="true">
+                <img class="topbar__logo" src="./assets/app-icon.svg" alt="" />
+              </div>
+              <div class="topbar__meta">
+              <div class="topbar__title">
+                <span class="topbar__app">Workflow</span>
+                <span class="topbar__divider">|</span>
+                <span class="topbar__page">Dashboard</span>
+              </div>
               <div class="topbar__subtitle">
                 Move candidates through onboarding with a simple Kanban flow.
               </div>
+              </div>
             </div>
             <div class="topbar__actions">
+              <button id="dashboard-undo" class="button button--ghost" type="button" disabled>
+                Undo
+              </button>
+              <button
+                id="dashboard-redo"
+                class="button button--ghost"
+                type="button"
+                disabled
+              >
+                Redo
+              </button>
               <button id="weekly-toggle" class="button button--primary">Weekly Tracker</button>
               <button id="todo-toggle" class="button button--primary">Todo List</button>
               <button id="add-column-header" class="button button--primary">Add Column</button>
@@ -125,9 +170,30 @@
 
         <section id="page-database" class="page">
           <header class="topbar">
-            <div>
-              <div class="topbar__title">Database</div>
+            <div class="topbar__left">
+              <button class="topbar__menu" type="button" data-sidebar-toggle aria-label="Open menu">
+                <svg class="icon icon--chevron" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M9 6l6 6-6 6"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+              <div class="topbar__brand" aria-hidden="true">
+                <img class="topbar__logo" src="./assets/app-icon.svg" alt="" />
+              </div>
+              <div class="topbar__meta">
+              <div class="topbar__title">
+                <span class="topbar__app">Workflow</span>
+                <span class="topbar__divider">|</span>
+                <span class="topbar__page">Database</span>
+              </div>
               <div class="topbar__subtitle">View and manage stored onboarding data.</div>
+              </div>
             </div>
             <div class="topbar__actions topbar__actions--db">
               <div class="search search--db">
@@ -150,6 +216,23 @@
             </div>
           </header>
           <div class="page__body settings-body">
+            <div class="card db-import-card">
+              <div class="db-import-row">
+                <div>
+                  <div class="card__title">Database Source</div>
+                  <div class="muted">
+                    Choose which database to view. Imported databases are read-only.
+                  </div>
+                </div>
+                <div class="db-import-actions">
+                  <select id="db-source-select" class="db-select"></select>
+                  <button id="db-import" class="button button--primary" type="button">
+                    Import Database
+                  </button>
+                </div>
+              </div>
+              <div id="db-source-note" class="muted db-source-note hidden"></div>
+            </div>
             <div class="card">
               <div class="db-table-wrap">
                 <table id="db-table" class="data-table">
@@ -176,9 +259,30 @@
 
         <section id="page-settings" class="page">
           <header class="topbar">
-            <div>
-              <div class="topbar__title">Settings</div>
+            <div class="topbar__left">
+              <button class="topbar__menu" type="button" data-sidebar-toggle aria-label="Open menu">
+                <svg class="icon icon--chevron" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M9 6l6 6-6 6"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+              <div class="topbar__brand" aria-hidden="true">
+                <img class="topbar__logo" src="./assets/app-icon.svg" alt="" />
+              </div>
+              <div class="topbar__meta">
+              <div class="topbar__title">
+                <span class="topbar__app">Workflow</span>
+                <span class="topbar__divider">|</span>
+                <span class="topbar__page">Settings</span>
+              </div>
               <div class="topbar__subtitle">Application settings and preferences.</div>
+              </div>
             </div>
           </header>
           <div class="page__body">
@@ -213,6 +317,36 @@
                   <div class="muted">Change the program password. Current password required.</div>
                 </div>
               </div>
+            </div>
+            <div class="card">
+              <h3>Biometrics</h3>
+              <div class="muted">
+                Use your device biometric unlock to sign in without retyping your password.
+              </div>
+              <div class="setting-row">
+                <button id="biometric-toggle" class="button button--ghost" type="button">
+                  Enable biometrics
+                </button>
+                <div id="biometric-status" class="muted">Checking biometric availability…</div>
+              </div>
+            </div>
+            <div class="card">
+              <h3>Support Development</h3>
+              <div class="muted">
+                Tips go to the developer (not the AI). There are no extra features or unlocks —
+                it is simply a thank-you.
+              </div>
+              <div class="support-actions">
+                <select id="donate-tier" class="select">
+                  <option value="support_dev_1">Donate $1</option>
+                  <option value="support_dev_5" selected>Donate $5</option>
+                  <option value="support_dev_10">Donate $10</option>
+                </select>
+                <button id="donate-button" class="button button--primary" type="button">
+                  Donate
+                </button>
+              </div>
+              <div class="muted support-note">Payments are handled securely by Google Play.</div>
             </div>
           </div>
         </section>
@@ -276,7 +410,240 @@
       </div>
     </div>
 
+    <div id="db-import-action-modal" class="modal hidden">
+      <div class="modal__card modal__card--wide">
+        <div class="modal__header">
+          <h2>Import Database</h2>
+          <button id="db-import-action-close" class="icon-button">✕</button>
+        </div>
+        <div class="modal__body">
+          <p class="muted">
+            Selected file:
+            <span id="db-import-file-name" class="db-import-file-name"></span>
+          </p>
+          <div class="db-import-action-list">
+            <button id="db-import-action-append" class="button button--primary" type="button">
+              Add / Append
+            </button>
+            <button id="db-import-action-view" class="button button--ghost" type="button">
+              View Only
+            </button>
+            <button id="db-import-action-replace" class="button button--danger" type="button">
+              Replace Current
+            </button>
+          </div>
+        </div>
+        <div class="modal__footer">
+          <button id="db-import-action-cancel" class="button button--ghost" type="button">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="db-import-warning-modal" class="modal modal--alert hidden">
+      <div class="modal__card modal__card--wide">
+        <div class="modal__header">
+          <div class="warning-badge">/!\</div>
+          <h2>Read This First</h2>
+          <button id="db-import-warning-close" class="icon-button">✕</button>
+        </div>
+        <div class="modal__body modal__body--scroll">
+          <p>
+            You have selected to <strong id="db-import-warning-action">import</strong> the database
+            <strong id="db-import-warning-name"></strong>.
+          </p>
+          <p>
+            If you select ADD / APPEND, we will import everything from this database and append it
+            to your current database, only if every column and data type matches. We will run a
+            compatibility and security scan first.
+          </p>
+          <p>
+            If you select REPLACE, we will overwrite your current working database with the one you
+            just selected. If you select VIEW, we will import it into the working directory and let
+            you view it from the database selector.
+          </p>
+          <p>
+            These actions <strong>cannot be undone</strong>. If you delete or overwrite your data,
+            it is gone unless you made backups. If you delete your stuff, don't come crying to me.
+          </p>
+          <p>
+            Backup guide:
+            <a
+              id="db-import-backup-link"
+              href="https://github.com/your-username/workflow/blob/main/docs/BACKUP_RESTORE.md"
+              target="_blank"
+              rel="noreferrer"
+              >How to back up your database</a
+            >
+          </p>
+          <p>
+            Contact me if things break:
+            <a
+              id="db-import-issues-link"
+              href="https://github.com/your-username/workflow/issues"
+              target="_blank"
+              rel="noreferrer"
+              >GitHub Issues</a
+            >
+          </p>
+        </div>
+        <div class="modal__footer">
+          <button id="db-import-warning-cancel" class="button button--ghost" type="button">
+            Cancel
+          </button>
+          <button id="db-import-warning-proceed" class="button button--danger" type="button">
+            Proceed
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="db-import-password-modal" class="modal hidden">
+      <div class="modal__card modal__card--small">
+        <div class="modal__header">
+          <h2 id="db-import-password-title">Confirm With Password</h2>
+          <button id="db-import-password-close" class="icon-button">✕</button>
+        </div>
+        <form id="db-import-password-form" class="modal__body modal__body--single" autocomplete="off">
+          <div class="field">
+            <label>Program Password</label>
+            <input id="db-import-password" type="password" required />
+          </div>
+          <p id="db-import-password-note" class="muted">
+            Biometrics are disabled for this action. Enter your password to continue.
+          </p>
+        </form>
+        <div class="modal__footer">
+          <button id="db-import-password-cancel" class="button button--ghost" type="button">
+            Cancel
+          </button>
+          <button
+            id="db-import-password-confirm"
+            class="button button--danger"
+            type="submit"
+            form="db-import-password-form"
+          >
+            Confirm
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="db-import-success-modal" class="modal hidden">
+      <div class="modal__card modal__card--small">
+        <div class="modal__header">
+          <h2>Import Complete</h2>
+          <button id="db-import-success-close" class="icon-button">✕</button>
+        </div>
+        <div class="modal__body modal__body--single">
+          <p id="db-import-success-message"></p>
+        </div>
+        <div class="modal__footer">
+          <button id="db-import-success-view" class="button button--primary" type="button">
+            View
+          </button>
+          <button id="db-import-success-continue" class="button button--ghost" type="button">
+            Continue
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="db-import-error-modal" class="modal modal--alert hidden">
+      <div class="modal__card modal__card--wide">
+        <div class="modal__header">
+          <div class="warning-badge">/!\</div>
+          <h2 id="db-import-error-title">Import Blocked</h2>
+          <button id="db-import-error-close" class="icon-button">✕</button>
+        </div>
+        <div class="modal__body modal__body--scroll">
+          <p id="db-import-error-message"></p>
+          <p id="db-import-error-detail" class="muted"></p>
+          <p>
+            Report this here:
+            <a
+              id="db-import-error-issues"
+              href="https://github.com/your-username/workflow/issues"
+              target="_blank"
+              rel="noreferrer"
+              >GitHub Issues</a
+            >
+          </p>
+        </div>
+        <div class="modal__footer">
+          <button id="db-import-error-ok" class="button button--primary" type="button">OK</button>
+        </div>
+      </div>
+    </div>
+
     <div id="toast-root" class="toast-root"></div>
+
+    <div id="setup-modal" class="modal hidden">
+      <div class="modal__card modal__card--small">
+        <div class="modal__header">
+          <h2>Welcome to Workflow</h2>
+        </div>
+        <div class="modal__body setup-modal__body">
+          <p class="setup-lead">
+            Your data is stored locally on this device. If you need cross-device sync, use a tool
+            like Syncthing or Google Drive to sync the local folder.
+          </p>
+          <p class="setup-lead">
+            This app was built almost entirely with AI. The source is on
+            <a
+              id="setup-github-link"
+              href="https://github.com/your-username/workflow"
+              target="_blank"
+              rel="noreferrer"
+            >
+              GitHub
+            </a>
+            .
+          </p>
+          <div class="setup-folder">
+            <div class="setup-folder__label">Local data folder</div>
+            <div id="setup-folder-path" class="setup-folder__path">Documents/Workflow</div>
+          </div>
+          <ul class="setup-list">
+            <li>Keep this folder backed up if the data is important.</li>
+            <li>Syncing is optional and managed by your chosen tool.</li>
+            <li>We do not upload any data by default.</li>
+          </ul>
+          <div class="setup-donate">
+            <div class="setup-donate__title">Support the developer</div>
+            <p class="setup-donate__text">
+              If you donate, you are donating to me, not the AI. Nothing special happens and no
+              features unlock. It is simply a thank-you.
+            </p>
+            <div class="setup-donate__options">
+              <label class="setup-donate__option">
+                <input type="radio" name="donate-choice" value="donate_now" />
+                Yes, donate now
+              </label>
+              <label class="setup-donate__option">
+                <input type="radio" name="donate-choice" value="not_now" checked />
+                Not now
+              </label>
+              <label class="setup-donate__option">
+                <input type="radio" name="donate-choice" value="never" />
+                No, never
+              </label>
+            </div>
+            <div class="muted setup-donate__note">You can always donate later from Settings.</div>
+          </div>
+          <div id="setup-storage-warning" class="setup-warning hidden">
+            This device is using app-only storage. External sync tools may not be able to access
+            the folder.
+          </div>
+        </div>
+        <div class="modal__footer">
+          <button id="setup-continue" class="button button--primary" type="button">
+            Continue
+          </button>
+        </div>
+      </div>
+    </div>
 
     <div id="auth-modal" class="modal hidden">
       <div class="modal__card modal__card--small">
@@ -291,6 +658,9 @@
           </div>
         </form>
         <div class="modal__footer">
+          <button id="auth-biometric" class="button button--ghost hidden" type="button">
+            Use Biometrics
+          </button>
           <button id="auth-submit" class="button button--primary" type="submit" form="auth-form">
             Continue
           </button>
@@ -730,6 +1100,7 @@
         </div>
       </div>
     </div>
+    <script type="module" src="./app/local-api.js"></script>
     <script type="module" src="./app.js"></script>
   </body>
 </html>

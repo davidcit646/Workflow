@@ -14,9 +14,20 @@
     "dist:linux": "electron-builder --linux",
     "dist:win": "electron-builder --win",
     "lint": "eslint \"web/**/*.js\" \"electron/**/*.js\" \"*.js\"",
-    "format": "prettier --write \"web/**/*.js\" \"web/**/*.css\" \"web/**/*.html\" \"electron/**/*.js\" \"*.js\""
+    "format": "prettier --write \"web/**/*.js\" \"web/**/*.css\" \"web/**/*.html\" \"electron/**/*.js\" \"*.js\"",
+    "cap:android": "cap add android",
+    "cap:sync": "cap sync android"
+  },
+  "dependencies": {
+    "@aparajita/capacitor-biometric-auth": "^9.0.0",
+    "@capawesome/capacitor-file-picker": "^7.1.0",
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/filesystem": "^7.0.0",
+    "capacitor-secure-storage-plugin": "0.12.0"
   },
   "devDependencies": {
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/cli": "^7.0.0",
     "electron": "^40.2.1",
     "electron-builder": "^26.7.0",
     "eslint": "^8.57.0",
