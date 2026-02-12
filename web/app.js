@@ -83,14 +83,13 @@ import {
 
   const getTopbarScrollTarget = (page) => {
     if (!page) return null;
-    const candidates = [
-      page.querySelector("#kanban-board"),
-      page.querySelector(".page__body"),
-      document.querySelector(".main"),
-      document.scrollingElement,
-    ].filter(Boolean);
     const isScrollable = (el) => el && el.scrollHeight - el.clientHeight > 1;
-    return candidates.find(isScrollable) || candidates[0] || null;
+    const dashboardBoard = page.querySelector("#kanban-board");
+    if (dashboardBoard) {
+      return isScrollable(dashboardBoard) ? dashboardBoard : null;
+    }
+    const pageBody = page.querySelector(".page__body");
+    return isScrollable(pageBody) ? pageBody : null;
   };
 
   const bindTopbarAutoHide = () => {
@@ -107,21 +106,28 @@ import {
     const scrollEl = getTopbarScrollTarget(page);
     if (!scrollEl) return;
     const threshold = 6;
+    const minHideScroll = 48;
+    let hidden = false;
     let lastScrollTop = scrollEl.scrollTop || 0;
+    const applyHidden = (nextHidden) => {
+      if (hidden === nextHidden) return;
+      hidden = nextHidden;
+      setTopbarHidden(page, topbar, nextHidden);
+    };
     const onScroll = () => {
       if (document.querySelector(".modal:not(.hidden)")) {
-        setTopbarHidden(page, topbar, false);
+        applyHidden(false);
         lastScrollTop = scrollEl.scrollTop || 0;
         return;
       }
       const current = scrollEl.scrollTop || 0;
       const delta = current - lastScrollTop;
       if (current <= 4) {
-        setTopbarHidden(page, topbar, false);
-      } else if (delta > threshold) {
-        setTopbarHidden(page, topbar, true);
+        applyHidden(false);
+      } else if (delta > threshold && current > minHideScroll) {
+        applyHidden(true);
       } else if (delta < -threshold) {
-        setTopbarHidden(page, topbar, false);
+        applyHidden(false);
       }
       lastScrollTop = current;
     };
@@ -3122,15 +3128,13 @@ import {
     document.querySelectorAll(".nav-item").forEach((btn) => {
       btn.classList.toggle("nav-item--active", btn.dataset.page === target);
     });
-    if (target === "dashboard") {
-      renderKanbanBoard();
-    }
-    if (target === "settings") {
-      renderKanbanSettings();
-    }
-    if (target === "database") {
-      loadDatabaseSources().then(loadDatabaseTables);
-    }
+    const pageHandlers = {
+      dashboard: renderKanbanBoard,
+      settings: renderKanbanSettings,
+      database: () => loadDatabaseSources().then(loadDatabaseTables),
+    };
+    const handler = pageHandlers[target];
+    if (handler) handler();
     updateUndoRedoButtons();
     bindTopbarAutoHide();
   };
@@ -3169,32 +3173,37 @@ import {
     const processArrival = $("process-arrival");
     const processDeparture = $("process-departure");
 
-    if (addColumnHeader) addColumnHeader.addEventListener("click", openAddColumnModal);
-    if (addColumnSettings) addColumnSettings.addEventListener("click", openAddColumnModal);
-    if (removeColumnSettings) removeColumnSettings.addEventListener("click", removeSelectedColumn);
-    if (addColumnForm) addColumnForm.addEventListener("submit", handleAddColumnSubmit);
-    if (addColumnClose) addColumnClose.addEventListener("click", closeAddColumnModal);
-    if (addColumnCancel) addColumnCancel.addEventListener("click", closeAddColumnModal);
-    if (undoBtn) undoBtn.addEventListener("click", handleUndo);
-    if (redoBtn) redoBtn.addEventListener("click", handleRedo);
-    if (authBiometric) authBiometric.addEventListener("click", handleAuthBiometric);
-    if (biometricToggle) biometricToggle.addEventListener("click", handleBiometricToggle);
-    if (dbImport) dbImport.addEventListener("click", handleDatabaseImport);
+    const on = (el, eventName, handler) => {
+      if (el) el.addEventListener(eventName, handler);
+    };
+    const onClick = (el, handler) => on(el, "click", handler);
+
+    onClick(addColumnHeader, openAddColumnModal);
+    onClick(addColumnSettings, openAddColumnModal);
+    onClick(removeColumnSettings, removeSelectedColumn);
+    on(addColumnForm, "submit", handleAddColumnSubmit);
+    onClick(addColumnClose, closeAddColumnModal);
+    onClick(addColumnCancel, closeAddColumnModal);
+    onClick(undoBtn, handleUndo);
+    onClick(redoBtn, handleRedo);
+    onClick(authBiometric, handleAuthBiometric);
+    onClick(biometricToggle, handleBiometricToggle);
+    onClick(dbImport, handleDatabaseImport);
     if (dbSourceSelect) {
       dbSourceSelect.addEventListener("change", () =>
         setDatabaseSource(dbSourceSelect.value || "current"),
       );
     }
-    if (candidateForm) candidateForm.addEventListener("submit", handleCandidateSubmit);
-    if (candidateClose) candidateClose.addEventListener("click", closeCandidateModal);
-    if (candidateCancel) candidateCancel.addEventListener("click", closeCandidateModal);
-    if (piiForm) piiForm.addEventListener("submit", handlePiiSubmit);
-    if (piiClose) piiClose.addEventListener("click", closePiiModal);
-    if (piiCancel) piiCancel.addEventListener("click", closePiiModal);
-    if (neoDatePill) neoDatePill.addEventListener("click", openNeoDateModal);
-    if (neoDateForm) neoDateForm.addEventListener("submit", handleNeoDateSubmit);
-    if (neoDateClose) neoDateClose.addEventListener("click", closeNeoDateModal);
-    if (neoDateCancel) neoDateCancel.addEventListener("click", closeNeoDateModal);
+    on(candidateForm, "submit", handleCandidateSubmit);
+    onClick(candidateClose, closeCandidateModal);
+    onClick(candidateCancel, closeCandidateModal);
+    on(piiForm, "submit", handlePiiSubmit);
+    onClick(piiClose, closePiiModal);
+    onClick(piiCancel, closePiiModal);
+    onClick(neoDatePill, openNeoDateModal);
+    on(neoDateForm, "submit", handleNeoDateSubmit);
+    onClick(neoDateClose, closeNeoDateModal);
+    onClick(neoDateCancel, closeNeoDateModal);
     if (neoDatePickerButton && neoDatePicker) {
       neoDatePickerButton.addEventListener("click", () => {
         if (neoDatePicker.showPicker) {
@@ -3217,16 +3226,14 @@ import {
         if (neoDatePicker) neoDatePicker.value = iso;
       });
     }
-    if (detailsClose) detailsClose.addEventListener("click", closeDetailsDrawer);
-    if (detailsProcess) detailsProcess.addEventListener("click", openProcessModal);
-    if (processClose) processClose.addEventListener("click", closeProcessModal);
-    if (processConfirm) processConfirm.addEventListener("click", handleProcessConfirm);
-    if (processRemove) processRemove.addEventListener("click", handleProcessRemove);
-    if (processArrival)
-      processArrival.addEventListener("input", () => sanitizeTimeInput(processArrival));
-    if (processDeparture) {
-      processDeparture.addEventListener("input", () => sanitizeTimeInput(processDeparture));
-    }
+    onClick(detailsClose, closeDetailsDrawer);
+    onClick(detailsProcess, openProcessModal);
+    onClick(processClose, closeProcessModal);
+    onClick(processConfirm, handleProcessConfirm);
+    onClick(processRemove, handleProcessRemove);
+    [processArrival, processDeparture].forEach((input) => {
+      on(input, "input", () => sanitizeTimeInput(input));
+    });
 
     const weeklyButton = $("weekly-toggle");
     const weeklyClose = $("weekly-close");
@@ -3234,34 +3241,26 @@ import {
     const weeklyForm = $("weekly-form");
     const weeklyExport = $("weekly-export");
     const weeklyPanel = $("weekly-panel");
-    if (weeklyPanel) {
-      weeklyPanel.addEventListener("click", (event) => {
-        event.stopPropagation();
-      });
-    }
-    if (weeklyButton) weeklyButton.addEventListener("click", toggleWeeklyTracker);
-    if (weeklyClose) weeklyClose.addEventListener("click", closeWeeklyTracker);
-    if (weeklyCancel) weeklyCancel.addEventListener("click", closeWeeklyTracker);
-    if (weeklyForm) weeklyForm.addEventListener("submit", saveWeeklyTracker);
-    if (weeklyExport) weeklyExport.addEventListener("click", downloadWeeklySummary);
+    onClick(weeklyPanel, (event) => event.stopPropagation());
+    onClick(weeklyButton, toggleWeeklyTracker);
+    onClick(weeklyClose, closeWeeklyTracker);
+    onClick(weeklyCancel, closeWeeklyTracker);
+    on(weeklyForm, "submit", saveWeeklyTracker);
+    onClick(weeklyExport, downloadWeeklySummary);
 
     const todoPanel = $("todo-panel");
-    if (todoPanel) {
-      todoPanel.addEventListener("click", (event) => {
-        event.stopPropagation();
-      });
-    }
+    onClick(todoPanel, (event) => event.stopPropagation());
     const authForm = $("auth-form");
     const authClose = $("auth-close");
-    if (authForm) authForm.addEventListener("submit", handleAuthSubmit);
-    if (authClose) authClose.addEventListener("click", hideAuthModal);
+    on(authForm, "submit", handleAuthSubmit);
+    onClick(authClose, hideAuthModal);
 
     const changeBtn = $("change-password-button");
     const changeModalClose = $("change-password-close");
     const changeForm = $("change-password-form");
-    if (changeBtn) changeBtn.addEventListener("click", showChangePasswordModal);
-    if (changeModalClose) changeModalClose.addEventListener("click", hideChangePasswordModal);
-    if (changeForm) changeForm.addEventListener("submit", handleChangePasswordSubmit);
+    onClick(changeBtn, showChangePasswordModal);
+    onClick(changeModalClose, hideChangePasswordModal);
+    on(changeForm, "submit", handleChangePasswordSubmit);
 
     const dbSearch = $("db-search");
     const dbExport = $("db-export");
@@ -3280,9 +3279,9 @@ import {
       }, 200);
       dbSearch.addEventListener("input", onSearch);
     }
-    if (dbExport) dbExport.addEventListener("click", handleDatabaseExport);
-    if (dbClear) dbClear.addEventListener("click", () => clearDatabaseSelection());
-    if (dbDelete) dbDelete.addEventListener("click", handleDatabaseDelete);
+    onClick(dbExport, handleDatabaseExport);
+    onClick(dbClear, () => clearDatabaseSelection());
+    onClick(dbDelete, handleDatabaseDelete);
     if (dbPrev) {
       dbPrev.addEventListener("click", () => {
         if (state.data.page > 1) {

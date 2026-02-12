@@ -1013,9 +1013,19 @@ if (existingApi) {
   const hasSuspiciousKey = (obj) =>
     isPlainObject(obj) && Object.keys(obj).some((key) => SUSPICIOUS_KEYS.has(key));
 
+  const hasBlockedControlChars = (text) => {
+    for (let i = 0; i < text.length; i += 1) {
+      const code = text.charCodeAt(i);
+      if ((code >= 0 && code <= 8) || code === 11 || code === 12 || (code >= 14 && code <= 31)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   const hasSuspiciousText = (value) => {
     const text = value === null || value === undefined ? "" : String(value);
-    if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(text)) return true;
+    if (hasBlockedControlChars(text)) return true;
     return /(;--|\/\*|\*\/|drop\s+table|alter\s+table|union\s+select|insert\s+into|delete\s+from)/i.test(
       text,
     );

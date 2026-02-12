@@ -37,9 +37,14 @@ android/.gradle/
 android/.idea/
 android/local.properties
 android/**/build/
+android/.cxx/
+android/.externalNativeBuild/
+android/.kotlin/
 android/captures/
 native/**/build/
 native/**/.gradle/
+*.apk
+*.aab
 *.jks
 *.keystore
 
