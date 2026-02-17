@@ -11,12 +11,25 @@ __pycache__/
 .venv/
 venv/
 ENV/
-.env/
+.env
+.env.*
+!.env.example
+.python-version
 
 # Packaging/build
 build/
 dist/
 *.spec
+coverage/
+.nyc_output/
+*.tsbuildinfo
+htmlcov/
+*.AppImage
+*.dmg
+*.exe
+*.msi
+*.deb
+*.rpm
 
 .pyinstaller.log
 pyinstaller.log
@@ -24,13 +37,22 @@ pyinstaller.log
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.hypothesis/
+.tox/
+.nox/
 .cache/
+.eslintcache
+.prettier-cache/
+.stylelintcache
+.npm/
+.pnpm-store/
 
 # OS/editor
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+*.iml
 
 # Android/Gradle
 android/.gradle/
@@ -53,6 +75,9 @@ data/
 
 # Logs
 *.log
+*.pid
+.coverage
+.coverage.*
 uvicorn.log
 nohup.out
 
@@ -64,3 +89,19 @@ electron-dist/
 npm-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+*.tmp
+*.temp
+*.bak
+*.old
+*.orig
+*.rej
+*.swp
+*.swo
+*~
+.github/appmod/
+
+# Local design/screencast artifacts
+assets/logo-options/
+Screencast_*.webm
+*.webm
+*.oft

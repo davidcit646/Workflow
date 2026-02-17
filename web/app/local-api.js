@@ -6,8 +6,9 @@ if (existingApi) {
   const AUTH_FILE = "auth.json";
   const DATA_FILE = "workflow.enc";
   const META_FILE = "meta.json";
+  const EMAIL_TEMPLATES_FILE = "email_templates.json";
 
-  const DB_VERSION = 2;
+  const DB_VERSION = 3;
   const RECYCLE_LIMIT = 20;
   const RECYCLE_TTL_MS = 15 * 60 * 1000;
   const MAX_FIELD_LEN = 200;
@@ -15,6 +16,15 @@ if (existingApi) {
   const MAX_TODO_LEN = 200;
   const MAX_COLUMN_NAME_LEN = 60;
   const MAX_ID_LEN = 128;
+  const MAX_UNIFORM_ALTERATION_LEN = 80;
+  const MAX_UNIFORM_TYPE_LEN = 40;
+  const MAX_UNIFORM_SIZE_LEN = 40;
+  const MAX_UNIFORM_BRANCH_LEN = 40;
+  const MAX_EMAIL_TEMPLATE_TYPE_LEN = 64;
+  const MAX_EMAIL_TEMPLATE_TO_LEN = 320;
+  const MAX_EMAIL_TEMPLATE_CC_LEN = 1200;
+  const MAX_EMAIL_TEMPLATE_SUBJECT_LEN = 500;
+  const MAX_EMAIL_TEMPLATE_BODY_LEN = 40000;
 
   const AUTH_MAX_ATTEMPTS = 5;
   const AUTH_LOCK_MS = 30 * 1000;
@@ -331,6 +341,7 @@ if (existingApi) {
       icims_id: 64,
       employee_id: 64,
       job_id: 64,
+      req_id: 64,
       job_name: 120,
       job_location: 120,
       manager: 80,
@@ -350,6 +361,7 @@ if (existingApi) {
     "Neo Arrival Time",
     "Neo Departure Time",
     "Total Neo Hours",
+    "REQ ID",
     "Job ID Name",
     "Job Location",
     "Manager",
@@ -379,6 +391,21 @@ if (existingApi) {
     "Routing Number",
     "Account Number",
     "Shirt Size",
+    "Waist",
+    "Inseam",
+    "Issued Shirt Size",
+    "Issued Waist",
+    "Issued Inseam",
+    "Issued Pants Size",
+    "Issued Shirt Type",
+    "Issued Shirts Given",
+    "Issued Pants Type",
+    "Issued Pants Given",
+    "Uniforms Issued",
+    "Shirt Type",
+    "Shirts Given",
+    "Pants Type",
+    "Pants Given",
     "Pants Size",
     "Boots Size",
     "Emergency Contact Name",
@@ -398,7 +425,60 @@ if (existingApi) {
         limits[field] = MAX_FIELD_LEN;
       }
     });
-    return sanitizeRecord(data, limits);
+    const sanitized = sanitizeRecord(data, limits);
+    const shirtSize = normalizeUniformShirtSize(sanitized["Shirt Size"]);
+    const waist = normalizeUniformText(sanitized.Waist, 2);
+    const inseam = normalizeUniformText(sanitized.Inseam, 2);
+    const issuedShirtSize = normalizeUniformShirtSize(sanitized["Issued Shirt Size"]);
+    const issuedWaist = normalizeUniformText(sanitized["Issued Waist"], 2);
+    const issuedInseam = normalizeUniformText(sanitized["Issued Inseam"], 2);
+    const uniformsIssued = normalizeIssuedUniformFlag(sanitized["Uniforms Issued"]);
+    const shirtTypes = normalizeIssuedAlterationList(
+      sanitized["Issued Shirt Type"] || sanitized["Shirt Type"],
+    );
+    const shirtsGiven = parseIssuedUniformQuantity(
+      sanitized["Issued Shirts Given"] || sanitized["Shirts Given"],
+    );
+    const pantsType = normalizeUniformAlteration(
+      sanitized["Issued Pants Type"] || sanitized["Pants Type"],
+    );
+    const pantsGiven = parseIssuedUniformQuantity(
+      sanitized["Issued Pants Given"] || sanitized["Pants Given"],
+    );
+    sanitized["Shirt Size"] = UNIFORM_SHIRT_SIZE_OPTIONS.has(shirtSize) ? shirtSize : "";
+    sanitized.Waist = UNIFORM_WAIST_OPTIONS.has(waist) ? waist : "";
+    sanitized.Inseam = UNIFORM_INSEAM_OPTIONS.has(inseam) ? inseam : "";
+    sanitized["Issued Shirt Size"] =
+      UNIFORM_SHIRT_SIZE_OPTIONS.has(issuedShirtSize) ? issuedShirtSize : "";
+    sanitized["Issued Waist"] = UNIFORM_WAIST_OPTIONS.has(issuedWaist) ? issuedWaist : "";
+    sanitized["Issued Inseam"] = UNIFORM_INSEAM_OPTIONS.has(issuedInseam) ? issuedInseam : "";
+    sanitized["Uniforms Issued"] = uniformsIssued;
+    if (uniformsIssued) {
+      sanitized["Issued Shirt Type"] = serializeIssuedAlterationList(shirtTypes);
+      sanitized["Issued Shirts Given"] = shirtsGiven > 0 ? String(shirtsGiven) : "";
+      sanitized["Issued Pants Type"] = pantsType;
+      sanitized["Issued Pants Given"] = pantsGiven > 0 ? String(pantsGiven) : "";
+      sanitized["Shirt Type"] = serializeIssuedAlterationList(shirtTypes);
+      sanitized["Shirts Given"] = shirtsGiven > 0 ? String(shirtsGiven) : "";
+      sanitized["Pants Type"] = pantsType;
+      sanitized["Pants Given"] = pantsGiven > 0 ? String(pantsGiven) : "";
+      sanitized["Issued Pants Size"] = buildPantsSize(sanitized["Issued Waist"], sanitized["Issued Inseam"]);
+    } else {
+      sanitized["Issued Shirt Type"] = "";
+      sanitized["Issued Shirts Given"] = "";
+      sanitized["Issued Pants Type"] = "";
+      sanitized["Issued Pants Given"] = "";
+      sanitized["Shirt Type"] = "";
+      sanitized["Shirts Given"] = "";
+      sanitized["Pants Type"] = "";
+      sanitized["Pants Given"] = "";
+      sanitized["Issued Shirt Size"] = "";
+      sanitized["Issued Waist"] = "";
+      sanitized["Issued Inseam"] = "";
+      sanitized["Issued Pants Size"] = "";
+    }
+    sanitized["Pants Size"] = buildPantsSize(sanitized.Waist, sanitized.Inseam);
+    return sanitized;
   };
 
   const sanitizeWeeklyEntries = (entries) => {
@@ -426,9 +506,381 @@ if (existingApi) {
     }));
   };
 
+  const sanitizeEmailTemplateType = (value) =>
+    clampString(value, MAX_EMAIL_TEMPLATE_TYPE_LEN, { trim: true });
+
+  const sanitizeEmailTemplateRecord = (record) => {
+    const payload = record && typeof record === "object" ? record : {};
+    return {
+      toTemplate: clampString(payload.toTemplate, MAX_EMAIL_TEMPLATE_TO_LEN),
+      ccTemplate: clampString(payload.ccTemplate, MAX_EMAIL_TEMPLATE_CC_LEN),
+      subjectTemplate: clampString(payload.subjectTemplate, MAX_EMAIL_TEMPLATE_SUBJECT_LEN),
+      bodyTemplate: clampString(payload.bodyTemplate, MAX_EMAIL_TEMPLATE_BODY_LEN),
+    };
+  };
+
+  const sanitizeEmailTemplateMap = (templates) => {
+    const out = {};
+    if (!templates || typeof templates !== "object" || Array.isArray(templates)) return out;
+    Object.keys(templates)
+      .slice(0, 64)
+      .forEach((type) => {
+        const safeType = sanitizeEmailTemplateType(type);
+        if (!safeType) return;
+        out[safeType] = sanitizeEmailTemplateRecord(templates[type]);
+      });
+    return out;
+  };
+
+  const sanitizeEmailTemplateCustomTypes = (customTypes) => {
+    const out = {};
+    if (!customTypes || typeof customTypes !== "object" || Array.isArray(customTypes)) return out;
+    Object.keys(customTypes)
+      .slice(0, 64)
+      .forEach((key) => {
+        const safeKey = sanitizeEmailTemplateType(key)
+          .toLowerCase()
+          .replace(/[^a-z0-9-]/g, "");
+        const safeLabel = clampString(customTypes[key], 80, { trim: true });
+        if (!safeKey || !safeLabel || !safeKey.startsWith("custom-")) return;
+        out[safeKey] = safeLabel;
+      });
+    return out;
+  };
+
   const sanitizeRowIds = (rowIds) => {
     if (!Array.isArray(rowIds)) return [];
     return rowIds.map((id) => clampId(id)).filter((id) => id);
+  };
+
+  const UNIFORM_WAIST_OPTIONS = new Set(
+    Array.from({ length: 36 }, (_value, index) => String(20 + index)),
+  );
+  const UNIFORM_INSEAM_OPTIONS = new Set(
+    Array.from({ length: 10 }, (_value, index) => String(27 + index)),
+  );
+  const UNIFORM_SHIRT_SIZE_OPTIONS = new Set([
+    "XS",
+    "XM",
+    "S",
+    "M",
+    "L",
+    "XL",
+    "2XL",
+    "3XL",
+    "4XL",
+    "5XL",
+    "6XL",
+  ]);
+
+  const parseIssuedAlterationsJson = (text) => {
+    if (!text || text[0] !== "[" || text[text.length - 1] !== "]") return null;
+    try {
+      const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed)) return null;
+      return parsed.map((item) => String(item || "").trim()).filter(Boolean);
+    } catch (_error) {
+      return null;
+    }
+  };
+
+  const splitIssuedAlterations = (value) => {
+    if (Array.isArray(value)) {
+      return value.map((item) => String(item || "").trim()).filter(Boolean);
+    }
+    const text = String(value || "").trim();
+    if (!text) return [];
+    const parsedJson = parseIssuedAlterationsJson(text);
+    if (parsedJson) return parsedJson;
+    return text
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  };
+
+  const normalizeIssuedAlterationList = (value, allowedOptions = null) => {
+    const text = String(value || "").trim();
+    const allowed = new Set(
+      Array.from(allowedOptions || [])
+        .map((item) => normalizeUniformAlteration(item))
+        .filter(Boolean),
+    );
+    const seen = new Set();
+    let normalized = splitIssuedAlterations(value)
+      .map((item) => normalizeUniformAlteration(item))
+      .filter((item) => {
+        if (!item) return false;
+        if (seen.has(item)) return false;
+        seen.add(item);
+        return true;
+      });
+    if (allowed.size) {
+      const whole = normalizeUniformAlteration(text);
+      const hasInvalid = normalized.some((item) => !allowed.has(item));
+      if (whole && allowed.has(whole) && (!normalized.length || hasInvalid)) {
+        normalized = [whole];
+      } else {
+        normalized = normalized.filter((item) => allowed.has(item));
+      }
+    }
+    return normalized;
+  };
+
+  const serializeIssuedAlterationList = (value) => {
+    const normalized = normalizeIssuedAlterationList(value);
+    if (!normalized.length) return "";
+    return JSON.stringify(normalized);
+  };
+
+  const normalizeUniformAlteration = (value) =>
+    normalizeUniformText(value, MAX_UNIFORM_ALTERATION_LEN);
+
+  const normalizeIssuedUniformFlag = (value) => {
+    const text = normalizeUniformText(value, 8).toLowerCase();
+    if (text === "yes") return "Yes";
+    return "";
+  };
+
+  const buildPantsSize = (waist, inseam) => {
+    if (!waist || !inseam) return "";
+    return `${waist}x${inseam}`;
+  };
+
+  const parsePantsSize = (value) => {
+    const text = String(value || "").trim();
+    if (!text) return { waist: "", inseam: "" };
+    const strictMatch = text.match(/^(\d{1,2})\s*[xX]\s*(\d{1,2})$/);
+    if (strictMatch) return { waist: strictMatch[1], inseam: strictMatch[2] };
+    const looseMatch = text.match(/(\d{1,2})\D+(\d{1,2})/);
+    if (looseMatch) return { waist: looseMatch[1], inseam: looseMatch[2] };
+    return { waist: "", inseam: "" };
+  };
+
+  const parseIssuedUniformQuantity = (value) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return 0;
+    const whole = Math.floor(num);
+    if (whole < 1 || whole > 4) return 0;
+    return whole;
+  };
+
+  const parseUniformQuantity = (value) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return 0;
+    const whole = Math.floor(num);
+    if (whole < 0) return 0;
+    return Math.min(whole, 1000000);
+  };
+
+  const normalizeUniformText = (value, maxLen) => clampString(value, maxLen, { trim: true });
+  const normalizeUniformMeasurement = (value) => normalizeUniformText(value, 2);
+  const normalizeUniformShirtSize = (value) => {
+    const text = normalizeUniformText(value, MAX_UNIFORM_SIZE_LEN).toUpperCase();
+    if (!text) return "";
+    if (UNIFORM_SHIRT_SIZE_OPTIONS.has(text)) return text;
+    if (text === "XXL") return "2XL";
+    if (text === "XXXL") return "3XL";
+    return text;
+  };
+
+  const normalizeUniformType = (value) => {
+    const type = normalizeUniformText(value, MAX_UNIFORM_TYPE_LEN);
+    if (!type) return "";
+    if (type.toLowerCase() === "shirts") return "Shirt";
+    if (type.toLowerCase() === "pants") return "Pants";
+    return type;
+  };
+
+  const normalizeUniformBranch = (value) => normalizeUniformText(value, MAX_UNIFORM_BRANCH_LEN);
+
+  const uniformKey = ({ alteration, type, size, waist, inseam, branch }) =>
+    [branch, type, size || buildPantsSize(waist, inseam), alteration]
+      .map((part) => String(part || "").trim().toLowerCase())
+      .join("|");
+
+  const sanitizeUniformPayload = (payload) => {
+    const alteration = normalizeUniformAlteration(payload && payload.alteration);
+    const type = normalizeUniformType(payload && payload.type);
+    let size = normalizeUniformText(payload && payload.size, MAX_UNIFORM_SIZE_LEN);
+    let waist = normalizeUniformMeasurement(payload && (payload.waist ?? payload.Waist));
+    let inseam = normalizeUniformMeasurement(payload && (payload.inseam ?? payload.Inseam));
+    const branch = normalizeUniformBranch(payload && payload.branch);
+    const quantity = parseUniformQuantity(payload && payload.quantity);
+    if (type === "Pants") {
+      const parsed = parsePantsSize(size);
+      if (!waist) waist = parsed.waist;
+      if (!inseam) inseam = parsed.inseam;
+      waist = UNIFORM_WAIST_OPTIONS.has(waist) ? waist : "";
+      inseam = UNIFORM_INSEAM_OPTIONS.has(inseam) ? inseam : "";
+      size = buildPantsSize(waist, inseam);
+    } else if (type === "Shirt") {
+      size = normalizeUniformShirtSize(size);
+      waist = "";
+      inseam = "";
+    } else {
+      waist = "";
+      inseam = "";
+    }
+    return { alteration, type, size, waist, inseam, branch, quantity };
+  };
+
+  const sanitizeUniformEntry = (entry) => {
+    const payload = sanitizeUniformPayload(entry || {});
+    return {
+      id: clampId(entry && entry.id ? entry.id : "") || createId(),
+      alteration: payload.alteration,
+      type: payload.type,
+      size: payload.size,
+      waist: payload.waist,
+      inseam: payload.inseam,
+      quantity: payload.quantity,
+      branch: payload.branch,
+    };
+  };
+
+  const upsertUniformStock = (db, payload) => {
+    ensureDbShape(db);
+    const normalized = sanitizeUniformPayload(payload);
+    if (!normalized.type || !normalized.size || !normalized.branch || normalized.quantity <= 0) {
+      return null;
+    }
+    const key = uniformKey(normalized);
+    const existing = (db.uniforms || []).find(
+      (item) => uniformKey(item || {}) === key,
+    );
+    if (existing) {
+      existing.quantity = parseUniformQuantity(existing.quantity) + normalized.quantity;
+      return existing;
+    }
+    const row = {
+      id: createId(),
+      alteration: normalized.alteration,
+      type: normalized.type,
+      size: normalized.size,
+      waist: normalized.waist,
+      inseam: normalized.inseam,
+      quantity: normalized.quantity,
+      branch: normalized.branch,
+    };
+    db.uniforms.push(row);
+    return row;
+  };
+
+  const decrementUniformStock = (db, payload) => {
+    ensureDbShape(db);
+    const normalized = sanitizeUniformPayload(payload);
+    if (!normalized.type || !normalized.size || !normalized.branch || normalized.quantity <= 0) {
+      return 0;
+    }
+    const key = uniformKey(normalized);
+    const item = (db.uniforms || []).find((entry) => uniformKey(entry || {}) === key);
+    if (!item) return 0;
+    const available = parseUniformQuantity(item.quantity);
+    if (available <= 0) return 0;
+    const deducted = Math.min(available, normalized.quantity);
+    item.quantity = available - deducted;
+    if (item.quantity <= 0) {
+      db.uniforms = (db.uniforms || []).filter((entry) => entry && entry.id !== item.id);
+    }
+    return deducted;
+  };
+
+  const appendUniformAdjustment = (adjustments, payload, quantity) => {
+    const normalized = sanitizeUniformPayload({ ...(payload || {}), quantity });
+    if (!normalized.type || !normalized.size || !normalized.branch || normalized.quantity <= 0) {
+      return;
+    }
+    const key = uniformKey(normalized);
+    const existing = adjustments.find((entry) => uniformKey(entry || {}) === key);
+    if (existing) {
+      existing.quantity = parseUniformQuantity(existing.quantity) + normalized.quantity;
+      return;
+    }
+    adjustments.push({
+      alteration: normalized.alteration,
+      type: normalized.type,
+      size: normalized.size,
+      quantity: normalized.quantity,
+      branch: normalized.branch,
+    });
+  };
+
+  const listUniformAlterationsForStock = (db, payload) => {
+    const type = normalizeUniformType(payload && payload.type);
+    const waist = normalizeUniformMeasurement(payload && payload.waist);
+    const inseam = normalizeUniformMeasurement(payload && payload.inseam);
+    const size =
+      normalizeUniformText(payload && payload.size, MAX_UNIFORM_SIZE_LEN) ||
+      buildPantsSize(waist, inseam);
+    const branch = normalizeUniformBranch(payload && payload.branch);
+    if (!type || !size || !branch) return [];
+    const seen = new Set();
+    (db && Array.isArray(db.uniforms) ? db.uniforms : []).forEach((entry) => {
+      const item = sanitizeUniformEntry(entry);
+      if (normalizeUniformType(item.type) !== type) return;
+      if (normalizeUniformText(item.size, MAX_UNIFORM_SIZE_LEN) !== size) return;
+      if (normalizeUniformBranch(item.branch) !== branch) return;
+      if (parseUniformQuantity(item.quantity) <= 0) return;
+      const alteration = normalizeUniformAlteration(item.alteration);
+      if (!alteration || seen.has(alteration)) return;
+      seen.add(alteration);
+    });
+    return [...seen];
+  };
+
+  const deductUniformsAcrossAlterations = (db, payload) => {
+    const normalizedQuantity = parseIssuedUniformQuantity(payload && payload.quantity);
+    const type = normalizeUniformType(payload && payload.type);
+    const waist = normalizeUniformMeasurement(payload && payload.waist);
+    const inseam = normalizeUniformMeasurement(payload && payload.inseam);
+    const size =
+      normalizeUniformText(payload && payload.size, MAX_UNIFORM_SIZE_LEN) ||
+      buildPantsSize(waist, inseam);
+    const branch = normalizeUniformBranch(payload && payload.branch);
+    const alterations = normalizeIssuedAlterationList(payload && payload.alterations);
+    if (!normalizedQuantity || !type || !size || !branch) return [];
+    const targets = alterations.length ? alterations : [normalizeUniformAlteration(payload && payload.alteration)];
+    const cleanTargets = targets.filter((item) => item !== null && item !== undefined);
+    if (!cleanTargets.length) cleanTargets.push("");
+    const adjustments = [];
+
+    if (cleanTargets.length === 1) {
+      const alteration = cleanTargets[0];
+      const deducted = decrementUniformStock(db, {
+        alteration,
+        type,
+        size,
+        branch,
+        quantity: normalizedQuantity,
+      });
+      if (deducted > 0) {
+        appendUniformAdjustment(adjustments, { alteration, type, size, branch }, deducted);
+      }
+      return adjustments;
+    }
+
+    let remaining = normalizedQuantity;
+    let idx = 0;
+    let misses = 0;
+    while (remaining > 0 && misses < cleanTargets.length) {
+      const alteration = cleanTargets[idx % cleanTargets.length];
+      const deducted = decrementUniformStock(db, {
+        alteration,
+        type,
+        size,
+        branch,
+        quantity: 1,
+      });
+      if (deducted > 0) {
+        remaining -= deducted;
+        misses = 0;
+        appendUniformAdjustment(adjustments, { alteration, type, size, branch }, deducted);
+      } else {
+        misses += 1;
+      }
+      idx += 1;
+    }
+    return adjustments;
   };
 
   const normalizeTodos = (todos = []) => {
@@ -604,6 +1056,11 @@ if (existingApi) {
     "Account Type",
     "Routing Number",
     "Account Number",
+    "Emergency Contact Name",
+    "Emergency Contact Relationship",
+    "Emergency Contact Phone",
+    "Additional Details",
+    "Additional Notes",
   ];
 
   const SENSITIVE_CARD_FIELDS = ["icims_id", "employee_id"];
@@ -660,6 +1117,7 @@ if (existingApi) {
         "icims_id",
         "employee_id",
         "job_id",
+        "req_id",
         "job_name",
         "job_location",
         "manager",
@@ -677,6 +1135,7 @@ if (existingApi) {
           icims_id: card.icims_id || "",
           employee_id: card.employee_id || "",
           job_id: card.job_id || "",
+          req_id: card.req_id || "",
           job_name: card.job_name || "",
           job_location: card.job_location || "",
           manager: card.manager || "",
@@ -700,6 +1159,34 @@ if (existingApi) {
         }));
         return sortCandidateRowsByHireDate(rows);
       },
+    },
+    uniform_inventory: {
+      name: "Uniform Inventory",
+      columns: ["Alteration", "Type", "Size", "Waist", "Inseam", "Quantity", "Branch"],
+      rows: (db) =>
+        (db.uniforms || [])
+          .map((entry) => sanitizeUniformEntry(entry))
+          .sort((a, b) => {
+            const branchCompare = a.branch.localeCompare(b.branch);
+            if (branchCompare !== 0) return branchCompare;
+            const typeCompare = a.type.localeCompare(b.type);
+            if (typeCompare !== 0) return typeCompare;
+            const alterationCompare = String(a.alteration || "").localeCompare(
+              String(b.alteration || ""),
+            );
+            if (alterationCompare !== 0) return alterationCompare;
+            return a.size.localeCompare(b.size);
+          })
+          .map((entry) => ({
+            __rowId: entry.id,
+            Alteration: entry.alteration || "",
+            Type: entry.type,
+            Size: entry.size,
+            Waist: entry.waist || "",
+            Inseam: entry.inseam || "",
+            Quantity: String(parseUniformQuantity(entry.quantity)),
+            Branch: entry.branch,
+          })),
     },
     weekly_entries: {
       name: "Weekly Tracker Entries",
@@ -763,6 +1250,7 @@ if (existingApi) {
       const card = db.kanban.cards.find((c) => c.uuid === candidateId);
       if (card) {
         row["Candidate Name"] = card.candidate_name || "";
+        row["REQ ID"] = card.req_id || "";
       }
       db.kanban.candidates.push(row);
     } else {
@@ -786,6 +1274,7 @@ if (existingApi) {
     if (!Array.isArray(db.kanban.columns)) db.kanban.columns = [];
     if (!Array.isArray(db.kanban.cards)) db.kanban.cards = [];
     if (!Array.isArray(db.kanban.candidates)) db.kanban.candidates = [];
+    if (!Array.isArray(db.uniforms)) db.uniforms = [];
     if (!db.weekly || typeof db.weekly !== "object") db.weekly = {};
     if (!Array.isArray(db.todos)) db.todos = [];
     if (!db.recycle || typeof db.recycle !== "object") db.recycle = { items: [], redo: [] };
@@ -802,6 +1291,9 @@ if (existingApi) {
       if (!next.recycle) next.recycle = { items: [], redo: [] };
       if (!Array.isArray(next.recycle.items)) next.recycle.items = [];
       if (!Array.isArray(next.recycle.redo)) next.recycle.redo = [];
+    }
+    if (version < 3) {
+      if (!Array.isArray(next.uniforms)) next.uniforms = [];
     }
     next.version = DB_VERSION;
     return next;
@@ -877,6 +1369,7 @@ if (existingApi) {
       case "kanban_cards": {
         const cards = Array.isArray(item.cards) ? item.cards : [];
         const rows = Array.isArray(item.candidates) ? item.candidates : [];
+        const uniformAdjustments = Array.isArray(item.uniformAdjustments) ? item.uniformAdjustments : [];
         const existingCardIds = new Set(db.kanban.cards.map((card) => card.uuid));
         const existingRowIds = new Set(db.kanban.candidates.map((row) => row["candidate UUID"]));
         cards.forEach((card) => {
@@ -889,6 +1382,10 @@ if (existingApi) {
           if (rowId && !existingRowIds.has(rowId)) {
             db.kanban.candidates.push(row);
           }
+        });
+        uniformAdjustments.forEach((entry) => {
+          const safeEntry = sanitizeUniformPayload(entry);
+          if (safeEntry.quantity > 0) upsertUniformStock(db, safeEntry);
         });
         return true;
       }
@@ -944,6 +1441,18 @@ if (existingApi) {
         });
         return true;
       }
+      case "uniform_rows": {
+        const uniforms = Array.isArray(item.uniforms) ? item.uniforms : [];
+        const existingIds = new Set((db.uniforms || []).map((entry) => entry.id));
+        uniforms.forEach((entry) => {
+          const safeEntry = sanitizeUniformEntry(entry);
+          if (!safeEntry.type || !safeEntry.size || !safeEntry.branch) return;
+          if (existingIds.has(safeEntry.id)) return;
+          db.uniforms.push(safeEntry);
+          existingIds.add(safeEntry.id);
+        });
+        return true;
+      }
       default:
         return false;
     }
@@ -956,12 +1465,17 @@ if (existingApi) {
       case "kanban_cards": {
         const cards = Array.isArray(item.cards) ? item.cards : [];
         const rows = Array.isArray(item.candidates) ? item.candidates : [];
+        const uniformAdjustments = Array.isArray(item.uniformAdjustments) ? item.uniformAdjustments : [];
         const cardIds = new Set(cards.map((card) => card && card.uuid).filter(Boolean));
         const rowIds = new Set(rows.map((row) => row && row["candidate UUID"]).filter(Boolean));
         db.kanban.cards = db.kanban.cards.filter((card) => !cardIds.has(card.uuid));
         db.kanban.candidates = db.kanban.candidates.filter(
           (row) => !rowIds.has(row["candidate UUID"]),
         );
+        uniformAdjustments.forEach((entry) => {
+          const safeEntry = sanitizeUniformPayload(entry);
+          if (safeEntry.quantity > 0) decrementUniformStock(db, safeEntry);
+        });
         return true;
       }
       case "kanban_columns": {
@@ -998,6 +1512,16 @@ if (existingApi) {
         const todos = Array.isArray(item.todos) ? item.todos : [];
         const ids = new Set(todos.map((todo) => todo && todo.id).filter(Boolean));
         db.todos = (db.todos || []).filter((todo) => !ids.has(todo.id));
+        return true;
+      }
+      case "uniform_rows": {
+        const uniforms = Array.isArray(item.uniforms) ? item.uniforms : [];
+        const ids = new Set(
+          uniforms
+            .map((entry) => clampId(entry && entry.id ? entry.id : ""))
+            .filter(Boolean),
+        );
+        db.uniforms = (db.uniforms || []).filter((entry) => !ids.has(entry && entry.id));
         return true;
       }
       default:
@@ -1107,6 +1631,7 @@ if (existingApi) {
         ["ICIMS", card.icims_id],
         ["Employee", card.employee_id],
         ["Job ID", card.job_id],
+        ["REQ ID", card.req_id],
         ["Job name", card.job_name],
         ["Job location", card.job_location],
         ["Manager", card.manager],
@@ -1142,6 +1667,47 @@ if (existingApi) {
       const rowId = row["candidate UUID"];
       if (!rowId || typeof rowId !== "string") {
         return { ok: false, code: "broken", message: "Candidate UUIDs are missing." };
+      }
+    }
+
+    if (!Array.isArray(db.uniforms)) {
+      return { ok: false, code: "broken", message: "Uniform inventory is invalid." };
+    }
+    for (const item of db.uniforms) {
+      if (!isPlainObject(item) || hasSuspiciousKey(item)) {
+        return { ok: false, code: "fraud", message: "Uniform rows look suspicious." };
+      }
+      if (!item.id || typeof item.id !== "string") {
+        return { ok: false, code: "broken", message: "Uniform row IDs are invalid." };
+      }
+      const alterationCheck = validateText(
+        item.alteration,
+        MAX_UNIFORM_ALTERATION_LEN,
+        "Uniform alteration",
+      );
+      if (!alterationCheck.ok) return alterationCheck;
+      const typeCheck = validateText(item.type, MAX_UNIFORM_TYPE_LEN, "Uniform type");
+      if (!typeCheck.ok) return typeCheck;
+      const sizeCheck = validateText(item.size, MAX_UNIFORM_SIZE_LEN, "Uniform size");
+      if (!sizeCheck.ok) return sizeCheck;
+      const waistCheck = validateText(item.waist, 2, "Uniform waist");
+      if (!waistCheck.ok) return waistCheck;
+      const inseamCheck = validateText(item.inseam, 2, "Uniform inseam");
+      if (!inseamCheck.ok) return inseamCheck;
+      const branchCheck = validateText(item.branch, MAX_UNIFORM_BRANCH_LEN, "Uniform branch");
+      if (!branchCheck.ok) return branchCheck;
+      const normalizedType = normalizeUniformType(item.type);
+      if (normalizedType === "Pants") {
+        const parsed = parsePantsSize(item.size);
+        const waist = normalizeUniformMeasurement(item.waist || parsed.waist);
+        const inseam = normalizeUniformMeasurement(item.inseam || parsed.inseam);
+        if (!UNIFORM_WAIST_OPTIONS.has(waist) || !UNIFORM_INSEAM_OPTIONS.has(inseam)) {
+          return { ok: false, code: "broken", message: "Uniform pants measurements are invalid." };
+        }
+      }
+      const quantity = Number(item.quantity);
+      if (!Number.isFinite(quantity) || quantity < 0 || !Number.isInteger(quantity)) {
+        return { ok: false, code: "broken", message: "Uniform quantity values are invalid." };
       }
     }
 
@@ -1207,6 +1773,7 @@ if (existingApi) {
       cards: [],
       candidates: [],
     },
+    uniforms: [],
     weekly: {},
     todos: [],
     recycle: {
@@ -1374,6 +1941,12 @@ if (existingApi) {
       }
       todoIds.add(nextId);
       target.todos.push({ ...todo, id: nextId });
+    });
+
+    (incoming.uniforms || []).forEach((entry) => {
+      const safeEntry = sanitizeUniformEntry(entry);
+      if (!safeEntry.type || !safeEntry.size || !safeEntry.branch || safeEntry.quantity <= 0) return;
+      upsertUniformStock(target, safeEntry);
     });
   };
 
@@ -1611,8 +2184,34 @@ if (existingApi) {
     await writeJson(META_FILE, metaCache);
   };
 
+  const loadEmailTemplateConfig = async () => {
+    const raw = (await readJson(EMAIL_TEMPLATES_FILE)) || {};
+    const templates =
+      raw && raw.templates && typeof raw.templates === "object" ? raw.templates : {};
+    const customTypes =
+      raw && raw.customTypes && typeof raw.customTypes === "object" ? raw.customTypes : {};
+    return {
+      templates: sanitizeEmailTemplateMap(templates),
+      customTypes: sanitizeEmailTemplateCustomTypes(customTypes),
+    };
+  };
+
+  const saveEmailTemplateConfig = async (templates, customTypes) => {
+    const payload = {
+      version: 1,
+      updated_at: new Date().toISOString(),
+      templates: sanitizeEmailTemplateMap(templates),
+      customTypes: sanitizeEmailTemplateCustomTypes(customTypes),
+    };
+    await writeJson(EMAIL_TEMPLATES_FILE, payload);
+    return payload;
+  };
+
   const api = {
     platform,
+    appVersion: async () => {
+      return "local-dev";
+    },
     storageInfo: async () => {
       await ensureStorageReady();
       return {
@@ -1860,6 +2459,7 @@ if (existingApi) {
         icims_id: safePayload.icims_id || "",
         employee_id: safePayload.employee_id || "",
         job_id: safePayload.job_id || "",
+        req_id: safePayload.req_id || "",
         job_name: safePayload.job_name || "",
         job_location: safePayload.job_location || "",
         manager: safePayload.manager || "",
@@ -1876,6 +2476,7 @@ if (existingApi) {
       candidateRow["Candidate Name"] = card.candidate_name;
       candidateRow["ICIMS ID"] = card.icims_id;
       candidateRow["Employee ID"] = card.employee_id;
+      candidateRow["REQ ID"] = card.req_id;
       candidateRow["Contact Phone"] = safePayload.contact_phone || "";
       candidateRow["Contact Email"] = safePayload.contact_email || "";
       candidateRow["Job ID Name"] = jobIdName(card.job_id, card.job_name);
@@ -1900,6 +2501,7 @@ if (existingApi) {
         "icims_id",
         "employee_id",
         "job_id",
+        "req_id",
         "job_name",
         "job_location",
         "manager",
@@ -1923,6 +2525,7 @@ if (existingApi) {
       candidateRow["Candidate Name"] = card.candidate_name || "";
       candidateRow["ICIMS ID"] = card.icims_id || "";
       candidateRow["Employee ID"] = card.employee_id || "";
+      candidateRow["REQ ID"] = card.req_id || "";
       if (payload && Object.prototype.hasOwnProperty.call(payload, "contact_phone")) {
         candidateRow["Contact Phone"] = safePayload.contact_phone || "";
       }
@@ -1943,8 +2546,9 @@ if (existingApi) {
       const safeId = clampId(candidateId);
       const row = ensureCandidateRow(db, safeId);
       const card = db.kanban.cards.find((c) => c.uuid === safeId);
-      if (card && card.candidate_name) {
-        row["Candidate Name"] = card.candidate_name;
+      if (card) {
+        row["Candidate Name"] = card.candidate_name || row["Candidate Name"] || "";
+        row["REQ ID"] = card.req_id || row["REQ ID"] || "";
       }
       await saveDb(db);
       return { row, candidateName: row["Candidate Name"] || (card ? card.candidate_name : "") };
@@ -1964,13 +2568,17 @@ if (existingApi) {
       await saveDb(db);
       return true;
     },
-    kanbanProcessCandidate: async ({ candidateId, arrival, departure }) => {
+    kanbanProcessCandidate: async ({ candidateId, arrival, departure, branch }) => {
       requireAuth();
       const db = await loadDb();
       const safeId = clampId(candidateId);
       if (!safeId) return { ok: false, message: "Missing candidate." };
       const card = db.kanban.cards.find((c) => c.uuid === safeId);
       if (!card) return { ok: false, message: "Candidate not found." };
+      const selectedBranch = normalizeUniformBranch(branch || card.branch);
+      if (!selectedBranch) {
+        return { ok: false, message: "Branch is required." };
+      }
       const preProcessCard = { ...card };
       const preProcessRow = { ...ensureCandidateRow(db, safeId) };
 
@@ -1990,13 +2598,85 @@ if (existingApi) {
       row["Candidate Name"] = card.candidate_name || row["Candidate Name"] || "";
       row["ICIMS ID"] = card.icims_id || row["ICIMS ID"] || "";
       row["Employee ID"] = card.employee_id || row["Employee ID"] || "";
+      row["REQ ID"] = card.req_id || row["REQ ID"] || "";
       row["Job ID Name"] = jobIdName(card.job_id, card.job_name);
       row["Job Location"] = card.job_location || row["Job Location"] || "";
       row["Manager"] = card.manager || row["Manager"] || "";
-      row["Branch"] = card.branch || row["Branch"] || "";
+      row["Branch"] = selectedBranch;
       row["Neo Arrival Time"] = arrivalText;
       row["Neo Departure Time"] = departureText;
       row["Total Neo Hours"] = totalHours;
+      card.branch = selectedBranch;
+
+      const uniformAdjustments = [];
+      const uniformsIssued = normalizeIssuedUniformFlag(row["Uniforms Issued"]) === "Yes";
+      if (uniformsIssued) {
+        const shirtSizeRaw = normalizeUniformShirtSize(
+          row["Issued Shirt Size"] || row["Shirt Size"],
+        );
+        const shirtSize = UNIFORM_SHIRT_SIZE_OPTIONS.has(shirtSizeRaw) ? shirtSizeRaw : "";
+        const waist = normalizeUniformText(row["Issued Waist"] || row["Waist"], 2);
+        const inseam = normalizeUniformText(row["Issued Inseam"] || row["Inseam"], 2);
+        const pantsSize =
+          buildPantsSize(
+            UNIFORM_WAIST_OPTIONS.has(waist) ? waist : "",
+            UNIFORM_INSEAM_OPTIONS.has(inseam) ? inseam : "",
+          ) ||
+          normalizeUniformText(
+            row["Issued Pants Size"] || row["Pants Size"],
+            MAX_UNIFORM_SIZE_LEN,
+          );
+        const shirtsGiven = parseIssuedUniformQuantity(
+          row["Issued Shirts Given"] || row["Shirts Given"],
+        );
+        const pantsGiven = parseIssuedUniformQuantity(
+          row["Issued Pants Given"] || row["Pants Given"],
+        );
+        const shirtAlterations = normalizeIssuedAlterationList(
+          row["Issued Shirt Type"] || row["Shirt Type"],
+          listUniformAlterationsForStock(db, {
+            type: "Shirt",
+            size: shirtSize,
+            branch: selectedBranch,
+          }),
+        );
+        const pantsAlteration = normalizeUniformAlteration(
+          row["Issued Pants Type"] || row["Pants Type"],
+        );
+        row["Issued Shirt Size"] = shirtSize;
+        row["Issued Waist"] = UNIFORM_WAIST_OPTIONS.has(waist) ? waist : "";
+        row["Issued Inseam"] = UNIFORM_INSEAM_OPTIONS.has(inseam) ? inseam : "";
+        row["Issued Pants Size"] = pantsSize;
+        row["Issued Shirt Type"] = serializeIssuedAlterationList(shirtAlterations);
+        row["Issued Shirts Given"] = shirtsGiven > 0 ? String(shirtsGiven) : "";
+        row["Issued Pants Type"] = pantsAlteration;
+        row["Issued Pants Given"] = pantsGiven > 0 ? String(pantsGiven) : "";
+        row["Uniforms Issued"] = "Yes";
+        row["Shirt Type"] = row["Issued Shirt Type"];
+        row["Shirts Given"] = row["Issued Shirts Given"];
+        row["Pants Type"] = row["Issued Pants Type"];
+        row["Pants Given"] = row["Issued Pants Given"];
+        if (shirtSize && shirtsGiven > 0) {
+          const shirtDeductions = deductUniformsAcrossAlterations(db, {
+            type: "Shirt",
+            size: shirtSize,
+            quantity: shirtsGiven,
+            branch: selectedBranch,
+            alterations: shirtAlterations,
+          });
+          shirtDeductions.forEach((entry) => uniformAdjustments.push(entry));
+        }
+        if (pantsSize && pantsGiven > 0) {
+          const pantsDeductions = deductUniformsAcrossAlterations(db, {
+            type: "Pants",
+            size: pantsSize,
+            quantity: pantsGiven,
+            branch: selectedBranch,
+            alteration: pantsAlteration,
+          });
+          pantsDeductions.forEach((entry) => uniformAdjustments.push(entry));
+        }
+      }
 
       SENSITIVE_PII_FIELDS.forEach((field) => {
         row[field] = "";
@@ -2011,6 +2691,7 @@ if (existingApi) {
         type: "kanban_cards",
         cards: [preProcessCard],
         candidates: [preProcessRow],
+        uniformAdjustments,
       });
 
       await saveDb(db);
@@ -2114,6 +2795,59 @@ if (existingApi) {
       normalizeTodos(db.todos);
       await saveDb(db);
       return true;
+    },
+
+    emailTemplatesGet: async () => {
+      requireAuth();
+      const config = await loadEmailTemplateConfig();
+      return {
+        ok: true,
+        templates: config.templates || {},
+        customTypes: config.customTypes || {},
+      };
+    },
+    emailTemplatesSave: async (payload) => {
+      requireAuth();
+      const templates = sanitizeEmailTemplateMap(
+        payload && payload.templates && typeof payload.templates === "object"
+          ? payload.templates
+          : {},
+      );
+      const customTypes = sanitizeEmailTemplateCustomTypes(
+        payload && payload.customTypes && typeof payload.customTypes === "object"
+          ? payload.customTypes
+          : {},
+      );
+      const saved = await saveEmailTemplateConfig(templates, customTypes);
+      return {
+        ok: true,
+        templates: saved.templates || {},
+        customTypes: saved.customTypes || {},
+      };
+    },
+
+    uniformsAddItem: async (payload) => {
+      requireAuth();
+      const db = await loadDb();
+      const safePayload = sanitizeUniformPayload(payload || {});
+      if (!safePayload.alteration || !safePayload.type || !safePayload.branch) {
+        return { ok: false, error: "Alteration, type, and branch are required." };
+      }
+      if (safePayload.type === "Shirt" && !safePayload.size) {
+        return { ok: false, error: "Shirt size is required for shirt inventory." };
+      }
+      if (safePayload.type === "Pants" && (!safePayload.waist || !safePayload.inseam)) {
+        return { ok: false, error: "Waist and inseam are required for pants inventory." };
+      }
+      if (safePayload.quantity <= 0) {
+        return { ok: false, error: "Quantity must be greater than 0." };
+      }
+      const row = upsertUniformStock(db, safePayload);
+      if (!row) {
+        return { ok: false, error: "Unable to add uniform inventory." };
+      }
+      await saveDb(db);
+      return { ok: true, row };
     },
 
     dbSources: async () => {
@@ -2220,6 +2954,17 @@ if (existingApi) {
             undoId = pushRecycleItem(db, {
               type: "weekly_entries",
               entries: removedEntries,
+            });
+          }
+          break;
+        }
+        case "uniform_inventory": {
+          const removedRows = (db.uniforms || []).filter((entry) => ids.has(entry.id));
+          db.uniforms = (db.uniforms || []).filter((entry) => !ids.has(entry.id));
+          if (removedRows.length) {
+            undoId = pushRecycleItem(db, {
+              type: "uniform_rows",
+              uniforms: removedRows.map((entry) => ({ ...entry })),
             });
           }
           break;

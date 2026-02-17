@@ -81,6 +81,10 @@ import {
     topbar.classList.toggle("topbar--hidden", hidden);
   };
 
+  const isTopbarAutoHideEnabled = (page) => {
+    return !!page && page.id === "page-dashboard";
+  };
+
   const getTopbarScrollTarget = (page) => {
     if (!page) return null;
     const isScrollable = (el) => el && el.scrollHeight - el.clientHeight > 1;
@@ -102,6 +106,7 @@ import {
     const topbar = page.querySelector(".topbar");
     if (!topbar) return;
     setTopbarHidden(page, topbar, false);
+    if (!isTopbarAutoHideEnabled(page)) return;
 
     const scrollEl = getTopbarScrollTarget(page);
     if (!scrollEl) return;
@@ -134,6 +139,442 @@ import {
     scrollEl.addEventListener("scroll", onScroll, { passive: true });
     onScroll();
     topbarScrollCleanup = () => scrollEl.removeEventListener("scroll", onScroll);
+  };
+
+  const HELP_FEEDBACK_URL = "https://github.com/davidcit646/Workflow/issues";
+  const HELP_MANUALS = [
+    { id: "user-manual", label: "User Manual", path: "./manuals/USER_MANUAL.md" },
+    { id: "backup-restore", label: "Backup & Restore", path: "./manuals/BACKUP_RESTORE.md" },
+    { id: "readme", label: "GitHub Issues & Contributing", path: "./manuals/README.md" },
+  ];
+
+  const helpState = {
+    cache: new Map(),
+    activeManualId: "user-manual",
+    headings: [],
+    appVersion: null,
+    appVersionLoading: null,
+  };
+
+  const escapeHtml = (value) =>
+    String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+
+  const toHeadingSlug = (value, used = new Set()) => {
+    const base =
+      String(value || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, "")
+        .trim()
+        .replace(/\s+/g, "-")
+        .replace(/-+/g, "-") || "section";
+    let slug = base;
+    let n = 2;
+    while (used.has(slug)) {
+      slug = `${base}-${n}`;
+      n += 1;
+    }
+    used.add(slug);
+    return slug;
+  };
+
+  const formatInlineMarkdown = (value) => {
+    let text = escapeHtml(value);
+    text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, url) => {
+      const safeLabel = escapeHtml(label);
+      const safeUrl = String(url || "").trim();
+      if (/^https?:\/\//i.test(safeUrl)) {
+        return `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noreferrer noopener">${safeLabel}</a>`;
+      }
+      return `<a href="${escapeHtml(safeUrl)}">${safeLabel}</a>`;
+    });
+    text = text.replace(/`([^`]+)`/g, "<code>$1</code>");
+    text = text.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    text = text.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+    return text;
+  };
+
+  const parseMarkdownManual = (markdownText) => {
+    const lines = String(markdownText || "").replace(/\r\n?/g, "\n").split("\n");
+    const html = [];
+    const headings = [];
+    const usedIds = new Set();
+    let paragraph = [];
+    let listType = null;
+    let inCodeBlock = false;
+    let codeLanguage = "";
+    let codeLines = [];
+
+    const flushParagraph = () => {
+      if (!paragraph.length) return;
+      html.push(`<p>${formatInlineMarkdown(paragraph.join(" ").trim())}</p>`);
+      paragraph = [];
+    };
+
+    const closeList = () => {
+      if (!listType) return;
+      html.push(`</${listType}>`);
+      listType = null;
+    };
+
+    const openList = (type, start = null) => {
+      if (listType === type) return;
+      closeList();
+      if (type === "ol") {
+        const safeStart = Number(start);
+        if (Number.isInteger(safeStart) && safeStart > 1) {
+          html.push(`<ol start="${safeStart}">`);
+        } else {
+          html.push("<ol>");
+        }
+      } else {
+        html.push(`<${type}>`);
+      }
+      listType = type;
+    };
+
+    lines.forEach((line) => {
+      if (inCodeBlock) {
+        if (/^```/.test(line.trim())) {
+          const langClass = codeLanguage ? ` class="language-${escapeHtml(codeLanguage)}"` : "";
+          html.push(`<pre><code${langClass}>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+          inCodeBlock = false;
+          codeLanguage = "";
+          codeLines = [];
+        } else {
+          codeLines.push(line);
+        }
+        return;
+      }
+
+      const trimmed = line.trim();
+      if (!trimmed) {
+        flushParagraph();
+        closeList();
+        return;
+      }
+
+      const codeStart = trimmed.match(/^```([a-zA-Z0-9_-]+)?\s*$/);
+      if (codeStart) {
+        flushParagraph();
+        closeList();
+        inCodeBlock = true;
+        codeLanguage = codeStart[1] || "";
+        codeLines = [];
+        return;
+      }
+
+      const headingMatch = trimmed.match(/^(#{1,6})\s+(.+)$/);
+      if (headingMatch) {
+        flushParagraph();
+        closeList();
+        const level = headingMatch[1].length;
+        const headingText = headingMatch[2].trim();
+        const id = toHeadingSlug(headingText, usedIds);
+        headings.push({ id, text: headingText, level });
+        html.push(`<h${level} id="${id}">${formatInlineMarkdown(headingText)}</h${level}>`);
+        return;
+      }
+
+      const unorderedMatch = trimmed.match(/^[-*]\s+(.+)$/);
+      if (unorderedMatch) {
+        flushParagraph();
+        openList("ul");
+        html.push(`<li>${formatInlineMarkdown(unorderedMatch[1])}</li>`);
+        return;
+      }
+
+      const orderedMatch = trimmed.match(/^(\d+)\.\s+(.+)$/);
+      if (orderedMatch) {
+        flushParagraph();
+        if (listType !== "ol") {
+          openList("ol", Number(orderedMatch[1]));
+        }
+        html.push(`<li>${formatInlineMarkdown(orderedMatch[2])}</li>`);
+        return;
+      }
+
+      const quoteMatch = trimmed.match(/^>\s?(.*)$/);
+      if (quoteMatch) {
+        flushParagraph();
+        closeList();
+        html.push(`<blockquote><p>${formatInlineMarkdown(quoteMatch[1])}</p></blockquote>`);
+        return;
+      }
+
+      if (/^---+$/.test(trimmed)) {
+        flushParagraph();
+        closeList();
+        html.push("<hr />");
+        return;
+      }
+
+      closeList();
+      paragraph.push(trimmed);
+    });
+
+    flushParagraph();
+    closeList();
+    if (inCodeBlock) {
+      const langClass = codeLanguage ? ` class="language-${escapeHtml(codeLanguage)}"` : "";
+      html.push(`<pre><code${langClass}>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+    }
+
+    return { html: html.join("\n"), headings };
+  };
+
+  const getHelpManualById = (manualId) => {
+    return HELP_MANUALS.find((manual) => manual.id === manualId) || HELP_MANUALS[0];
+  };
+
+  const clearHelpHighlights = (container) => {
+    if (!container) return;
+    container.querySelectorAll("mark.manual-highlight").forEach((mark) => {
+      mark.replaceWith(document.createTextNode(mark.textContent || ""));
+    });
+    container.normalize();
+  };
+
+  const highlightHelpMatches = (container, rawQuery) => {
+    clearHelpHighlights(container);
+    const query = String(rawQuery || "").trim().toLowerCase();
+    if (!query) return { count: 0, firstMatch: null };
+
+    let count = 0;
+    let firstMatch = null;
+    const walker = document.createTreeWalker(
+      container,
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode(node) {
+          if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+          const parent = node.parentElement;
+          if (!parent) return NodeFilter.FILTER_REJECT;
+          if (parent.closest("mark.manual-highlight")) return NodeFilter.FILTER_REJECT;
+          if (parent.closest("pre, code")) return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        },
+      },
+      false,
+    );
+
+    const textNodes = [];
+    let node = walker.nextNode();
+    while (node) {
+      textNodes.push(node);
+      node = walker.nextNode();
+    }
+
+    textNodes.forEach((textNode) => {
+      const source = textNode.nodeValue;
+      const lower = source.toLowerCase();
+      let from = 0;
+      let foundAt = lower.indexOf(query, from);
+      if (foundAt < 0) return;
+
+      const fragment = document.createDocumentFragment();
+      while (foundAt >= 0) {
+        if (foundAt > from) {
+          fragment.appendChild(document.createTextNode(source.slice(from, foundAt)));
+        }
+        const matchText = source.slice(foundAt, foundAt + query.length);
+        const mark = document.createElement("mark");
+        mark.className = "manual-highlight";
+        mark.textContent = matchText;
+        fragment.appendChild(mark);
+        if (!firstMatch) firstMatch = mark;
+        count += 1;
+        from = foundAt + query.length;
+        foundAt = lower.indexOf(query, from);
+      }
+      if (from < source.length) {
+        fragment.appendChild(document.createTextNode(source.slice(from)));
+      }
+      if (textNode.parentNode) {
+        textNode.parentNode.replaceChild(fragment, textNode);
+      }
+    });
+
+    return { count, firstMatch };
+  };
+
+  const updateHelpTocActive = () => {
+    const content = $("help-manual-content");
+    const tocList = $("help-manual-toc-list");
+    if (!content || !tocList || !helpState.headings.length) return;
+
+    const top = content.scrollTop + 10;
+    let activeId = helpState.headings[0].id;
+    helpState.headings.forEach((heading) => {
+      const headingEl = content.querySelector(`#${heading.id}`);
+      if (headingEl && headingEl.offsetTop <= top) {
+        activeId = heading.id;
+      }
+    });
+
+    tocList.querySelectorAll(".help-manual-toc__item").forEach((item) => {
+      item.classList.toggle("help-manual-toc__item--active", item.dataset.headingId === activeId);
+    });
+  };
+
+  const renderHelpManualToc = (headings) => {
+    const tocList = $("help-manual-toc-list");
+    const content = $("help-manual-content");
+    if (!tocList || !content) return;
+    tocList.innerHTML = "";
+    if (!headings.length) {
+      tocList.innerHTML = '<div class="muted">No headings found in this manual.</div>';
+      return;
+    }
+
+    headings.forEach((heading) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `help-manual-toc__item help-manual-toc__item--lvl${Math.min(heading.level, 6)}`;
+      button.textContent = heading.text;
+      button.dataset.headingId = heading.id;
+      button.addEventListener("click", () => {
+        const target = content.querySelector(`#${heading.id}`);
+        if (!target) return;
+        content.scrollTo({ top: Math.max(0, target.offsetTop - 8), behavior: "smooth" });
+      });
+      tocList.appendChild(button);
+    });
+  };
+
+  const loadHelpManualMarkdown = async (manualId) => {
+    const manual = getHelpManualById(manualId);
+    if (helpState.cache.has(manual.id)) {
+      return helpState.cache.get(manual.id);
+    }
+
+    let response = null;
+    let text = "";
+    try {
+      response = await fetch(manual.path, { cache: "no-store" });
+      text = await response.text();
+    } catch (error) {
+      text = "";
+    }
+
+    if (!text.trim() || (response && response.ok === false && !text.trim())) {
+      throw new Error(`Unable to load manual: ${manual.label}`);
+    }
+
+    helpState.cache.set(manual.id, text);
+    return text;
+  };
+
+  const resolveAppVersionLabel = async () => {
+    if (helpState.appVersion) return helpState.appVersion;
+    if (helpState.appVersionLoading) return helpState.appVersionLoading;
+
+    helpState.appVersionLoading = (async () => {
+      if (!workflowApi || typeof workflowApi.appVersion !== "function") {
+        helpState.appVersion = "Unavailable";
+        return helpState.appVersion;
+      }
+      try {
+        const value = await workflowApi.appVersion();
+        const safe = String(value || "").trim();
+        helpState.appVersion = safe || "Unavailable";
+        return helpState.appVersion;
+      } catch (error) {
+        helpState.appVersion = "Unavailable";
+        return helpState.appVersion;
+      } finally {
+        helpState.appVersionLoading = null;
+      }
+    })();
+
+    return helpState.appVersionLoading;
+  };
+
+  const renderHelpPage = () => {
+    const select = $("help-manual-select");
+    const feedbackLink = $("help-feedback-link");
+    const version = $("help-app-version");
+    if (feedbackLink) feedbackLink.href = HELP_FEEDBACK_URL;
+    if (version) {
+      version.textContent = helpState.appVersion || "Loading...";
+      resolveAppVersionLabel().then((label) => {
+        const versionEl = $("help-app-version");
+        if (versionEl) versionEl.textContent = label;
+      });
+    }
+    if (!select) return;
+    const manual = getHelpManualById(helpState.activeManualId);
+    select.value = manual.id;
+  };
+
+  const applyHelpManualSearch = () => {
+    const input = $("help-manual-search");
+    const content = $("help-manual-content");
+    const result = $("help-manual-search-result");
+    if (!input || !content || !result) return;
+
+    const query = input.value || "";
+    const { count, firstMatch } = highlightHelpMatches(content, query);
+    if (!query.trim()) {
+      result.textContent = "Type to search.";
+      return;
+    }
+    result.textContent = count === 1 ? "1 match found." : `${count} matches found.`;
+    if (firstMatch) {
+      firstMatch.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  };
+
+  const openHelpManualModal = async (manualIdOverride) => {
+    const modal = $("help-manual-modal");
+    const title = $("help-manual-title");
+    const content = $("help-manual-content");
+    const searchInput = $("help-manual-search");
+    const searchResult = $("help-manual-search-result");
+    if (!modal || !title || !content) return;
+
+    const select = $("help-manual-select");
+    const manual = getHelpManualById(manualIdOverride || (select ? select.value : ""));
+    helpState.activeManualId = manual.id;
+    if (select) select.value = manual.id;
+
+    try {
+      const markdown = await loadHelpManualMarkdown(manual.id);
+      const parsed = parseMarkdownManual(markdown);
+      const headings = parsed.headings.length
+        ? parsed.headings
+        : [{ id: "manual-top", text: manual.label, level: 1 }];
+      const contentHtml = parsed.headings.length
+        ? parsed.html
+        : `<h1 id="manual-top">${escapeHtml(manual.label)}</h1>\n${parsed.html}`;
+      title.textContent = manual.label;
+      content.innerHTML = contentHtml || "<p class='muted'>This manual is empty.</p>";
+      helpState.headings = headings;
+      renderHelpManualToc(headings);
+      modal.classList.remove("hidden");
+      content.scrollTop = 0;
+      clearHelpHighlights(content);
+      if (searchInput) searchInput.value = "";
+      if (searchResult) searchResult.textContent = "Type to search.";
+      updateHelpTocActive();
+      if (searchInput) searchInput.focus();
+    } catch (error) {
+      await showMessageModal(
+        "Manual Unavailable",
+        `Unable to load ${manual.label}. Please verify the manual files are present.`,
+      );
+    }
+  };
+
+  const closeHelpManualModal = () => {
+    const modal = $("help-manual-modal");
+    const content = $("help-manual-content");
+    if (modal) modal.classList.add("hidden");
+    if (content) clearHelpHighlights(content);
   };
 
   const pushUndo = (undoId, { clearRedo = true } = {}) => {
@@ -620,36 +1061,7 @@ import {
     const title = document.createElement("div");
     title.className = "kanban-card__title";
     title.textContent = cardData.candidate_name || "Unnamed Candidate";
-
-    const actions = document.createElement("div");
-    actions.className = "kanban-card__actions";
-
-    const basicButton = document.createElement("button");
-    basicButton.type = "button";
-    basicButton.className = "kanban-card__pii";
-    basicButton.textContent = "+ Basic Info";
-    basicButton.addEventListener("click", (event) => {
-      event.stopPropagation();
-      openCandidateModal("edit", cardData.column_id, cardData);
-    });
-    basicButton.addEventListener("mousedown", (event) => {
-      event.stopPropagation();
-    });
-
-    const piiButton = document.createElement("button");
-    piiButton.type = "button";
-    piiButton.className = "kanban-card__pii";
-    piiButton.textContent = "+ PII";
-    piiButton.addEventListener("click", (event) => {
-      event.stopPropagation();
-      openPiiModal(cardData);
-    });
-    piiButton.addEventListener("mousedown", (event) => {
-      event.stopPropagation();
-    });
-
-    actions.append(basicButton, piiButton);
-    header.append(title, actions);
+    header.append(title);
 
     const meta = document.createElement("div");
     meta.className = "kanban-card__meta";
@@ -774,6 +1186,7 @@ import {
       normalizeValue(row["Job ID Name"]);
     const overview = createDetailsCard("Candidate Overview", [
       { label: "Job", value: jobText },
+      { label: "REQ ID", value: card.req_id || row["REQ ID"] },
       { label: "Location", value: card.job_location || row["Job Location"] },
       { label: "Manager", value: card.manager || row["Manager"] },
       { label: "Branch", value: card.branch || row["Branch"] },
@@ -818,12 +1231,26 @@ import {
     ]);
     if (licensing) cards.push(licensing);
 
-    const uniforms = createDetailsCard("Uniforms", [
+    const parsedPantsSize = parsePantsSize(row["Pants Size"]);
+    const uniformSizes = createDetailsCard("Uniform Sizes", [
       { label: "Shirt Size", value: row["Shirt Size"] },
-      { label: "Pants Size", value: row["Pants Size"] },
-      { label: "Boots Size", value: row["Boots Size"] },
+      { label: "Waist", value: row["Waist"] || parsedPantsSize.waist },
+      { label: "Inseam", value: row["Inseam"] || parsedPantsSize.inseam },
     ]);
-    if (uniforms) cards.push(uniforms);
+    if (uniformSizes) cards.push(uniformSizes);
+
+    const parsedIssuedPantsSize = parsePantsSize(row["Issued Pants Size"] || row["Pants Size"]);
+    const uniformIssued = createDetailsCard("Uniform Issued", [
+      { label: "Issued", value: isUniformIssued(row["Uniforms Issued"]) ? "Yes" : "" },
+      { label: "Issued Shirt Size", value: row["Issued Shirt Size"] || row["Shirt Size"] },
+      { label: "Issued Shirt Type(s)", value: row["Issued Shirt Type"] || row["Shirt Type"] },
+      { label: "Issued Shirts Given", value: row["Issued Shirts Given"] || row["Shirts Given"] },
+      { label: "Issued Waist", value: row["Issued Waist"] || parsedIssuedPantsSize.waist },
+      { label: "Issued Inseam", value: row["Issued Inseam"] || parsedIssuedPantsSize.inseam },
+      { label: "Issued Pants Type", value: row["Issued Pants Type"] || row["Pants Type"] },
+      { label: "Issued Pants Given", value: row["Issued Pants Given"] || row["Pants Given"] },
+    ]);
+    if (uniformIssued) cards.push(uniformIssued);
 
     const identification = createDetailsCard("Identification", [
       { label: "ID Type", value: row["ID Type"] },
@@ -889,14 +1316,46 @@ import {
     setPanelVisibility($("details-drawer"), false);
   };
 
+  const getDetailsSelectedCard = () => {
+    const cardId = state.kanban.detailsCardId;
+    if (!cardId) return null;
+    return state.kanban.cards.find((item) => item.uuid === cardId) || null;
+  };
+
+  const openDetailsBasicInfo = () => {
+    const card = getDetailsSelectedCard();
+    if (!card) return;
+    openCandidateModal("edit", card.column_id, card);
+  };
+
+  const openDetailsPii = () => {
+    const card = getDetailsSelectedCard();
+    if (!card) return;
+    openPiiModal(card);
+  };
+
+  const openDetailsEmailTemplate = async () => {
+    if (!state.kanban.detailsCardId) return;
+    await refreshDetailsRow(state.kanban.detailsCardId);
+    openEmailTemplateModal();
+  };
+
   const openProcessModal = () => {
     if (!state.kanban.detailsCardId) return;
     const modal = $("process-modal");
     const arrival = $("process-arrival");
     const departure = $("process-departure");
+    const branch = $("process-branch");
+    const card = state.kanban.cards.find((item) => item.uuid === state.kanban.detailsCardId);
+    const row = state.kanban.detailsRow || {};
     if (!modal) return;
     if (arrival) arrival.value = "";
     if (departure) departure.value = "";
+    if (branch) {
+      const preferredBranch = card ? card.branch : row["Branch"];
+      const nextBranch = ["Salem", "Portland"].includes(preferredBranch) ? preferredBranch : "";
+      branch.value = nextBranch;
+    }
     modal.classList.remove("hidden");
   };
 
@@ -957,13 +1416,19 @@ import {
     if (!candidateId) return;
     const arrivalInput = $("process-arrival");
     const departureInput = $("process-departure");
+    const branchInput = $("process-branch");
     const arrival = sanitizeTimeInput(arrivalInput);
     const departure = sanitizeTimeInput(departureInput);
+    const branch = branchInput ? branchInput.value.trim() : "";
     if (arrival.length !== 4 || departure.length !== 4) {
       await showMessageModal(
         "Invalid Time",
         "Enter arrival and departure time as 4 digits in 24H format (e.g., 0824).",
       );
+      return;
+    }
+    if (!branch) {
+      await showMessageModal("Missing Branch", "Branch is required when processing a candidate.");
       return;
     }
 
@@ -979,7 +1444,7 @@ import {
         invalidateKanbanCache();
         renderKanbanBoard();
       },
-      request: () => workflowApi.kanbanProcessCandidate({ candidateId, arrival, departure }),
+      request: () => workflowApi.kanbanProcessCandidate({ candidateId, arrival, departure, branch }),
       onSuccess: (payload) => {
         if (payload && payload.cards) {
           state.kanban.cards = payload.cards;
@@ -1345,6 +1810,7 @@ import {
     const phoneInput = $("candidate-phone");
     const emailInput = $("candidate-email");
     const jobIdInput = $("candidate-job-id");
+    const reqIdInput = $("candidate-req-id");
     const jobNameInput = $("candidate-job-name");
     const jobLocationInput = $("candidate-job-location");
     const managerInput = $("candidate-manager");
@@ -1372,6 +1838,7 @@ import {
       fill(phoneInput, "");
       fill(emailInput, "");
       fill(jobIdInput, cardData.job_id);
+      fill(reqIdInput, cardData.req_id);
       fill(jobNameInput, cardData.job_name);
       fill(jobLocationInput, cardData.job_location);
       fill(managerInput, cardData.manager);
@@ -1401,6 +1868,7 @@ import {
       fill(phoneInput, "");
       fill(emailInput, "");
       fill(jobIdInput, "");
+      fill(reqIdInput, "");
       fill(jobNameInput, "");
       fill(jobLocationInput, "");
       fill(managerInput, "");
@@ -1513,6 +1981,371 @@ import {
     }
   };
 
+  const UNIFORM_ISSUED_COUNT_OPTIONS = ["1", "2", "3", "4"];
+  const UNIFORM_SHIRT_SIZE_OPTIONS = [
+    "XS",
+    "XM",
+    "S",
+    "M",
+    "L",
+    "XL",
+    "2XL",
+    "3XL",
+    "4XL",
+    "5XL",
+    "6XL",
+  ];
+  const UNIFORM_WAIST_OPTIONS = Array.from({ length: 36 }, (_value, index) => String(20 + index));
+  const UNIFORM_INSEAM_OPTIONS = Array.from({ length: 10 }, (_value, index) => String(27 + index));
+  const UNIFORM_ADD_SHIRT_SIZE_OPTIONS = [...UNIFORM_SHIRT_SIZE_OPTIONS];
+  let piiUniformInventoryContext = null;
+  let emailTemplateContext = null;
+  let emailTemplateContextOverride = null;
+  let emailTemplateBackdropMouseDown = false;
+  let emailTemplateAutoRefreshTimer = null;
+  let emailTemplateAutoRefreshInFlight = false;
+  let emailTemplateLastGeneratedDraft = null;
+
+  const normalizeUniformInventoryType = (value) => {
+    const text = String(value || "")
+      .trim()
+      .toLowerCase();
+    if (text === "shirts") return "shirt";
+    if (text === "pants") return "pant";
+    if (text === "shirt") return "shirt";
+    if (text === "pant") return "pant";
+    return text;
+  };
+
+  const parseUniformInventoryQuantity = (value) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return 0;
+    const whole = Math.floor(num);
+    if (whole <= 0) return 0;
+    return whole;
+  };
+
+  const parseUniformTypeListJson = (text) => {
+    if (!text || text[0] !== "[" || text[text.length - 1] !== "]") return null;
+    try {
+      const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed)) return null;
+      return parsed.map((item) => String(item || "").trim()).filter(Boolean);
+    } catch (_error) {
+      return null;
+    }
+  };
+
+  const splitUniformTypeList = (value, allowedOptions = null) => {
+    if (Array.isArray(value)) {
+      return value.map((item) => String(item || "").trim()).filter(Boolean);
+    }
+    const text = String(value || "").trim();
+    if (!text) return [];
+    const parsedJson = parseUniformTypeListJson(text);
+    if (parsedJson) return parsedJson;
+
+    const allowed = new Set(
+      Array.from(allowedOptions || [])
+        .map((item) => String(item || "").trim())
+        .filter(Boolean),
+    );
+    if (allowed.size && allowed.has(text)) return [text];
+
+    return text
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  };
+
+  const normalizeUniformTypeList = (value, allowedOptions) => {
+    const allowed = new Set(allowedOptions || []);
+    const seen = new Set();
+    const sourceValues = Array.isArray(value) ? value : splitUniformTypeList(value, allowed);
+    return sourceValues.filter((item) => {
+      if (allowed.size && !allowed.has(item)) return false;
+      if (seen.has(item)) return false;
+      seen.add(item);
+      return true;
+    });
+  };
+
+  const serializeUniformTypeList = (value) => {
+    const normalized = normalizeUniformTypeList(value, null);
+    if (!normalized.length) return "";
+    return JSON.stringify(normalized);
+  };
+
+  const toSortedUniqueList = (values, numeric = false) => {
+    const items = Array.from(new Set((values || []).map((value) => String(value || "").trim()).filter(Boolean)));
+    if (numeric) {
+      return items.sort((a, b) => Number(a) - Number(b));
+    }
+    return items.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+  };
+
+  const getMapValues = (map, key) => {
+    if (!map || !key) return [];
+    const values = map.get(String(key).trim());
+    return values ? [...values] : [];
+  };
+
+  const getUniformNoneMessage = (kind, branch) => {
+    const safeBranch = String(branch || "").trim();
+    const suffix = safeBranch ? ` for ${safeBranch}.` : ".";
+    if (kind === "shirt") return `No shirts to give out${suffix}`;
+    return `No pants to give out${suffix}`;
+  };
+
+  const setSingleSelectOptions = (
+    select,
+    { options, placeholder, emptyText, value, preserveOrder = false },
+  ) => {
+    if (!select) return;
+    const normalized = preserveOrder
+      ? Array.from(
+          new Set(
+            (options || [])
+              .map((item) => String(item || "").trim())
+              .filter(Boolean),
+          ),
+        )
+      : toSortedUniqueList(options);
+    select.innerHTML = "";
+    if (!normalized.length) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = emptyText;
+      select.appendChild(option);
+      select.value = "";
+      select.disabled = true;
+      return;
+    }
+    const prompt = document.createElement("option");
+    prompt.value = "";
+    prompt.textContent = placeholder;
+    select.appendChild(prompt);
+    normalized.forEach((item) => {
+      const option = document.createElement("option");
+      option.value = item;
+      option.textContent = item;
+      select.appendChild(option);
+    });
+    select.disabled = false;
+    select.value = normalized.includes(value) ? value : "";
+  };
+
+  const setMultiSelectOptions = (select, { options, emptyText, values }) => {
+    if (!select) return;
+    const normalized = toSortedUniqueList(options);
+    select.innerHTML = "";
+    if (!normalized.length) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = emptyText;
+      option.disabled = true;
+      select.appendChild(option);
+      select.disabled = true;
+      return;
+    }
+    normalized.forEach((item) => {
+      const option = document.createElement("option");
+      option.value = item;
+      option.textContent = item;
+      select.appendChild(option);
+    });
+    select.disabled = false;
+    setMultiSelectValues(select, normalizeUniformTypeList(values || [], normalized));
+  };
+
+  const setMultiSelectValues = (selectElement, values) => {
+    if (!selectElement) return;
+    const targetValues = new Set(Array.isArray(values) ? values : []);
+    Array.from(selectElement.options).forEach((option) => {
+      option.selected = targetValues.has(option.value);
+    });
+  };
+
+  const getMultiSelectValues = (selectElement, allowedOptions = null) => {
+    if (!selectElement || selectElement.disabled) return [];
+    const allowed = allowedOptions ? new Set(allowedOptions) : null;
+    const selected = Array.from(selectElement.selectedOptions)
+      .map((option) => option.value.trim())
+      .filter((value) => {
+        if (!value) return false;
+        if (allowed && !allowed.has(value)) return false;
+        return true;
+      });
+    const seen = new Set();
+    return selected.filter((value) => {
+      if (seen.has(value)) return false;
+      seen.add(value);
+      return true;
+    });
+  };
+
+  const isUniformIssued = (value) => String(value || "").trim().toLowerCase() === "yes";
+
+  const buildPantsSize = (waist, inseam) => {
+    if (!waist || !inseam) return "";
+    return `${waist}x${inseam}`;
+  };
+
+  const normalizeUniformMeasurement = (value) => sanitizeNumbers(String(value || "")).slice(0, 2);
+
+  const parsePantsSize = (value) => {
+    const text = String(value || "").trim();
+    if (!text) return { waist: "", inseam: "" };
+    const strictMatch = text.match(/^(\d{1,2})\s*[xX]\s*(\d{1,2})$/);
+    if (strictMatch) return { waist: strictMatch[1], inseam: strictMatch[2] };
+    const looseMatch = text.match(/(\d{1,2})\D+(\d{1,2})/);
+    if (looseMatch) return { waist: looseMatch[1], inseam: looseMatch[2] };
+    return { waist: "", inseam: "" };
+  };
+
+  const buildPiiUniformInventoryContext = (rows, branch) => {
+    const safeBranch = String(branch || "").trim();
+    const normalizedBranch = safeBranch.toLowerCase();
+    const shirtSizes = new Set();
+    const waists = new Set();
+    const inseams = new Set();
+    const shirtAlterationsAll = new Set();
+    const pantsAlterationsAll = new Set();
+    const shirtAlterationsBySize = new Map();
+    const pantsAlterationsBySize = new Map();
+
+    (Array.isArray(rows) ? rows : []).forEach((row) => {
+      const rowBranch = String((row && row.Branch) || "").trim();
+      if (normalizedBranch && rowBranch.toLowerCase() !== normalizedBranch) return;
+      const rawType = normalizeUniformInventoryType(row && row.Type);
+      const size = String((row && row.Size) || "").trim();
+      const parsed = parsePantsSize(size);
+      const storedWaist = normalizeUniformMeasurement(row && row.Waist);
+      const storedInseam = normalizeUniformMeasurement(row && row.Inseam);
+      const waist = storedWaist || normalizeUniformMeasurement(parsed.waist);
+      const inseam = storedInseam || normalizeUniformMeasurement(parsed.inseam);
+      const hasPantsMeasurements = !!(waist && inseam);
+      const alteration = String((row && row.Alteration) || "").trim();
+      const quantity = parseUniformInventoryQuantity(row && row.Quantity);
+      if (quantity <= 0) return;
+
+      let type = rawType;
+      if (rawType === "shirt" && hasPantsMeasurements) type = "pant";
+      if (!type) {
+        if (hasPantsMeasurements) {
+          type = "pant";
+        } else if (size) {
+          type = "shirt";
+        }
+      }
+      if (!type) return;
+
+      if (type === "shirt") {
+        if (!size) return;
+        shirtSizes.add(size);
+        if (alteration) {
+          shirtAlterationsAll.add(alteration);
+          if (!shirtAlterationsBySize.has(size)) shirtAlterationsBySize.set(size, new Set());
+          shirtAlterationsBySize.get(size).add(alteration);
+        }
+      } else if (type === "pant") {
+        const pantsKey = buildPantsSize(waist, inseam);
+        if (!pantsKey) return;
+        if (waist) waists.add(waist);
+        if (inseam) inseams.add(inseam);
+        if (alteration) {
+          pantsAlterationsAll.add(alteration);
+          if (!pantsAlterationsBySize.has(pantsKey)) pantsAlterationsBySize.set(pantsKey, new Set());
+          pantsAlterationsBySize.get(pantsKey).add(alteration);
+        }
+      }
+    });
+
+    return {
+      branch: safeBranch,
+      shirtSizes: toSortedUniqueList([...shirtSizes]),
+      waists: toSortedUniqueList([...waists], true),
+      inseams: toSortedUniqueList([...inseams], true),
+      shirtAlterationsAll: toSortedUniqueList([...shirtAlterationsAll]),
+      pantsAlterationsAll: toSortedUniqueList([...pantsAlterationsAll]),
+      shirtAlterationsBySize,
+      pantsAlterationsBySize,
+      hasShirts: shirtSizes.size > 0,
+      hasPants: waists.size > 0 || inseams.size > 0,
+    };
+  };
+
+  const loadPiiUniformInventoryContext = async (branch) => {
+    try {
+      const table = await workflowApi.dbGetTable("uniform_inventory", "current");
+      return buildPiiUniformInventoryContext((table && table.rows) || [], branch);
+    } catch (error) {
+      return buildPiiUniformInventoryContext([], branch);
+    }
+  };
+
+  const updatePiiIssuedTypeOptions = ({ shirtTypes = null, pantsType = null } = {}) => {
+    const shirtSizeInput = $("pii-issued-shirt-size");
+    const waistInput = $("pii-issued-waist");
+    const inseamInput = $("pii-issued-inseam");
+    const shirtTypeInput = $("pii-shirt-type");
+    const pantsTypeInput = $("pii-pants-type");
+    const context = piiUniformInventoryContext || buildPiiUniformInventoryContext([], "");
+    const shirtSize = shirtSizeInput ? shirtSizeInput.value.trim() : "";
+    const waist = waistInput ? waistInput.value.trim() : "";
+    const inseam = inseamInput ? inseamInput.value.trim() : "";
+    const pantsSize = buildPantsSize(waist, inseam);
+    const shirtOptions = shirtSize
+      ? toSortedUniqueList(getMapValues(context.shirtAlterationsBySize, shirtSize))
+      : context.shirtAlterationsAll;
+    const pantsOptions = pantsSize
+      ? toSortedUniqueList(getMapValues(context.pantsAlterationsBySize, pantsSize))
+      : context.pantsAlterationsAll;
+    const currentShirtTypes = shirtTypes || getMultiSelectValues(shirtTypeInput);
+    const currentPantsType =
+      pantsType !== null && pantsType !== undefined
+        ? String(pantsType || "").trim()
+        : pantsTypeInput
+          ? pantsTypeInput.value.trim()
+          : "";
+
+    setMultiSelectOptions(shirtTypeInput, {
+      options: shirtOptions,
+      emptyText: getUniformNoneMessage("shirt", context.branch),
+      values: currentShirtTypes,
+    });
+    setSingleSelectOptions(pantsTypeInput, {
+      options: pantsOptions,
+      placeholder: "Pants Type",
+      emptyText: getUniformNoneMessage("pant", context.branch),
+      value: currentPantsType,
+    });
+  };
+
+  const toggleUniformIssuedFields = (issued, { clearValues = false } = {}) => {
+    const fields = $("pii-issued-fields");
+    if (fields) fields.classList.toggle("hidden", !issued);
+    if (issued) {
+      updatePiiIssuedTypeOptions();
+    }
+    if (!issued && clearValues) {
+      const shirtsGiven = $("pii-shirts-given");
+      const pantsGiven = $("pii-pants-given");
+      const pantsType = $("pii-pants-type");
+      const shirtType = $("pii-shirt-type");
+      const issuedShirtSize = $("pii-issued-shirt-size");
+      const issuedWaist = $("pii-issued-waist");
+      const issuedInseam = $("pii-issued-inseam");
+      if (shirtsGiven) shirtsGiven.value = "";
+      if (pantsGiven) pantsGiven.value = "";
+      if (pantsType) pantsType.value = "";
+      if (issuedShirtSize) issuedShirtSize.value = "";
+      if (issuedWaist) issuedWaist.value = "";
+      if (issuedInseam) issuedInseam.value = "";
+      setMultiSelectValues(shirtType, []);
+    }
+  };
+
   const openPiiModal = async (cardData) => {
     const modal = $("pii-modal");
     if (!modal || !cardData) return;
@@ -1532,6 +2365,8 @@ import {
     const row = (result && result.row) || {};
     const displayName =
       result && result.candidateName ? result.candidateName : cardData.candidate_name;
+    const uniformBranch = String(cardData.branch || row["Branch"] || "").trim();
+    piiUniformInventoryContext = await loadPiiUniformInventoryContext(uniformBranch);
 
     if (title) title.textContent = getPossessiveName(displayName);
 
@@ -1555,9 +2390,72 @@ import {
     setValue("pii-account-type", row["Account Type"]);
     setValue("pii-routing", row["Routing Number"]);
     setValue("pii-account", row["Account Number"]);
-    setValue("pii-shirt", row["Shirt Size"]);
-    setValue("pii-pants", row["Pants Size"]);
-    setValue("pii-boots", row["Boots Size"]);
+    const parsedPants = parsePantsSize(row["Pants Size"]);
+    const waistValue = String(row["Waist"] || "").trim() || parsedPants.waist;
+    const inseamValue = String(row["Inseam"] || "").trim() || parsedPants.inseam;
+    const parsedIssuedPants = parsePantsSize(row["Issued Pants Size"] || row["Pants Size"]);
+    const issuedShirtSizeValue =
+      String(row["Issued Shirt Size"] || "").trim() || String(row["Shirt Size"] || "").trim();
+    const issuedWaistValue =
+      String(row["Issued Waist"] || "").trim() || parsedIssuedPants.waist || waistValue;
+    const issuedInseamValue =
+      String(row["Issued Inseam"] || "").trim() || parsedIssuedPants.inseam || inseamValue;
+    const context = piiUniformInventoryContext || buildPiiUniformInventoryContext([], uniformBranch);
+    setSingleSelectOptions($("pii-shirt"), {
+      options: UNIFORM_SHIRT_SIZE_OPTIONS,
+      placeholder: "Shirt Size",
+      emptyText: "No shirt sizes available.",
+      value: String(row["Shirt Size"] || "").trim(),
+      preserveOrder: true,
+    });
+    setSingleSelectOptions($("pii-waist"), {
+      options: UNIFORM_WAIST_OPTIONS,
+      placeholder: "Waist",
+      emptyText: "No waist sizes available.",
+      value: waistValue,
+      preserveOrder: true,
+    });
+    setSingleSelectOptions($("pii-inseam"), {
+      options: UNIFORM_INSEAM_OPTIONS,
+      placeholder: "Inseam",
+      emptyText: "No inseam sizes available.",
+      value: inseamValue,
+      preserveOrder: true,
+    });
+    setSingleSelectOptions($("pii-issued-shirt-size"), {
+      options: UNIFORM_SHIRT_SIZE_OPTIONS,
+      placeholder: "Issued Shirt Size",
+      emptyText: "No shirt sizes available.",
+      value: issuedShirtSizeValue,
+      preserveOrder: true,
+    });
+    setSingleSelectOptions($("pii-issued-waist"), {
+      options: UNIFORM_WAIST_OPTIONS,
+      placeholder: "Issued Waist",
+      emptyText: "No waist sizes available.",
+      value: issuedWaistValue,
+      preserveOrder: true,
+    });
+    setSingleSelectOptions($("pii-issued-inseam"), {
+      options: UNIFORM_INSEAM_OPTIONS,
+      placeholder: "Issued Inseam",
+      emptyText: "No inseam sizes available.",
+      value: issuedInseamValue,
+      preserveOrder: true,
+    });
+    const uniformsIssuedCheckbox = $("pii-uniforms-issued");
+    if (uniformsIssuedCheckbox) {
+      uniformsIssuedCheckbox.checked = isUniformIssued(row["Uniforms Issued"]);
+    }
+    updatePiiIssuedTypeOptions({
+      shirtTypes: splitUniformTypeList(
+        row["Issued Shirt Type"] || row["Shirt Type"],
+        context.shirtAlterationsAll,
+      ),
+      pantsType: row["Issued Pants Type"] || row["Pants Type"],
+    });
+    setValue("pii-shirts-given", row["Issued Shirts Given"] || row["Shirts Given"]);
+    setValue("pii-pants-given", row["Issued Pants Given"] || row["Pants Given"]);
     setValue("pii-emergency-name", row["Emergency Contact Name"]);
     setValue("pii-emergency-relationship", row["Emergency Contact Relationship"]);
     setValue("pii-emergency-phone", row["Emergency Contact Phone"]);
@@ -1575,6 +2473,7 @@ import {
     updateBackgroundMvrFlag(providerValue);
     toggleLicenseSections(row["License Type"]);
     toggleIdFields(row["ID Type"]);
+    toggleUniformIssuedFields(uniformsIssuedCheckbox ? uniformsIssuedCheckbox.checked : false);
 
     modal.classList.remove("hidden");
   };
@@ -1583,10 +2482,19 @@ import {
     const modal = $("pii-modal");
     if (modal) modal.classList.add("hidden");
     state.kanban.piiCandidateId = null;
+    piiUniformInventoryContext = null;
   };
 
   const collectPiiPayload = () => {
     const value = (id) => ($(id) ? $(id).value.trim() : "");
+    const uniformsIssuedCheckbox = $("pii-uniforms-issued");
+    const uniformsIssued = !!(uniformsIssuedCheckbox && uniformsIssuedCheckbox.checked);
+    const shirtTypes = getMultiSelectValues($("pii-shirt-type"));
+    const waist = value("pii-waist");
+    const inseam = value("pii-inseam");
+    const issuedShirtSize = value("pii-issued-shirt-size");
+    const issuedWaist = value("pii-issued-waist");
+    const issuedInseam = value("pii-issued-inseam");
     return {
       "Background Provider": value("pii-background-provider"),
       "Background Cleared Date": value("pii-background-date"),
@@ -1604,8 +2512,23 @@ import {
       "Routing Number": value("pii-routing"),
       "Account Number": value("pii-account"),
       "Shirt Size": value("pii-shirt"),
-      "Pants Size": value("pii-pants"),
-      "Boots Size": value("pii-boots"),
+      Waist: waist,
+      Inseam: inseam,
+      "Pants Size": buildPantsSize(waist, inseam),
+      "Issued Shirt Size": uniformsIssued ? issuedShirtSize : "",
+      "Issued Waist": uniformsIssued ? issuedWaist : "",
+      "Issued Inseam": uniformsIssued ? issuedInseam : "",
+      "Issued Pants Size": uniformsIssued ? buildPantsSize(issuedWaist, issuedInseam) : "",
+      "Uniforms Issued": uniformsIssued ? "Yes" : "",
+      "Issued Shirt Type": uniformsIssued ? serializeUniformTypeList(shirtTypes) : "",
+      "Issued Shirts Given": uniformsIssued ? value("pii-shirts-given") : "",
+      "Issued Pants Type": uniformsIssued ? value("pii-pants-type") : "",
+      "Issued Pants Given": uniformsIssued ? value("pii-pants-given") : "",
+      "Shirt Type": uniformsIssued ? serializeUniformTypeList(shirtTypes) : "",
+      "Shirts Given": uniformsIssued ? value("pii-shirts-given") : "",
+      "Pants Type": uniformsIssued ? value("pii-pants-type") : "",
+      "Pants Given": uniformsIssued ? value("pii-pants-given") : "",
+      "Boots Size": "",
       "Emergency Contact Name": value("pii-emergency-name"),
       "Emergency Contact Relationship": value("pii-emergency-relationship"),
       "Emergency Contact Phone": value("pii-emergency-phone"),
@@ -1694,6 +2617,154 @@ import {
       }
     }
 
+    const context = piiUniformInventoryContext || buildPiiUniformInventoryContext([], "");
+    const shirtSizeValue = String(payload["Shirt Size"] || "").trim();
+    const waistValue = String(payload["Waist"] || "").trim();
+    const inseamValue = String(payload["Inseam"] || "").trim();
+    const issuedShirtSizeValue = String(payload["Issued Shirt Size"] || "").trim();
+    const issuedWaistValue = String(payload["Issued Waist"] || "").trim();
+    const issuedInseamValue = String(payload["Issued Inseam"] || "").trim();
+    const issuedShirtsGivenValue = String(
+      payload["Issued Shirts Given"] || payload["Shirts Given"] || "",
+    ).trim();
+    const issuedPantsGivenValue = String(
+      payload["Issued Pants Given"] || payload["Pants Given"] || "",
+    ).trim();
+    const issuedPantsTypeValue = String(
+      payload["Issued Pants Type"] || payload["Pants Type"] || "",
+    ).trim();
+    const issuedShirtTypeValue = String(
+      payload["Issued Shirt Type"] || payload["Shirt Type"] || "",
+    ).trim();
+    const issuedPantsSize = buildPantsSize(issuedWaistValue, issuedInseamValue);
+    const allowedShirtSizes = new Set(UNIFORM_SHIRT_SIZE_OPTIONS);
+    const allowedWaists = new Set(UNIFORM_WAIST_OPTIONS);
+    const allowedInseams = new Set(UNIFORM_INSEAM_OPTIONS);
+    const allowedShirtTypes = new Set(
+      issuedShirtSizeValue
+        ? getMapValues(context.shirtAlterationsBySize, issuedShirtSizeValue)
+        : context.shirtAlterationsAll,
+    );
+    const allowedPantsTypes = new Set(
+      issuedPantsSize
+        ? getMapValues(context.pantsAlterationsBySize, issuedPantsSize)
+        : context.pantsAlterationsAll,
+    );
+    const isValidDropdownValue = (value, allowedOptions) => {
+      if (!value) return true;
+      const text = String(value);
+      if (allowedOptions instanceof Set) return allowedOptions.has(text);
+      if (Array.isArray(allowedOptions)) return allowedOptions.includes(text);
+      return false;
+    };
+
+    if (!isValidDropdownValue(shirtSizeValue, allowedShirtSizes)) {
+      await showMessageModal("Invalid Shirt Size", "Shirt Size must be selected from the dropdown.");
+      return false;
+    }
+    if (!isValidDropdownValue(waistValue, allowedWaists)) {
+      await showMessageModal("Invalid Waist", "Waist must be selected from the dropdown.");
+      return false;
+    }
+    if (!isValidDropdownValue(inseamValue, allowedInseams)) {
+      await showMessageModal("Invalid Inseam", "Inseam must be selected from the dropdown.");
+      return false;
+    }
+    if (!isValidDropdownValue(issuedShirtSizeValue, allowedShirtSizes)) {
+      await showMessageModal("Invalid Issued Shirt Size", "Issued Shirt Size must be selected from the dropdown.");
+      return false;
+    }
+    if (!isValidDropdownValue(issuedWaistValue, allowedWaists)) {
+      await showMessageModal("Invalid Issued Waist", "Issued Waist must be selected from the dropdown.");
+      return false;
+    }
+    if (!isValidDropdownValue(issuedInseamValue, allowedInseams)) {
+      await showMessageModal("Invalid Issued Inseam", "Issued Inseam must be selected from the dropdown.");
+      return false;
+    }
+    if (!isValidDropdownValue(issuedShirtsGivenValue, UNIFORM_ISSUED_COUNT_OPTIONS)) {
+      await showMessageModal(
+        "Invalid Shirts Given",
+        "Issued Shirts Given must be selected as a number from 1 to 4.",
+      );
+      return false;
+    }
+    if (!isValidDropdownValue(issuedPantsGivenValue, UNIFORM_ISSUED_COUNT_OPTIONS)) {
+      await showMessageModal(
+        "Invalid Pants Given",
+        "Issued Pants Given must be selected as a number from 1 to 4.",
+      );
+      return false;
+    }
+    if (!isValidDropdownValue(issuedPantsTypeValue, allowedPantsTypes)) {
+      await showMessageModal(
+        "Invalid Pants Type",
+        "Issued Pants Type must match available pants inventory.",
+      );
+      return false;
+    }
+
+    const shirtTypes = splitUniformTypeList(issuedShirtTypeValue, allowedShirtTypes);
+    if (shirtTypes.some((type) => !allowedShirtTypes.has(type))) {
+      await showMessageModal(
+        "Invalid Shirt Type",
+        "Issued Shirt Type(s) must match available shirt inventory.",
+      );
+      return false;
+    }
+
+    const uniformsIssued = isUniformIssued(payload["Uniforms Issued"]);
+    if (payload["Uniforms Issued"] && !uniformsIssued) {
+      await showMessageModal("Invalid Uniform Status", "Uniforms Issued must come from the checkbox.");
+      return false;
+    }
+    if (uniformsIssued) {
+      if (!issuedShirtsGivenValue && !issuedPantsGivenValue) {
+        await showMessageModal(
+          "Missing Uniform Counts",
+          "Select Issued Shirts Given and/or Issued Pants Given when Uniforms Issued is checked.",
+        );
+        return false;
+      }
+      if (issuedShirtsGivenValue) {
+        if (!payload["Issued Shirt Size"]) {
+          await showMessageModal(
+            "Missing Issued Shirt Size",
+            "Select Issued Shirt Size when shirts are issued.",
+          );
+          return false;
+        }
+        if (!allowedShirtTypes.size) {
+          await showMessageModal("No Shirts Available", getUniformNoneMessage("shirt", context.branch));
+          return false;
+        }
+        if (!shirtTypes.length) {
+          await showMessageModal("Missing Shirt Type", "Select one or more Issued Shirt Type(s).");
+          return false;
+        }
+      }
+      if (issuedPantsGivenValue) {
+        if (!payload["Issued Waist"] || !payload["Issued Inseam"]) {
+          await showMessageModal(
+            "Missing Issued Pants Size",
+            "Select Issued Waist and Issued Inseam when pants are issued.",
+          );
+          return false;
+        }
+        if (!allowedPantsTypes.size) {
+          await showMessageModal(
+            "No Pants Available",
+            `No pants to give out${context.branch ? ` for ${context.branch}` : ""} in ${issuedPantsSize}.`,
+          );
+          return false;
+        }
+        if (!issuedPantsTypeValue) {
+          await showMessageModal("Missing Pants Type", "Select Issued Pants Type when pants are issued.");
+          return false;
+        }
+      }
+    }
+
     return true;
   };
 
@@ -1727,6 +2798,7 @@ import {
     const phoneInput = $("candidate-phone");
     const emailInput = $("candidate-email");
     const jobIdInput = $("candidate-job-id");
+    const reqIdInput = $("candidate-req-id");
     const jobNameInput = $("candidate-job-name");
     const jobLocationInput = $("candidate-job-location");
     const managerInput = $("candidate-manager");
@@ -1746,6 +2818,7 @@ import {
       contact_phone: phoneInput ? phoneInput.value.trim() : "",
       contact_email: emailInput ? emailInput.value.trim() : "",
       job_id: jobIdInput ? jobIdInput.value.trim() : "",
+      req_id: reqIdInput ? reqIdInput.value.trim() : "",
       job_name: jobNameInput ? jobNameInput.value.trim() : "",
       job_location: jobLocationInput ? jobLocationInput.value.trim() : "",
       manager: managerInput ? managerInput.value.trim() : "",
@@ -1987,12 +3060,30 @@ import {
       });
     });
 
-    const alphaNumInputs = [$("pii-shirt"), $("pii-pants"), $("pii-boots"), $("pii-nh-id")].filter(
-      Boolean,
-    );
-    alphaNumInputs.forEach((input) => {
-      input.addEventListener("input", () => {
-        input.value = sanitizeAlphaNum(input.value);
+    const nhId = $("pii-nh-id");
+    if (nhId) {
+      nhId.addEventListener("input", () => {
+        nhId.value = sanitizeAlphaNum(nhId.value);
+      });
+    }
+
+    const uniformsIssued = $("pii-uniforms-issued");
+    if (uniformsIssued) {
+      uniformsIssued.addEventListener("change", () => {
+        toggleUniformIssuedFields(uniformsIssued.checked, {
+          clearValues: !uniformsIssued.checked,
+        });
+      });
+    }
+
+    const uniformSizeInputs = [
+      $("pii-issued-shirt-size"),
+      $("pii-issued-waist"),
+      $("pii-issued-inseam"),
+    ].filter(Boolean);
+    uniformSizeInputs.forEach((input) => {
+      input.addEventListener("change", () => {
+        updatePiiIssuedTypeOptions();
       });
     });
 
@@ -2372,6 +3463,1478 @@ import {
     }
   };
 
+  const INITIAL_COMPLIANCE_BASE_ITEMS = [
+    "Employee Master file, Drug Test, & Paperwork",
+    "MVR in WT",
+    "DL in WT",
+  ];
+
+  const AUS_COMPLIANCE_BASE_ITEMS = ["CORE.", "1st Amendment Edge Training"];
+
+  const CLIENT_COMPLIANCE_SECTIONS = [
+    {
+      id: "amazon",
+      title: "Completed Amazon Compliance Items:",
+      matchers: [/\bamazon\b/i, /\bamzl\b/i, /\bamzn\b/i],
+      items: ["ASHI", "Heliaus SP Training", "Driver Training (Edge)"],
+    },
+    {
+      id: "bae",
+      title: "Completed BAE Compliance Items:",
+      matchers: [/\bbae\b/i],
+      items: ["4 NISP Courses in Edge", "Driver Training"],
+    },
+    {
+      id: "fedex",
+      title: "Completed FedEx Compliance Items:",
+      matchers: [/\bfedex\b/i],
+      items: ["FedEx Trainings in Edge"],
+    },
+    {
+      id: "schneider-mercury",
+      title: "Completed Schneider/Mercury Edge Items:",
+      matchers: [/\bschneider\b/i, /\bmercury\b/i],
+      items: [
+        "School of Manufacturing Essentials",
+        "Access Control Training",
+        "Ready Response",
+        "Ashi (Part One)",
+      ],
+    },
+  ];
+
+  const EDGE_PORTAL_URL = "https://allieduniversaledge.exceedlms.com/";
+  const EDGE_URL_CORE =
+    "https://allieduniversaledge.exceedlms.com/student/path/235757-allied-universal-core-training-program?sid=23282cc8-cf0f-40e6-aee3-0247c063d22b&sid_i=0";
+  const EDGE_URL_FIRST_AMENDMENT =
+    "https://allieduniversaledge.exceedlms.com/student/activity/466290-the-right-of-the-people?sid=751dd690-0334-4ac9-b316-0944e6fc4f7c&sid_i=0";
+  const EDGE_URL_DRIVER =
+    "https://allieduniversaledge.exceedlms.com/student/path/156722-driver-training-program?sid=31fd0473-d838-42a3-8bcc-a1ed22194a43&sid_i=0";
+  const EDGE_URL_DRIVER_ONLY =
+    "https://allieduniversaledge.exceedlms.com/student/path/156722-driver-training-program?sid=cead8730-124e-4e2b-bdde-36eca537b3d1&sid_i=1";
+
+  const EDGE_COMMON_LINKS = [
+    { label: "Allied Universal Core Competencies", url: EDGE_URL_CORE },
+    { label: "Allied Universal 1st Amendment Rights Training", url: EDGE_URL_FIRST_AMENDMENT },
+  ];
+
+  const EDGE_TRACK_LINKS = {
+    amazon: [
+      {
+        label: "Heliaus Training",
+        url: "https://allieduniversaledge.exceedlms.com/student/activity/443135-security-professional-heliaus-training?sid=423369e9-382c-4f7f-b0c1-d2e6708eb6bc&sid_i=0",
+      },
+      {
+        label: "CPR Training (ASHI Part One)",
+        url: "https://allieduniversaledge.exceedlms.com/student/activity/410737-ashi-part-one-cpr-fa-aed-all-ages-online-course?sid=b5989ca8-49c1-4c15-967f-12048f94751c&sid_i=1",
+      },
+      { label: "Driver Training", url: EDGE_URL_DRIVER },
+    ],
+    bae: [
+      {
+        label: "NISP Training 1",
+        url: "https://allieduniversaledge.exceedlms.com/student/path/17061-nisp-initial-security-briefing?sid=5cc6f81a-9439-44e7-97db-65665be35d66&sid_i=0",
+      },
+      {
+        label: "NISP Training 2",
+        url: "https://allieduniversaledge.exceedlms.com/student/path/1266313-nisp-reporting-requirements-at-a-glance-cdse-short-series?sid=5cc6f81a-9439-44e7-97db-65665be35d66&sid_i=1",
+      },
+      {
+        label: "NISP Training 3",
+        url: "https://allieduniversaledge.exceedlms.com/student/path/1266260-nisp-adverse-information-reporting-cdse-short-series?sid=881299e9-bf14-4078-a00b-89546e3575c3&sid_i=0",
+      },
+      {
+        label: "NISP Training 4",
+        url: "https://allieduniversaledge.exceedlms.com/student/activity/238514-cdse-s-insider-threat-awareness-course?sid=98a1dff2-80df-4b37-a8cb-7e6a47e29a6b&sid_i=0",
+      },
+      { label: "Driver Training", url: EDGE_URL_DRIVER },
+    ],
+    fedex: [
+      {
+        label: "Freight Training",
+        url: "https://allieduniversaledge.exceedlms.com/student/path/381244-fedex-freight-training-101?sid=d9544c03-bce3-408a-8843-3bdcef7a3d59&sid_i=0",
+      },
+      {
+        label: "Video Screen Training",
+        url: "https://allieduniversaledge.exceedlms.com/student/activity/977017-fedex-video-screening-training-annual?sid=911a863e-ba26-4ca1-ba35-7818c527aad4&sid_i=1",
+      },
+      {
+        label: "Pedestrian Screening Training",
+        url: "https://allieduniversaledge.exceedlms.com/student/activity/1257423-fedex-express-ground-pedestrian-screening-training?sid=5d40f0b0-2723-4439-972c-d5c01d2197b8&sid_i=2",
+      },
+      {
+        label: "Threat Awareness & Workplace Violence Training",
+        url: "https://allieduniversaledge.exceedlms.com/student/activity/2022797-fedex-workplace-violence-threat-awareness?sid=911a863e-ba26-4ca1-ba35-7818c527aad4&sid_i=3",
+      },
+      {
+        label: "Truck Screening Training",
+        url: "https://allieduniversaledge.exceedlms.com/student/activity/1279138-fedex-ground-truck-screening?sid=911a863e-ba26-4ca1-ba35-7818c527aad4&sid_i=4",
+      },
+      {
+        label: "FedEx General Security Training",
+        url: "https://allieduniversaledge.exceedlms.com/student/activity/2133277-fedex-general-security-awareness?sid=911a863e-ba26-4ca1-ba35-7818c527aad4&sid_i=5",
+      },
+      {
+        label: "Telephone Etiquette Training",
+        url: "https://allieduniversaledge.exceedlms.com/student/activity/319-telephone-etiquette?sid=911a863e-ba26-4ca1-ba35-7818c527aad4&sid_i=6",
+      },
+      {
+        label: "Radio Communication Training",
+        url: "https://allieduniversaledge.exceedlms.com/student/activity/143319-radio-communications-two-way?sid=911a863e-ba26-4ca1-ba35-7818c527aad4&sid_i=7",
+      },
+      {
+        label: "Workplace Violence Training",
+        url: "https://allieduniversaledge.exceedlms.com/student/path/78829-workplace-violence-awareness?sid=911a863e-ba26-4ca1-ba35-7818c527aad4&sid_i=8",
+      },
+    ],
+    schneider: [
+      {
+        label: "School of Manufacturing Industrial Essentials",
+        url: "https://allieduniversaledge.exceedlms.com/student/path/67048-school-of-manufacturing-industrial-essentials?sid=11939feb-85db-4eca-a8df-eb65f8390980&sid_i=0",
+      },
+      {
+        label: "Access Control Training",
+        url: "https://allieduniversaledge.exceedlms.com/student/path/61728-lightning-lessons-access-control?sid=150c0b97-86e6-432b-9778-47e925342308&sid_i=0",
+      },
+      {
+        label: "Ready Response",
+        url: "https://allieduniversaledge.exceedlms.com/student/path/8086-ready-response?sid=c0d7e0a2-06e1-4632-93e0-68f8173e7f4a&sid_i=0",
+      },
+      {
+        label: "CPR Training (ASHI Part One)",
+        url: "https://allieduniversaledge.exceedlms.com/student/activity/410737-ashi-part-one-cpr-fa-aed-all-ages-online-course?sid=42c998fd-6832-45fd-966d-43f7da14a829&sid_i=0",
+      },
+    ],
+    driverOnly: [{ label: "Allied Universal Driver Training", url: EDGE_URL_DRIVER_ONLY }],
+    coreOnly: [],
+  };
+
+  const EDGE_LINK_TEMPLATE_DEFINITIONS = {
+    "edge-amazon": {
+      label: "Amazon Trainings",
+      key: "amazon",
+      includeCommon: true,
+      note: "After completing the online CPR training, complete an in-person CPR class before starting work.",
+    },
+    "edge-bae": {
+      label: "BAE Trainings",
+      key: "bae",
+      includeCommon: true,
+      cc: ["SAVANAH.ROBBINS@BAESYSTEMS.US", "RAY.FELICIANO@BAESYSTEMS.US"],
+      note: "",
+    },
+    "edge-fedex": {
+      label: "FedEx Trainings",
+      key: "fedex",
+      includeCommon: true,
+      note: "Complete each FedEx training one at-a-time, then notify the trainer.",
+    },
+    "edge-schneider": {
+      label: "Schneider Trainings",
+      key: "schneider",
+      includeCommon: true,
+      note: "After completing online CPR courses, complete an in-person CPR class before starting work.",
+    },
+    "edge-driver-only": {
+      label: "Driver Only",
+      key: "driverOnly",
+      includeCommon: true,
+      note: "",
+    },
+    "edge-core-only": {
+      label: "CORE Only",
+      key: "coreOnly",
+      includeCommon: true,
+      note: "",
+    },
+  };
+
+  const BUILTIN_EMAIL_TEMPLATE_DEFINITIONS = Object.freeze([
+    { id: "neo-compliance", label: "NEO Summary" },
+    { id: "cori-template", label: "CORI Template" },
+    { id: "edge-credentials", label: "Edge Credentials & Links" },
+    { id: "edge-amazon", label: "Edge Links - Amazon" },
+    { id: "edge-bae", label: "Edge Links - BAE" },
+    { id: "edge-fedex", label: "Edge Links - FedEx" },
+    { id: "edge-schneider", label: "Edge Links - Schneider" },
+    { id: "edge-driver-only", label: "Edge Links - Driver Only" },
+    { id: "edge-core-only", label: "Edge Links - CORE Only" },
+    { id: "follow-up", label: "Onboarding Follow-Up" },
+    { id: "missing-pii", label: "Missing PII Reminder" },
+    { id: "uniform-issued", label: "Uniform Issue Confirmation" },
+  ]);
+
+  const EMAIL_TEMPLATE_TYPES = BUILTIN_EMAIL_TEMPLATE_DEFINITIONS.map((item) => item.id);
+
+  const DEFAULT_EMAIL_TEMPLATE_CONFIG = Object.freeze(
+    EMAIL_TEMPLATE_TYPES.reduce((acc, type) => {
+      const isEdge = type.startsWith("edge-");
+      if (type === "neo-compliance") {
+        acc[type] = {
+          toTemplate: "{{managerEmail}}",
+          ccTemplate: "",
+          subjectTemplate: "{{defaultSubject}}",
+          bodyTemplate: "{{defaultBody}}",
+        };
+      } else if (type === "cori-template") {
+        acc[type] = {
+          toTemplate: "Nancy.Major@aus.com",
+          ccTemplate: "",
+          subjectTemplate: "{{defaultSubject}}",
+          bodyTemplate: "{{defaultBody}}",
+        };
+      } else if (isEdge) {
+        acc[type] = {
+          toTemplate: "{{email}}",
+          ccTemplate: "{{managerEmail}}",
+          subjectTemplate: "{{defaultSubject}}",
+          bodyTemplate: "{{defaultBody}}",
+        };
+      } else if (type === "missing-pii" || type === "uniform-issued") {
+        acc[type] = {
+          toTemplate: "{{email}}",
+          ccTemplate: "",
+          subjectTemplate: "{{defaultSubject}}",
+          bodyTemplate: "{{defaultBody}}",
+        };
+      } else {
+        acc[type] = {
+          toTemplate: "{{managerEmail}}",
+          ccTemplate: "",
+          subjectTemplate: "{{defaultSubject}}",
+          bodyTemplate: "{{defaultBody}}",
+        };
+      }
+      return acc;
+    }, {}),
+  );
+
+  const MAX_EMAIL_TEMPLATE_TO_LEN = 320;
+  const MAX_EMAIL_TEMPLATE_CC_LEN = 1200;
+  const MAX_EMAIL_TEMPLATE_SUBJECT_LEN = 500;
+  const MAX_EMAIL_TEMPLATE_BODY_LEN = 40000;
+
+  const toTemplateValue = (value) => {
+    const text = String(value || "").trim();
+    return text && text !== "—" ? text : "";
+  };
+
+  const clampTemplateString = (value, maxLen) => {
+    const text = String(value || "");
+    return text.length > maxLen ? text.slice(0, maxLen) : text;
+  };
+
+  const sanitizeEmailTemplateRecord = (record) => {
+    const payload = record && typeof record === "object" ? record : {};
+    return {
+      toTemplate: clampTemplateString(payload.toTemplate, MAX_EMAIL_TEMPLATE_TO_LEN),
+      ccTemplate: clampTemplateString(payload.ccTemplate, MAX_EMAIL_TEMPLATE_CC_LEN),
+      subjectTemplate: clampTemplateString(payload.subjectTemplate, MAX_EMAIL_TEMPLATE_SUBJECT_LEN),
+      bodyTemplate: clampTemplateString(payload.bodyTemplate, MAX_EMAIL_TEMPLATE_BODY_LEN),
+    };
+  };
+
+  const sanitizeEmailTemplateMap = (templates) => {
+    const out = {};
+    if (!templates || typeof templates !== "object" || Array.isArray(templates)) return out;
+    Object.keys(templates)
+      .slice(0, 64)
+      .forEach((type) => {
+        const safeType = String(type || "")
+          .toLowerCase()
+          .replace(/[^a-z0-9-]/g, "")
+          .slice(0, 64);
+        if (!safeType) return;
+        out[safeType] = sanitizeEmailTemplateRecord(templates[type]);
+      });
+    return out;
+  };
+
+  const formatUniformTypeText = (value) => {
+    const values = splitUniformTypeList(value);
+    return values.length ? values.join(", ") : "";
+  };
+
+  const managerNameToAusEmail = (managerValue) => {
+    const raw = toTemplateValue(managerValue);
+    if (!raw) return "";
+    if (raw.includes("@")) return raw.toLowerCase();
+    const tokens = raw
+      .toLowerCase()
+      .split(/\s+/)
+      .map((token) => token.replace(/[^a-z]/g, ""))
+      .filter(Boolean);
+    if (tokens.length < 2) return "";
+    return `${tokens[0]}.${tokens[tokens.length - 1]}@aus.com`;
+  };
+
+  const isEdgeTemplateType = (type) => String(type || "").startsWith("edge-");
+
+  const getEmailTemplateRecipients = (type, context) => {
+    const safeContext = context || {};
+    if (type === "neo-compliance") {
+      return {
+        to: safeContext.managerEmail || safeContext.manager || "",
+        cc: "",
+      };
+    }
+    if (type === "cori-template") {
+      return {
+        to: "Nancy.Major@aus.com",
+        cc: "",
+      };
+    }
+    if (isEdgeTemplateType(type)) {
+      return {
+        to: safeContext.email || "",
+        cc: safeContext.managerEmail || "",
+      };
+    }
+    return {
+      to: safeContext.manager || safeContext.email || "",
+      cc: "",
+    };
+  };
+
+  const getEmailTemplateConfigForType = (type) => {
+    const safeType = String(type || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, "")
+      .slice(0, 64);
+    const defaults = DEFAULT_EMAIL_TEMPLATE_CONFIG[safeType] || {
+      toTemplate: "{{managerEmail}}",
+      ccTemplate: "",
+      subjectTemplate: "{{defaultSubject}}",
+      bodyTemplate: "{{defaultBody}}",
+    };
+    const custom =
+      state.emailTemplates &&
+      state.emailTemplates.items &&
+      state.emailTemplates.items[safeType]
+        ? sanitizeEmailTemplateRecord(state.emailTemplates.items[safeType])
+        : {};
+    return {
+      ...defaults,
+      ...custom,
+    };
+  };
+
+  const renderTemplateText = (templateText, tokenMap) => {
+    const text = String(templateText || "");
+    if (!text) return "";
+    return text.replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (match, key) => {
+      if (!Object.prototype.hasOwnProperty.call(tokenMap, key)) return match;
+      return String(tokenMap[key] ?? "");
+    });
+  };
+
+  const sanitizeTemplateDisplayName = (value) => {
+    const text = String(value || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    return text.slice(0, 80);
+  };
+
+  const buildCustomTemplateTypeId = (label) => {
+    const base = sanitizeTemplateDisplayName(label)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48);
+    return base ? `custom-${base}` : "";
+  };
+
+  const getAllEmailTemplateDefinitions = () => {
+    const customTypes =
+      state.emailTemplates && state.emailTemplates.customTypes
+        ? state.emailTemplates.customTypes
+        : {};
+    const customDefs = Object.keys(customTypes)
+      .map((id) => ({
+        id,
+        label: sanitizeTemplateDisplayName(customTypes[id]) || id,
+      }))
+      .filter((item) => !!item.id)
+      .sort((a, b) => a.label.localeCompare(b.label));
+    return [...BUILTIN_EMAIL_TEMPLATE_DEFINITIONS, ...customDefs];
+  };
+
+  const getEmailTemplateTypeLabel = (type) => {
+    const match = getAllEmailTemplateDefinitions().find((item) => item.id === type);
+    return match ? match.label : sanitizeTemplateDisplayName(type) || "Template";
+  };
+
+  const makeUniqueCustomTemplateTypeId = (label) => {
+    const base = buildCustomTemplateTypeId(label);
+    if (!base) return "";
+    const existing = new Set(getAllEmailTemplateDefinitions().map((item) => item.id));
+    if (!existing.has(base)) return base;
+    let index = 2;
+    while (index < 1000) {
+      const next = `${base}-${index}`;
+      if (!existing.has(next)) return next;
+      index += 1;
+    }
+    return "";
+  };
+
+  const renderEmailTemplateTypeSelectOptions = (selectId, selectedType) => {
+    const select = $(selectId);
+    if (!select) return;
+    const definitions = getAllEmailTemplateDefinitions();
+    const selected = selectedType || select.value || "neo-compliance";
+    select.innerHTML = "";
+    const fragment = document.createDocumentFragment();
+    definitions.forEach((definition) => {
+      const option = document.createElement("option");
+      option.value = definition.id;
+      option.textContent = definition.label;
+      fragment.appendChild(option);
+    });
+    select.appendChild(fragment);
+    const hasSelected = definitions.some((item) => item.id === selected);
+    select.value = hasSelected ? selected : definitions[0]?.id || "neo-compliance";
+  };
+
+  const formatTemplateDate = (value) => {
+    const text = toTemplateValue(value);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return isoToSlashDate(text);
+    return text;
+  };
+
+  const toDisplayValue = (value, fallback = "x") => {
+    return toTemplateValue(value) || fallback;
+  };
+
+  const formatNumberedListLines = (items) => {
+    return (items || []).map((item, index) => `  ${index + 1}. ${item}`);
+  };
+
+  const formatNumberedLinkLines = (links) => {
+    return (links || []).map((item, index) => `  ${index + 1}. ${item.label}: ${item.url}`);
+  };
+
+  const buildEdgeCredentialsTemplate = (context, recipientName, manager, branch, type) => {
+    const eid = context.eid || "[EID]";
+    const dobNoSlashes = context.dobDigits || "[DOB_NO_SLASHES]";
+    const definition = EDGE_LINK_TEMPLATE_DEFINITIONS[type] || null;
+    const linkSet = definition ? EDGE_TRACK_LINKS[definition.key] || [] : [];
+
+    const lines = [
+      `Hi ${recipientName},`,
+      "",
+      `Your Employee ID: ${eid}`,
+      `DOB (No Slashes): ${dobNoSlashes}`,
+      "",
+      `Edge Username: ${eid}`,
+      `Edge Password: ${eid}`,
+      "",
+      `Edge Portal: ${EDGE_PORTAL_URL}`,
+      "",
+    ];
+
+    if (definition) {
+      const links = definition.includeCommon ? [...EDGE_COMMON_LINKS, ...linkSet] : [...linkSet];
+      lines.push("There are additional trainings you must complete. Click each link below.");
+      lines.push("");
+      lines.push(`${definition.label}:`);
+      lines.push(...formatNumberedLinkLines(links));
+      if (definition.cc && definition.cc.length) {
+        lines.push("");
+        lines.push(`Suggested CC: ${definition.cc.join(", ")}`);
+      }
+      if (definition.note) {
+        lines.push("");
+        lines.push(definition.note);
+      }
+    } else {
+      lines.push("Training Link Sets:");
+      lines.push("");
+      lines.push("Amazon:");
+      lines.push(...formatNumberedLinkLines(EDGE_TRACK_LINKS.amazon));
+      lines.push("");
+      lines.push("FedEx:");
+      lines.push(...formatNumberedLinkLines(EDGE_TRACK_LINKS.fedex));
+      lines.push("");
+      lines.push("BAE:");
+      lines.push(...formatNumberedLinkLines(EDGE_TRACK_LINKS.bae));
+      lines.push("");
+      lines.push("Schneider:");
+      lines.push(...formatNumberedLinkLines(EDGE_TRACK_LINKS.schneider));
+      lines.push("");
+      lines.push("Driver:");
+      lines.push(`  1. Driver Training: ${EDGE_URL_DRIVER}`);
+      lines.push("");
+      lines.push("Driver ONLY:");
+      lines.push(`  1. Allied Universal Driver Training: ${EDGE_URL_DRIVER_ONLY}`);
+      lines.push("");
+      lines.push("CORE ONLY:");
+      lines.push(`  1. Allied Universal Core Competencies: ${EDGE_URL_CORE}`);
+      lines.push(`  2. Allied Universal 1st Amendment Rights Training: ${EDGE_URL_FIRST_AMENDMENT}`);
+      lines.push("");
+      lines.push("Extra:");
+      lines.push("  1. [ADD_EXTRA_URL]");
+    }
+
+    lines.push("");
+    lines.push(`Branch: ${branch}`);
+    lines.push(`Job ID: ${context.jobId || "[JOB_ID]"}`);
+    lines.push(`Job Name: ${context.jobName || "[JOB_NAME]"}`);
+    lines.push(`Manager: ${manager}`);
+    lines.push(`Hire Date: ${context.hireDate || "x"}`);
+
+    const templateLabel = definition ? definition.label : "Edge Credentials";
+    return {
+      subject: `NEO | ${recipientName} | EID ${eid} | ${templateLabel}`,
+      body: lines.join("\n"),
+    };
+  };
+
+  const isClearedStatus = (value) => toTemplateValue(value).toLowerCase() === "cleared";
+
+  const hasComplianceInfo = (...values) => values.some((value) => !!toTemplateValue(value));
+
+  const buildInitialComplianceItems = (context) => {
+    const items = [...INITIAL_COMPLIANCE_BASE_ITEMS];
+    if (isClearedStatus(context.coriStatus)) {
+      items.push("CORI entered into WT");
+    }
+
+    const hasNhGuardCardInfo = hasComplianceInfo(context.nhStatus, context.nhId, context.nhExpiration);
+    const hasMeGuardCardInfo = hasComplianceInfo(context.meStatus, context.meExpiration);
+    if (hasNhGuardCardInfo) items.push("NH GC entered into WT");
+    if (hasMeGuardCardInfo) items.push("ME GC entered into WT");
+    if (!hasNhGuardCardInfo && !hasMeGuardCardInfo) {
+      items.push("Candidate has No NH GC");
+    }
+    return items;
+  };
+
+  const calculateTimeRangeHours = (startTime, endTime) => {
+    const startMinutes = parseWeeklyTime(startTime || "");
+    const endMinutes = parseWeeklyTime(endTime || "");
+    if (startMinutes === null || endMinutes === null) return "";
+    let totalMinutes = endMinutes - startMinutes;
+    if (totalMinutes < 0) totalMinutes += 24 * 60;
+    return formatWeeklyHours(totalMinutes);
+  };
+
+  const inferClientComplianceSections = (context) => {
+    const haystack = [
+      context.job,
+      context.jobId,
+      context.jobName,
+      context.location,
+      context.branch,
+      context.manager,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    if (!haystack) return [];
+    return CLIENT_COMPLIANCE_SECTIONS.filter((section) =>
+      section.matchers.some((pattern) => pattern.test(haystack)),
+    );
+  };
+
+  const buildNeoComplianceTemplate = (context, recipientName, today) => {
+    const clientSections = inferClientComplianceSections(context);
+    const initialItems = buildInitialComplianceItems(context);
+    const eid = context.eid || "[EID]";
+    const uniformsIssued = !!context.uniformsIssued;
+    const uniformLine = uniformsIssued
+      ? "One set of uniforms WAS issued during NEO."
+      : "One set of uniforms WAS NOT issued during NEO.";
+    const ausItems = [...AUS_COMPLIANCE_BASE_ITEMS, uniformLine];
+    const uniformSizeParts = [
+      `Shirt Size: ${toDisplayValue(context.shirtSize)}`,
+      `Pants Size: ${toDisplayValue(context.pantsSize)}`,
+    ];
+    const bootsSize = toTemplateValue(context.bootsSize);
+    if (bootsSize) {
+      uniformSizeParts.push(`Boots Size: ${bootsSize}`);
+    }
+
+    const fallbackIssuedPantsSize = buildPantsSize(
+      toTemplateValue(context.issuedWaist),
+      toTemplateValue(context.issuedInseam),
+    );
+    const shirtIssuedSize = toTemplateValue(context.issuedShirtSize) || toTemplateValue(context.shirtSize) || "x";
+    const shirtIssuedAlteration = toTemplateValue(context.issuedShirtType) || "None";
+    const pantsIssuedAlteration = toTemplateValue(context.issuedPantsType) || "None";
+    const pantsIssuedSize =
+      toTemplateValue(context.issuedPantsSize) ||
+      fallbackIssuedPantsSize ||
+      toTemplateValue(context.pantsSize) ||
+      "x";
+    const issuedItems = uniformsIssued
+      ? [`${shirtIssuedSize}, ${shirtIssuedAlteration}`, `${pantsIssuedAlteration}, ${pantsIssuedSize}`]
+      : ["None, None", "None, None"];
+
+    const bodyLines = [
+      "NEO Summary",
+      `Generated: ${today}`,
+      "",
+      `PERSON: ${recipientName} | EID: ${eid}`,
+      `Phone: ${toDisplayValue(context.phone)} | Email: ${toDisplayValue(context.email)}`,
+      `Start: ${toDisplayValue(context.startTime)} | End: ${toDisplayValue(context.endTime)} | Total: ${toDisplayValue(context.hours)}`,
+      "",
+      `Hire Date: ${context.hireDate || "x"}`,
+      "",
+      `Uniform Sizes: ${uniformSizeParts.join(" | ")}`,
+      "Uniforms Issued:",
+      ...formatNumberedListLines(issuedItems),
+      "",
+      "Completed Initial Compliance Items:",
+      ...formatNumberedListLines(initialItems),
+      "",
+      "Completed AUS Compliance Items:",
+      ...formatNumberedListLines(ausItems),
+    ];
+
+    if (clientSections.length) {
+      clientSections.forEach((section) => {
+        bodyLines.push("");
+        bodyLines.push(section.title);
+        bodyLines.push(...formatNumberedListLines(section.items));
+      });
+    } else {
+      bodyLines.push("");
+      bodyLines.push("Completed Client Compliance Items:");
+      bodyLines.push(
+        "  1. No client-specific list auto-matched from Job ID, Job Name, or Location.",
+      );
+    }
+
+    return {
+      subject: `NEO | ${recipientName} | EID ${eid} | NEO Summary`,
+      body: bodyLines.join("\n"),
+    };
+  };
+
+  const buildEmailTemplateContextFromCardRow = (card, rowValue) => {
+    const row = rowValue && typeof rowValue === "object" ? rowValue : {};
+    const parsedIssuedPants = parsePantsSize(row["Issued Pants Size"] || row["Pants Size"]);
+    const parsedPants = parsePantsSize(row["Pants Size"]);
+    const shirtType = formatUniformTypeText(row["Issued Shirt Type"] || row["Shirt Type"]);
+    const pantsType = toTemplateValue(row["Issued Pants Type"] || row["Pants Type"]);
+    const issuedPantsSize = buildPantsSize(
+      toTemplateValue(row["Issued Waist"] || parsedIssuedPants.waist),
+      toTemplateValue(row["Issued Inseam"] || parsedIssuedPants.inseam),
+    );
+    const basePantsSize = buildPantsSize(
+      toTemplateValue(row["Waist"] || parsedPants.waist),
+      toTemplateValue(row["Inseam"] || parsedPants.inseam),
+    );
+    const fallbackJobText = toTemplateValue(row["Job ID Name"]);
+    const jobParts = fallbackJobText
+      ? fallbackJobText
+          .split("·")
+          .map((part) => part.trim())
+          .filter(Boolean)
+      : [];
+    const cardJobId = toTemplateValue(card ? card.job_id : "");
+    const reqId = toTemplateValue(card ? card.req_id : row["REQ ID"]);
+    const cardJobName = toTemplateValue(card ? card.job_name : "");
+    const icimsId = toTemplateValue(card ? card.icims_id : row["ICIMS ID"]);
+    const candidateId = toTemplateValue(
+      (card && card.uuid) || row["candidate UUID"] || row["Candidate UUID"] || row.__rowId,
+    );
+    const jobId = cardJobId || (jobParts.length ? jobParts[0] : "");
+    const jobName = cardJobName || (jobParts.length > 1 ? jobParts.slice(1).join(" · ") : "");
+    const hireDate = formatTemplateDate(row["Hire Date"]);
+    const dobDigits = sanitizeNumbers(toTemplateValue(row["DOB"]));
+
+    return {
+      name: toTemplateValue(card ? card.candidate_name : row["Candidate Name"]),
+      eid: toTemplateValue(card ? card.employee_id : row["Employee ID"]),
+      candidateId,
+      reqId,
+      icimsId,
+      dobDigits,
+      phone: toTemplateValue(row["Contact Phone"]),
+      email: toTemplateValue(row["Contact Email"]),
+      hireDate,
+      branch: toTemplateValue(card ? card.branch : row["Branch"]),
+      location: toTemplateValue(card ? card.job_location : row["Job Location"]),
+      jobId,
+      jobName,
+      job:
+        toTemplateValue([jobId, jobName].filter(Boolean).join(" · ")) || toTemplateValue(row["Job ID Name"]),
+      manager: toTemplateValue(card ? card.manager : row["Manager"]),
+      managerEmail: managerNameToAusEmail(card ? card.manager : row["Manager"]),
+      startTime: toTemplateValue(row["Neo Arrival Time"]),
+      endTime: toTemplateValue(row["Neo Departure Time"]),
+      hours: toTemplateValue(row["Total Neo Hours"]),
+      shirtSize: toTemplateValue(row["Shirt Size"]),
+      pantsSize: toTemplateValue(row["Pants Size"] || basePantsSize),
+      bootsSize: toTemplateValue(row["Boots Size"]),
+      uniformsIssued: isUniformIssued(row["Uniforms Issued"]),
+      issuedShirtSize: toTemplateValue(row["Issued Shirt Size"] || row["Shirt Size"]),
+      issuedPantsSize: toTemplateValue(row["Issued Pants Size"] || issuedPantsSize),
+      issuedShirtType: shirtType,
+      issuedShirtsGiven: toTemplateValue(row["Issued Shirts Given"] || row["Shirts Given"]),
+      issuedWaist: toTemplateValue(row["Issued Waist"] || parsedIssuedPants.waist),
+      issuedInseam: toTemplateValue(row["Issued Inseam"] || parsedIssuedPants.inseam),
+      issuedPantsType: pantsType,
+      issuedPantsGiven: toTemplateValue(row["Issued Pants Given"] || row["Pants Given"]),
+      coriStatus: toTemplateValue(row["MA CORI Status"]),
+      nhStatus: toTemplateValue(row["NH GC Status"]),
+      nhId: toTemplateValue(row["NH GC ID Number"]),
+      nhExpiration: toTemplateValue(row["NH GC Expiration Date"]),
+      meStatus: toTemplateValue(row["ME GC Status"]),
+      meExpiration: toTemplateValue(row["ME GC Expiration Date"]),
+    };
+  };
+
+  const getEmailTemplateContext = () => {
+    const cardId = state.kanban.detailsCardId;
+    const card = cardId ? state.kanban.cards.find((item) => item.uuid === cardId) : null;
+    return buildEmailTemplateContextFromCardRow(card, state.kanban.detailsRow || {});
+  };
+
+  const buildDefaultEmailTemplateByType = (type, context, recipientName, manager, branch, job, today) => {
+    let subject = "";
+    let body = "";
+    if (type === "neo-compliance") {
+      const neoTemplate = buildNeoComplianceTemplate(context, recipientName, today);
+      subject = neoTemplate.subject;
+      body = neoTemplate.body;
+    } else if (type === "cori-template") {
+      const safeName = toTemplateValue(recipientName) || "[Candidate Name]";
+      const candidateEmail = toTemplateValue(context.email) || "x";
+      const icimsId = toTemplateValue(context.icimsId) || "x";
+      const reqId = toTemplateValue(context.reqId) || "x";
+      const wtJobNo = toTemplateValue(context.wtJobNo || context.jobId) || "x";
+      const managerName = toTemplateValue(context.manager) || "x";
+      subject = `${safeName}, CORI`;
+      body = [
+        safeName,
+        "Conditional Offer Sent",
+        "Background Check Initiated (Sterling)",
+        "Background Check Initiated (Accurate)",
+        "Background Check Completed",
+        `Cand. Email: ${candidateEmail}`,
+        `ICIMS ID: ${icimsId}`,
+        `REQ ID: ${reqId}`,
+        `WT JOB #: ${wtJobNo}`,
+        `Mana. Name: ${managerName}`,
+      ].join("\n");
+    } else if (isEdgeTemplateType(type)) {
+      const edgeTemplate = buildEdgeCredentialsTemplate(context, recipientName, manager, branch, type);
+      subject = edgeTemplate.subject;
+      body = edgeTemplate.body;
+    } else if (type === "missing-pii") {
+      subject = `Action Needed: Missing Onboarding Information - ${recipientName}`;
+      body = [
+        `Hi ${recipientName},`,
+        "",
+        "We are still missing some onboarding information needed to complete your file.",
+        "Please reply with the missing items as soon as possible.",
+        "",
+        `Branch: ${branch}`,
+        `Manager: ${manager}`,
+        "",
+        "Thank you,",
+        "[Your Name]",
+      ].join("\n");
+    } else if (type === "uniform-issued") {
+      subject = `Uniform Issue Confirmation - ${recipientName}`;
+      const actualShirtLine = `Shirt Size: ${toDisplayValue(context.shirtSize)}`;
+      const actualPantsLine = `Pants Size: ${toDisplayValue(context.pantsSize)}`;
+      const actualBootsLine = `Boots Size: ${toDisplayValue(context.bootsSize)}`;
+      const issuedStatusLine = `Uniforms Issued During NEO: ${context.uniformsIssued ? "Yes" : "No"}`;
+      const issuedShirtLine = context.uniformsIssued
+        ? [
+            `Issued Shirts: ${toDisplayValue(context.issuedShirtsGiven)}`,
+            `Type: ${toDisplayValue(context.issuedShirtType)}`,
+            `Size: ${toDisplayValue(context.issuedShirtSize)}`,
+          ].join(" | ")
+        : "Issued Shirts: None";
+      const issuedPantsLine = context.uniformsIssued
+        ? [
+            `Issued Pants: ${toDisplayValue(context.issuedPantsGiven)}`,
+            `Type: ${toDisplayValue(context.issuedPantsType)}`,
+            `Waist: ${toDisplayValue(context.issuedWaist)}`,
+            `Inseam: ${toDisplayValue(context.issuedInseam)}`,
+            `Size: ${toDisplayValue(context.issuedPantsSize)}`,
+          ].join(" | ")
+        : "Issued Pants: None";
+      body = [
+        `Hi ${recipientName},`,
+        "",
+        "This email confirms uniform sizing on file and issued uniform details.",
+        "",
+        "Actual Uniform Sizes (On File):",
+        actualShirtLine,
+        actualPantsLine,
+        actualBootsLine,
+        "",
+        issuedStatusLine,
+        issuedShirtLine,
+        issuedPantsLine,
+        "",
+        `Branch: ${branch}`,
+        `Date: ${today}`,
+        "",
+        "Please reply if any item listed above is incorrect.",
+        "",
+        "Thank you,",
+        "[Your Name]",
+      ].join("\n");
+    } else {
+      subject = `Onboarding Follow-Up - ${recipientName}`;
+      body = [
+        `Hi ${recipientName},`,
+        "",
+        `Following up on your onboarding status as of ${today}.`,
+        "",
+        `Branch: ${branch}`,
+        `Role: ${job}`,
+        `Manager: ${manager}`,
+        "",
+        "If anything has changed, please reply to this email so we can update your record.",
+        "",
+        "Thank you,",
+        "[Your Name]",
+      ].join("\n");
+    }
+    return { subject, body };
+  };
+
+  const buildClientComplianceSectionsText = (context) => {
+    const clientSections = inferClientComplianceSections(context);
+    if (clientSections.length) {
+      return clientSections
+        .map((section) => [section.title, ...formatNumberedListLines(section.items)].join("\n"))
+        .join("\n\n");
+    }
+    return [
+      "Completed Client Compliance Items:",
+      "  1. No client-specific list auto-matched from Job ID, Job Name, or Location.",
+    ].join("\n");
+  };
+
+  const buildEmailTemplateTokenMap = (type, context, recipientName, manager, branch, job, today, defaults) => {
+    const safeContext = context || {};
+    const templateLabel = getEmailTemplateTypeLabel(type);
+    const shirtSummary = safeContext.issuedShirtSize || safeContext.shirtSize;
+    const pantsSummary = safeContext.issuedPantsSize || safeContext.pantsSize;
+    const uniformLine = safeContext.uniformsIssued
+      ? "One set of uniforms WAS issued during NEO."
+      : "One set of uniforms WAS NOT issued during NEO.";
+    const initialItems = buildInitialComplianceItems(safeContext);
+    const ausItems = [...AUS_COMPLIANCE_BASE_ITEMS, uniformLine];
+    const edgeDefinition = EDGE_LINK_TEMPLATE_DEFINITIONS[type] || null;
+    const edgeLinks = edgeDefinition
+      ? edgeDefinition.includeCommon
+        ? [...EDGE_COMMON_LINKS, ...(EDGE_TRACK_LINKS[edgeDefinition.key] || [])]
+        : [...(EDGE_TRACK_LINKS[edgeDefinition.key] || [])]
+      : [];
+
+    return {
+      defaultSubject: defaults.subject,
+      defaultBody: defaults.body,
+      templateType: type || "",
+      templateLabel,
+      today,
+      date: today,
+      recipientName: recipientName || "[Candidate Name]",
+      eid: safeContext.eid || "[EID]",
+      icimsId: toTemplateValue(safeContext.icimsId),
+      reqId: toTemplateValue(safeContext.reqId) || "x",
+      wtJobNo: toTemplateValue(safeContext.jobId) || "x",
+      dobDigits: safeContext.dobDigits || "[DOB_NO_SLASHES]",
+      phone: toDisplayValue(safeContext.phone),
+      email: toTemplateValue(safeContext.email),
+      candidateEmail: toTemplateValue(safeContext.email),
+      emailDisplay: toDisplayValue(safeContext.email),
+      manager: manager || "[Manager]",
+      managerEmail: toTemplateValue(safeContext.managerEmail),
+      branch: branch || "[Branch]",
+      location: safeContext.location || "x",
+      job: job || "[Job]",
+      jobId: safeContext.jobId || "x",
+      jobName: safeContext.jobName || "x",
+      hireDate: safeContext.hireDate || "x",
+      startTime: toDisplayValue(safeContext.startTime),
+      endTime: toDisplayValue(safeContext.endTime),
+      totalHours: toDisplayValue(safeContext.hours),
+      hours: toDisplayValue(safeContext.hours),
+      shirtSize: toDisplayValue(safeContext.shirtSize),
+      pantsSize: toDisplayValue(safeContext.pantsSize),
+      bootsSize: toTemplateValue(safeContext.bootsSize),
+      issuedShirtSize: toDisplayValue(safeContext.issuedShirtSize),
+      issuedPantsSize: toDisplayValue(safeContext.issuedPantsSize),
+      issuedShirtType: toTemplateValue(safeContext.issuedShirtType),
+      issuedPantsType: toTemplateValue(safeContext.issuedPantsType),
+      issuedWaist: toTemplateValue(safeContext.issuedWaist),
+      issuedInseam: toTemplateValue(safeContext.issuedInseam),
+      issuedShirtsGiven: toTemplateValue(safeContext.issuedShirtsGiven),
+      issuedPantsGiven: toTemplateValue(safeContext.issuedPantsGiven),
+      shirtSummary: toDisplayValue(shirtSummary),
+      pantsSummary: toDisplayValue(pantsSummary),
+      uniformIssuedLine: uniformLine,
+      initialComplianceList: formatNumberedListLines(initialItems).join("\n"),
+      ausComplianceList: formatNumberedListLines(ausItems).join("\n"),
+      clientComplianceSections: buildClientComplianceSectionsText(safeContext),
+      edgePortal: EDGE_PORTAL_URL,
+      edgeTemplateLabel: edgeDefinition ? edgeDefinition.label : "Edge Credentials",
+      edgeLinksList: edgeLinks.length ? formatNumberedLinkLines(edgeLinks).join("\n") : "",
+      edgeSuggestedCc: edgeDefinition && edgeDefinition.cc && edgeDefinition.cc.length
+        ? edgeDefinition.cc.join(", ")
+        : "",
+      edgeNote: edgeDefinition && edgeDefinition.note ? edgeDefinition.note : "",
+    };
+  };
+
+  const resolveEmailTemplateRecipients = (type, context, templateConfig, tokenMap) => {
+    const fallback = getEmailTemplateRecipients(type, context);
+    const configuredTo = toTemplateValue(renderTemplateText(templateConfig.toTemplate, tokenMap));
+    const configuredCc = toTemplateValue(renderTemplateText(templateConfig.ccTemplate, tokenMap));
+    return {
+      to: configuredTo || fallback.to,
+      cc: configuredCc || fallback.cc,
+    };
+  };
+
+  const buildEmailTemplateOutput = (type, context, recipientName, startTime, endTime, totalHours) => {
+    const templateContext = {
+      ...(context || {}),
+      startTime,
+      endTime,
+      hours: totalHours,
+    };
+    const manager = templateContext.manager || "[Manager]";
+    const branch = templateContext.branch || "[Branch]";
+    const job = templateContext.job || "[Job]";
+    const today = new Date().toLocaleDateString(undefined, {
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+    });
+    const defaults = buildDefaultEmailTemplateByType(
+      type,
+      templateContext,
+      recipientName,
+      manager,
+      branch,
+      job,
+      today,
+    );
+    const templateConfig = getEmailTemplateConfigForType(type);
+    const tokenMap = buildEmailTemplateTokenMap(
+      type,
+      templateContext,
+      recipientName,
+      manager,
+      branch,
+      job,
+      today,
+      defaults,
+    );
+    const subjectText = toTemplateValue(renderTemplateText(templateConfig.subjectTemplate, tokenMap));
+    const bodyText = renderTemplateText(templateConfig.bodyTemplate, tokenMap);
+    const recipients = resolveEmailTemplateRecipients(type, templateContext, templateConfig, tokenMap);
+    return {
+      subject: subjectText || defaults.subject,
+      body: bodyText || defaults.body,
+      recipients,
+    };
+  };
+
+  const buildEmailTemplateDashboardDefaults = (type) => {
+    const today = new Date().toLocaleDateString(undefined, {
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+    });
+    const sampleContext = {
+      name: "[Candidate Name]",
+      eid: "[EID]",
+      icimsId: "[ICIMS ID]",
+      dobDigits: "[DOB_NO_SLASHES]",
+      phone: "x",
+      email: "candidate@domain.com",
+      manager: "[Manager Name]",
+      managerEmail: "manager.name@aus.com",
+      branch: "[Branch]",
+      location: "[Location]",
+      job: "[Job]",
+      jobId: "[Job ID]",
+      jobName: "[Job Name]",
+      hireDate: "x",
+      startTime: "x",
+      endTime: "x",
+      hours: "x",
+      shirtSize: "x",
+      pantsSize: "x",
+      uniformsIssued: false,
+      issuedShirtSize: "",
+      issuedPantsSize: "",
+      issuedShirtType: "",
+      issuedShirtsGiven: "",
+      issuedWaist: "",
+      issuedInseam: "",
+      issuedPantsType: "",
+      issuedPantsGiven: "",
+      coriStatus: "",
+      nhStatus: "",
+      nhId: "",
+      nhExpiration: "",
+      meStatus: "",
+      meExpiration: "",
+    };
+    return buildDefaultEmailTemplateByType(
+      type,
+      sampleContext,
+      sampleContext.name,
+      sampleContext.manager,
+      sampleContext.branch,
+      sampleContext.job,
+      today,
+    );
+  };
+
+  const buildEmailTemplateFromForm = () => {
+    const typeInput = $("email-template-type");
+    const recipientInput = $("email-template-recipient");
+    const ccInput = $("email-template-cc");
+    const startInput = $("email-template-start-time");
+    const endInput = $("email-template-end-time");
+    const totalInput = $("email-template-total-hours");
+    const type = typeInput ? typeInput.value : "neo-compliance";
+    const context = emailTemplateContext || {};
+    const recipientName = context.name || "[Candidate Name]";
+    const startTime = startInput
+      ? sanitizeTimeInput(startInput)
+      : toTemplateValue(context.startTime);
+    const endTime = endInput ? sanitizeTimeInput(endInput) : toTemplateValue(context.endTime);
+    const computedTotal = calculateTimeRangeHours(startTime, endTime);
+    if (totalInput) {
+      const fallbackTotal = toTemplateValue(context.hours);
+      totalInput.value = computedTotal || fallbackTotal || "";
+    }
+    const totalHours = toTemplateValue(totalInput ? totalInput.value : "") || computedTotal || context.hours;
+    const next = buildEmailTemplateOutput(type, context, recipientName, startTime, endTime, totalHours);
+    if (recipientInput && !recipientInput.value.trim()) {
+      recipientInput.value = next.recipients.to;
+    }
+    if (ccInput && !ccInput.value.trim()) {
+      ccInput.value = next.recipients.cc;
+    }
+    return { subject: next.subject, body: next.body };
+  };
+
+  const captureEmailTemplateGeneratedDraft = () => {
+    const subjectInput = $("email-template-subject");
+    const bodyInput = $("email-template-body");
+    emailTemplateLastGeneratedDraft = {
+      subject: subjectInput ? subjectInput.value : "",
+      body: bodyInput ? bodyInput.value : "",
+    };
+  };
+
+  const canAutoOverwriteEmailTemplateDraft = () => {
+    if (!emailTemplateLastGeneratedDraft) return true;
+    const subjectInput = $("email-template-subject");
+    const bodyInput = $("email-template-body");
+    if (!subjectInput || !bodyInput) return false;
+    return (
+      subjectInput.value === emailTemplateLastGeneratedDraft.subject &&
+      bodyInput.value === emailTemplateLastGeneratedDraft.body
+    );
+  };
+
+  const applyEmailTemplateDraft = ({ force = false } = {}) => {
+    const subjectInput = $("email-template-subject");
+    const bodyInput = $("email-template-body");
+    if (!subjectInput || !bodyInput) return;
+    const next = buildEmailTemplateFromForm();
+    if (!force && !canAutoOverwriteEmailTemplateDraft()) return;
+    subjectInput.value = next.subject;
+    bodyInput.value = next.body;
+    captureEmailTemplateGeneratedDraft();
+  };
+
+  const refreshEmailTemplateContextFromDatabase = async () => {
+    const modal = $("email-template-modal");
+    if (!modal || modal.classList.contains("hidden")) return;
+    const baseContext = emailTemplateContextOverride || emailTemplateContext || {};
+    const candidateId = toTemplateValue(baseContext.candidateId);
+    if (!candidateId) return;
+    const latestRow = await getLatestCandidateRow(candidateId);
+    if (!latestRow || typeof latestRow !== "object") return;
+    const card = state.kanban.cards.find((item) => item.uuid === candidateId) || null;
+    emailTemplateContext = buildEmailTemplateContextFromCardRow(card, latestRow);
+    applyEmailTemplateDraft();
+  };
+
+  const stopEmailTemplateAutoRefresh = () => {
+    if (emailTemplateAutoRefreshTimer) {
+      window.clearInterval(emailTemplateAutoRefreshTimer);
+      emailTemplateAutoRefreshTimer = null;
+    }
+    emailTemplateAutoRefreshInFlight = false;
+  };
+
+  const startEmailTemplateAutoRefresh = () => {
+    stopEmailTemplateAutoRefresh();
+    emailTemplateAutoRefreshTimer = window.setInterval(async () => {
+      if (emailTemplateAutoRefreshInFlight) return;
+      emailTemplateAutoRefreshInFlight = true;
+      try {
+        await refreshEmailTemplateContextFromDatabase();
+      } finally {
+        emailTemplateAutoRefreshInFlight = false;
+      }
+    }, 4000);
+  };
+
+  const handleEmailTemplateTypeChange = () => {
+    const typeInput = $("email-template-type");
+    const recipientInput = $("email-template-recipient");
+    const ccInput = $("email-template-cc");
+    const startInput = $("email-template-start-time");
+    const endInput = $("email-template-end-time");
+    const totalInput = $("email-template-total-hours");
+    const subjectInput = $("email-template-subject");
+    const bodyInput = $("email-template-body");
+    const context = emailTemplateContext || getEmailTemplateContext();
+    const type = typeInput ? typeInput.value : "neo-compliance";
+    const recipientName = context.name || "[Candidate Name]";
+    const startTime = startInput ? sanitizeTimeInput(startInput) : toTemplateValue(context.startTime);
+    const endTime = endInput ? sanitizeTimeInput(endInput) : toTemplateValue(context.endTime);
+    const computedTotal = calculateTimeRangeHours(startTime, endTime);
+    const totalHours = toTemplateValue(totalInput ? totalInput.value : "") || computedTotal || context.hours;
+    if (totalInput) totalInput.value = computedTotal || toTemplateValue(context.hours) || "";
+    const next = buildEmailTemplateOutput(type, context, recipientName, startTime, endTime, totalHours);
+    if (recipientInput) recipientInput.value = next.recipients.to;
+    if (ccInput) ccInput.value = next.recipients.cc;
+    if (subjectInput) subjectInput.value = next.subject;
+    if (bodyInput) bodyInput.value = next.body;
+    captureEmailTemplateGeneratedDraft();
+  };
+
+  const handleEmailTemplateGenerate = (event) => {
+    if (event) event.preventDefault();
+    applyEmailTemplateDraft({ force: true });
+  };
+
+  const writeTextToClipboard = async (text) => {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "readonly");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    textarea.remove();
+    if (!copied) throw new Error("Clipboard copy failed.");
+    return true;
+  };
+
+  const handleEmailTemplateCopy = async () => {
+    const recipient = $("email-template-recipient");
+    const cc = $("email-template-cc");
+    const subject = $("email-template-subject");
+    const body = $("email-template-body");
+    const lines = [];
+    const toText = recipient ? recipient.value.trim() : "";
+    const ccText = cc ? cc.value.trim() : "";
+    const subjectText = subject ? subject.value.trim() : "";
+    const bodyText = body ? body.value.trim() : "";
+    if (!toText && !subjectText && !bodyText) {
+      await showMessageModal("Nothing to Copy", "Click Update Info or enter an email template first.");
+      return;
+    }
+    if (toText) lines.push(`To: ${toText}`);
+    if (ccText) lines.push(`Cc: ${ccText}`);
+    if (subjectText) lines.push(`Subject: ${subjectText}`);
+    if (lines.length) lines.push("");
+    lines.push(bodyText);
+    try {
+      await writeTextToClipboard(lines.join("\n"));
+      showToast({ message: "Email template copied." });
+    } catch (error) {
+      await showMessageModal("Copy Failed", "Unable to copy template to clipboard.");
+    }
+  };
+
+  const openEmailTemplateModal = (contextOverride = null) => {
+    const modal = $("email-template-modal");
+    const typeInput = $("email-template-type");
+    const recipientInput = $("email-template-recipient");
+    const ccInput = $("email-template-cc");
+    const startInput = $("email-template-start-time");
+    const endInput = $("email-template-end-time");
+    const totalInput = $("email-template-total-hours");
+    const subjectInput = $("email-template-subject");
+    const bodyInput = $("email-template-body");
+    if (!modal) return;
+    emailTemplateContextOverride =
+      contextOverride && typeof contextOverride === "object" ? { ...contextOverride } : null;
+    emailTemplateContext = emailTemplateContextOverride || getEmailTemplateContext();
+    if (typeInput) {
+      renderEmailTemplateTypeSelectOptions("email-template-type", "neo-compliance");
+      typeInput.value = "neo-compliance";
+    }
+    const nextType = typeInput ? typeInput.value : "neo-compliance";
+    if (startInput) startInput.value = emailTemplateContext.startTime || "";
+    if (endInput) endInput.value = emailTemplateContext.endTime || "";
+    const startTime = startInput ? sanitizeTimeInput(startInput) : toTemplateValue(emailTemplateContext.startTime);
+    const endTime = endInput ? sanitizeTimeInput(endInput) : toTemplateValue(emailTemplateContext.endTime);
+    const computedTotal = calculateTimeRangeHours(startTime, endTime);
+    const totalHours = computedTotal || toTemplateValue(emailTemplateContext.hours);
+    if (totalInput) {
+      totalInput.value = totalHours || "";
+    }
+    const recipientName = emailTemplateContext.name || "[Candidate Name]";
+    const next = buildEmailTemplateOutput(
+      nextType,
+      emailTemplateContext,
+      recipientName,
+      startTime,
+      endTime,
+      totalHours,
+    );
+    if (recipientInput) recipientInput.value = next.recipients.to;
+    if (ccInput) ccInput.value = next.recipients.cc;
+    if (subjectInput) subjectInput.value = "";
+    if (bodyInput) bodyInput.value = "";
+    emailTemplateLastGeneratedDraft = null;
+    emailTemplateBackdropMouseDown = false;
+    modal.classList.remove("hidden");
+    applyEmailTemplateDraft({ force: true });
+    startEmailTemplateAutoRefresh();
+    if (recipientInput) recipientInput.focus();
+  };
+
+  const closeEmailTemplateModal = () => {
+    const modal = $("email-template-modal");
+    if (modal) modal.classList.add("hidden");
+    stopEmailTemplateAutoRefresh();
+    emailTemplateLastGeneratedDraft = null;
+    emailTemplateBackdropMouseDown = false;
+    emailTemplateContext = null;
+    emailTemplateContextOverride = null;
+  };
+
+  const loadEmailTemplateSettings = async () => {
+    state.emailTemplates.customTypes = {};
+    state.emailTemplates.items = {};
+    if (!workflowApi || !workflowApi.emailTemplatesGet) {
+      state.emailTemplates.loaded = true;
+      renderEmailTemplateTypeSelectOptions("email-template-type", "neo-compliance");
+      renderEmailTemplateDashboard();
+      return;
+    }
+    try {
+      const result = await workflowApi.emailTemplatesGet();
+      state.emailTemplates.items = sanitizeEmailTemplateMap(result && result.templates ? result.templates : {});
+      const customTypesRaw =
+        result && result.customTypes && typeof result.customTypes === "object"
+          ? result.customTypes
+          : {};
+      state.emailTemplates.customTypes = Object.keys(customTypesRaw)
+        .slice(0, 64)
+        .reduce((acc, key) => {
+          const safeId = String(key || "")
+            .toLowerCase()
+            .replace(/[^a-z0-9-]/g, "")
+            .slice(0, 64);
+          const label = sanitizeTemplateDisplayName(customTypesRaw[key]);
+          if (!safeId || !safeId.startsWith("custom-") || !label) return acc;
+          acc[safeId] = label;
+          return acc;
+        }, {});
+    } catch (_error) {
+      state.emailTemplates.customTypes = {};
+      state.emailTemplates.items = {};
+    }
+    state.emailTemplates.loaded = true;
+    renderEmailTemplateTypeSelectOptions("email-template-type", "neo-compliance");
+    renderEmailTemplateDashboard();
+  };
+
+  const saveEmailTemplateSettings = async () => {
+    if (!workflowApi || !workflowApi.emailTemplatesSave) return false;
+    const payload = {
+      templates: sanitizeEmailTemplateMap(state.emailTemplates.items),
+      customTypes: state.emailTemplates.customTypes || {},
+    };
+    const result = await workflowApi.emailTemplatesSave(payload);
+    if (result && result.ok === false) {
+      throw new Error(result.error || "Unable to save template settings.");
+    }
+    state.emailTemplates.items = sanitizeEmailTemplateMap(result && result.templates ? result.templates : {});
+    const customTypesRaw =
+      result && result.customTypes && typeof result.customTypes === "object"
+        ? result.customTypes
+        : {};
+    state.emailTemplates.customTypes = Object.keys(customTypesRaw)
+      .slice(0, 64)
+      .reduce((acc, key) => {
+        const safeId = String(key || "")
+          .toLowerCase()
+          .replace(/[^a-z0-9-]/g, "")
+          .slice(0, 64);
+        const label = sanitizeTemplateDisplayName(customTypesRaw[key]);
+        if (!safeId || !safeId.startsWith("custom-") || !label) return acc;
+        acc[safeId] = label;
+        return acc;
+      }, {});
+    return true;
+  };
+
+  const readEmailTemplateDashboardForm = () => {
+    const toInput = $("template-dashboard-to");
+    const ccInput = $("template-dashboard-cc");
+    const subjectInput = $("template-dashboard-subject");
+    const bodyInput = $("template-dashboard-body");
+    return sanitizeEmailTemplateRecord({
+      toTemplate: toInput ? toInput.value : "",
+      ccTemplate: ccInput ? ccInput.value : "",
+      subjectTemplate: subjectInput ? subjectInput.value : "",
+      bodyTemplate: bodyInput ? bodyInput.value : "",
+    });
+  };
+
+  const renderEmailTemplateDashboard = () => {
+    const typeInput = $("template-dashboard-type");
+    const toInput = $("template-dashboard-to");
+    const ccInput = $("template-dashboard-cc");
+    const subjectInput = $("template-dashboard-subject");
+    const bodyInput = $("template-dashboard-body");
+    if (!typeInput || !toInput || !ccInput || !subjectInput || !bodyInput) return;
+    const allDefs = getAllEmailTemplateDefinitions();
+    const fallbackType = allDefs[0]?.id || "neo-compliance";
+    const hasActive = allDefs.some((item) => item.id === state.emailTemplates.activeType);
+    const nextType = hasActive ? state.emailTemplates.activeType : fallbackType;
+    state.emailTemplates.activeType = nextType;
+    renderEmailTemplateTypeSelectOptions("template-dashboard-type", nextType);
+    renderEmailTemplateTypeSelectOptions("email-template-type", $("email-template-type")?.value || "neo-compliance");
+    const existing =
+      state.emailTemplates && state.emailTemplates.items && state.emailTemplates.items[nextType]
+        ? sanitizeEmailTemplateRecord(state.emailTemplates.items[nextType])
+        : null;
+    const defaults = getEmailTemplateConfigForType(nextType);
+    const preview = buildEmailTemplateDashboardDefaults(nextType);
+    toInput.value = existing ? existing.toTemplate : defaults.toTemplate || "";
+    ccInput.value = existing ? existing.ccTemplate : defaults.ccTemplate || "";
+    const subjectValue = existing ? existing.subjectTemplate : preview.subject || "";
+    const bodyValue = existing ? existing.bodyTemplate : preview.body || "";
+    subjectInput.value = subjectValue.trim() === "{{defaultSubject}}" ? preview.subject || "" : subjectValue;
+    bodyInput.value = bodyValue.trim() === "{{defaultBody}}" ? preview.body || "" : bodyValue;
+  };
+
+  const handleEmailTemplateDashboardTypeChange = () => {
+    const typeInput = $("template-dashboard-type");
+    const type = typeInput ? typeInput.value : "neo-compliance";
+    const allDefs = getAllEmailTemplateDefinitions();
+    state.emailTemplates.activeType = allDefs.some((item) => item.id === type)
+      ? type
+      : (allDefs[0]?.id || "neo-compliance");
+    renderEmailTemplateDashboard();
+  };
+
+  const handleEmailTemplateDashboardSave = async () => {
+    const type = state.emailTemplates.activeType || "neo-compliance";
+    const draft = readEmailTemplateDashboardForm();
+    const defaults = getEmailTemplateConfigForType(type);
+    const preview = buildEmailTemplateDashboardDefaults(type);
+    const isBuiltin = EMAIL_TEMPLATE_TYPES.includes(type);
+    const isDefault =
+      draft.toTemplate === defaults.toTemplate &&
+      draft.ccTemplate === defaults.ccTemplate &&
+      draft.subjectTemplate === preview.subject &&
+      draft.bodyTemplate === preview.body;
+    if (isBuiltin && isDefault) {
+      delete state.emailTemplates.items[type];
+    } else {
+      state.emailTemplates.items[type] = draft;
+    }
+    try {
+      await saveEmailTemplateSettings();
+      renderEmailTemplateDashboard();
+      showToast({ message: "Email template saved." });
+    } catch (_error) {
+      await showMessageModal("Save Failed", "Unable to save email template settings.");
+    }
+  };
+
+  const handleEmailTemplateDashboardReset = async () => {
+    const type = state.emailTemplates.activeType || "neo-compliance";
+    delete state.emailTemplates.items[type];
+    if (!EMAIL_TEMPLATE_TYPES.includes(type)) {
+      delete state.emailTemplates.customTypes[type];
+      const allDefs = getAllEmailTemplateDefinitions();
+      state.emailTemplates.activeType = allDefs[0]?.id || "neo-compliance";
+    }
+    renderEmailTemplateDashboard();
+    try {
+      await saveEmailTemplateSettings();
+      showToast({
+        message: EMAIL_TEMPLATE_TYPES.includes(type)
+          ? "Template reset to default."
+          : "Custom template removed.",
+      });
+    } catch (_error) {
+      await showMessageModal("Reset Failed", "Unable to reset template settings.");
+    }
+  };
+
+  const handleEmailTemplateDashboardResetAll = async () => {
+    const proceed = window.confirm("Reset all email templates to default?");
+    if (!proceed) return;
+    state.emailTemplates.customTypes = {};
+    state.emailTemplates.items = {};
+    state.emailTemplates.activeType = "neo-compliance";
+    renderEmailTemplateDashboard();
+    try {
+      await saveEmailTemplateSettings();
+      showToast({ message: "All templates reset to default." });
+    } catch (_error) {
+      await showMessageModal("Reset Failed", "Unable to reset all template settings.");
+    }
+  };
+
+  const handleEmailTemplateDashboardAdd = async () => {
+    const rawName = window.prompt("Enter a new template name:");
+    if (rawName === null) return;
+    const label = sanitizeTemplateDisplayName(rawName);
+    if (!label) {
+      await showMessageModal("Template Name Required", "Enter a name to create a template.");
+      return;
+    }
+    const nextType = makeUniqueCustomTemplateTypeId(label);
+    if (!nextType) {
+      await showMessageModal("Template Error", "Unable to create a unique template ID.");
+      return;
+    }
+    state.emailTemplates.customTypes[nextType] = label;
+    const defaults = getEmailTemplateConfigForType(nextType);
+    const preview = buildEmailTemplateDashboardDefaults(nextType);
+    state.emailTemplates.items[nextType] = sanitizeEmailTemplateRecord({
+      toTemplate: defaults.toTemplate,
+      ccTemplate: defaults.ccTemplate,
+      subjectTemplate: preview.subject,
+      bodyTemplate: preview.body,
+    });
+    state.emailTemplates.activeType = nextType;
+    renderEmailTemplateDashboard();
+    try {
+      await saveEmailTemplateSettings();
+      showToast({ message: "Template added." });
+    } catch (_error) {
+      await showMessageModal("Save Failed", "Unable to create the new template.");
+    }
+  };
+
   const appendTodoToWeekly = async (todo) => {
     try {
       const data = await workflowApi.weeklyGet();
@@ -2623,13 +5186,191 @@ import {
     if (size) size.value = String(state.data.pageSize);
   };
 
+  const getSelectedDatabaseRows = () => {
+    if (!state.data.selectedRowIds || state.data.selectedRowIds.size === 0) return [];
+    return state.data.rows.filter((row) => state.data.selectedRowIds.has(row.__rowId));
+  };
+
+  const getSelectedDatabaseRow = () => {
+    const selectedRows = getSelectedDatabaseRows();
+    if (selectedRows.length !== 1) return null;
+    return selectedRows[0];
+  };
+
+  const hasControlChars = (value) => {
+    for (let idx = 0; idx < value.length; idx += 1) {
+      const code = value.charCodeAt(idx);
+      if (code < 32 || code === 127) return true;
+    }
+    return false;
+  };
+
+  const getDatabaseCandidateId = (row) => {
+    if (!row || typeof row !== "object") return "";
+    return toTemplateValue(row["candidate UUID"] || row["Candidate UUID"] || row.__rowId);
+  };
+
+  const normalizeSingleEmailAddress = (value) => {
+    const raw = String(value || "")
+      .trim()
+      .toLowerCase();
+    if (!raw) {
+      return { ok: false, error: "Email is required." };
+    }
+    if (raw.length > 120) {
+      return { ok: false, error: "Email is too long." };
+    }
+    if (hasControlChars(raw)) {
+      return { ok: false, error: "Email contains invalid control characters." };
+    }
+    if (/[\s,;]/.test(raw)) {
+      return { ok: false, error: "Enter a single email address only." };
+    }
+    const emailProbe = document.createElement("input");
+    emailProbe.type = "email";
+    emailProbe.value = raw;
+    if (!emailProbe.checkValidity()) {
+      return { ok: false, error: "Please enter a valid email address." };
+    }
+    return { ok: true, value: raw };
+  };
+
+  const applyRowEmailToState = (candidateId, emailAddress) => {
+    state.data.rows = state.data.rows.map((row) =>
+      row.__rowId === candidateId ? { ...row, "Contact Email": emailAddress } : row,
+    );
+    const detailsRow = state.kanban.detailsRow;
+    if (
+      detailsRow &&
+      toTemplateValue(detailsRow["candidate UUID"] || detailsRow.__rowId) === candidateId
+    ) {
+      detailsRow["Contact Email"] = emailAddress;
+    }
+  };
+
+  const saveCandidateRowEmail = async (row, emailAddress) => {
+    if (!row || typeof row !== "object") {
+      return { ok: false, error: "No candidate row selected." };
+    }
+    if (state.data.readOnly || state.data.activeSourceId !== "current") {
+      return {
+        ok: false,
+        error: "This database source is read-only. Switch to Current Database to edit email.",
+      };
+    }
+    const candidateId = getDatabaseCandidateId(row);
+    if (!candidateId) {
+      return { ok: false, error: "Unable to locate candidate UUID for the selected row." };
+    }
+    try {
+      const result = await workflowApi.piiSave(candidateId, { "Contact Email": emailAddress });
+      if (result && result.ok === false) {
+        return { ok: false, error: result.error || "Unable to save candidate email." };
+      }
+      applyRowEmailToState(candidateId, emailAddress);
+      renderDatabaseTable();
+      return { ok: true };
+    } catch (_error) {
+      return { ok: false, error: "Unable to save candidate email." };
+    }
+  };
+
+  const buildEmailTemplateContextFromDatabaseRow = (row) => {
+    const candidateId = getDatabaseCandidateId(row);
+    const card = candidateId
+      ? state.kanban.cards.find((item) => item.uuid === candidateId) || null
+      : null;
+    return buildEmailTemplateContextFromCardRow(card, row);
+  };
+
+  const getLatestCandidateRow = async (candidateId, fallbackRow = {}) => {
+    if (!candidateId || !workflowApi || !workflowApi.piiGet) return fallbackRow || {};
+    try {
+      const result = await workflowApi.piiGet(candidateId);
+      return (result && result.row) || fallbackRow || {};
+    } catch (_error) {
+      return fallbackRow || {};
+    }
+  };
+
+  const handleDatabaseSendEmail = async () => {
+    if (state.data.tableId !== "candidate_data") {
+      await showMessageModal(
+        "Unavailable",
+        "Send Email is available only for the Employee candidate_data table.",
+      );
+      return;
+    }
+    const selectedRows = getSelectedDatabaseRows();
+    if (selectedRows.length === 0) {
+      await showMessageModal("Selection Required", "Select one employee row first.");
+      return;
+    }
+    if (selectedRows.length > 1) {
+      await showMessageModal("Single Row Required", "Select only one employee row to send an email.");
+      return;
+    }
+
+    const row = getSelectedDatabaseRow();
+    if (!row) {
+      await showMessageModal("Selection Required", "Select one employee row first.");
+      return;
+    }
+    const candidateName = toTemplateValue(row["Candidate Name"]) || "This employee";
+    let emailAddress = toTemplateValue(row["Contact Email"]);
+    let emailCheck = normalizeSingleEmailAddress(emailAddress);
+    if (!emailAddress || !emailCheck.ok) {
+      const needsValid = !emailAddress
+        ? `${candidateName} does not have an email on file.`
+        : `${candidateName} has an invalid email on file.`;
+      const wantsToAdd = window.confirm(
+        `${needsValid}\nWould you like to add/update the email now?`,
+      );
+      if (!wantsToAdd) return;
+
+      if (state.data.readOnly || state.data.activeSourceId !== "current") {
+        await showMessageModal(
+          "Read-only Database",
+          "This row is in a read-only database source. Switch to Current Database to add an email.",
+        );
+        return;
+      }
+
+      const entered = window.prompt(`Enter email for ${candidateName}:`, "");
+      if (entered === null) return;
+      emailCheck = normalizeSingleEmailAddress(entered);
+      if (!emailCheck.ok) {
+        await showMessageModal("Invalid Email", emailCheck.error);
+        return;
+      }
+      const saved = await saveCandidateRowEmail(row, emailCheck.value);
+      if (!saved.ok) {
+        await showMessageModal("Update Failed", saved.error || "Unable to save candidate email.");
+        return;
+      }
+      emailAddress = emailCheck.value;
+    }
+
+    const candidateId = getDatabaseCandidateId(row);
+    const latestRow = await getLatestCandidateRow(candidateId, row);
+    const context = buildEmailTemplateContextFromDatabaseRow({
+      ...latestRow,
+      "Contact Email": emailAddress,
+    });
+    openEmailTemplateModal(context);
+  };
+
   const updateDbDeleteButton = () => {
     const btn = $("db-delete");
+    const emailBtn = $("db-send-email");
     const clearBtn = $("db-clear-selection");
     const hasSelection = state.data.selectedRowIds.size > 0;
+    const hasSingleSelection = state.data.selectedRowIds.size === 1;
+    const isCandidateTable = state.data.tableId === "candidate_data";
     const canEdit = !state.data.readOnly;
     if (btn) btn.disabled = !canEdit || !hasSelection;
     if (clearBtn) clearBtn.disabled = !canEdit || !hasSelection;
+    if (emailBtn) emailBtn.disabled = !isCandidateTable || !hasSingleSelection;
   };
 
   const clearDatabaseSelection = (shouldRender = true) => {
@@ -2853,6 +5594,379 @@ import {
     } finally {
       clearDatabaseSelection();
     }
+  };
+
+  const updateUniformDeleteButton = () => {
+    const deleteBtn = $("uniform-delete");
+    const clearBtn = $("uniform-clear-selection");
+    const hasSelection = state.uniforms.selectedRowIds.size > 0;
+    if (deleteBtn) deleteBtn.disabled = !hasSelection;
+    if (clearBtn) clearBtn.disabled = !hasSelection;
+  };
+
+  const getFilteredUniformRows = () => {
+    const query = state.uniforms.query.trim().toLowerCase();
+    if (!query) return state.uniforms.rows;
+    return state.uniforms.rows.filter((row) =>
+      state.uniforms.columns.some((col) => {
+        const value = row[col];
+        return String(value ?? "")
+          .toLowerCase()
+          .includes(query);
+      }),
+    );
+  };
+
+  const getPagedUniformRows = () => {
+    const filtered = getFilteredUniformRows();
+    const totalPages = Math.max(1, Math.ceil(filtered.length / state.uniforms.pageSize));
+    if (state.uniforms.page > totalPages) state.uniforms.page = totalPages;
+    if (state.uniforms.page < 1) state.uniforms.page = 1;
+    const start = (state.uniforms.page - 1) * state.uniforms.pageSize;
+    return filtered.slice(start, start + state.uniforms.pageSize);
+  };
+
+  const updateUniformMeta = (filteredCount) => {
+    const meta = $("uniform-table-meta");
+    if (!meta) return;
+    meta.textContent = `${filteredCount} of ${state.uniforms.rows.length} rows`;
+  };
+
+  const updateUniformPagination = (filteredCount) => {
+    const totalPages = Math.max(1, Math.ceil(filteredCount / state.uniforms.pageSize));
+    const info = $("uniform-page-info");
+    const prev = $("uniform-page-prev");
+    const next = $("uniform-page-next");
+    const size = $("uniform-page-size");
+    if (info) info.textContent = `Page ${state.uniforms.page} of ${totalPages}`;
+    if (prev) prev.disabled = state.uniforms.page <= 1;
+    if (next) next.disabled = state.uniforms.page >= totalPages;
+    if (size) size.value = String(state.uniforms.pageSize);
+  };
+
+  const clearUniformSelection = (shouldRender = true) => {
+    state.uniforms.selectedRowIds = new Set();
+    updateUniformDeleteButton();
+    if (shouldRender) renderUniformTable();
+  };
+
+  const renderUniformTable = () => {
+    const table = $("uniform-table");
+    if (!table) return;
+    const thead = table.querySelector("thead");
+    const tbody = table.querySelector("tbody");
+    if (!thead || !tbody) return;
+
+    const filteredRows = getFilteredUniformRows();
+    const rows = getPagedUniformRows();
+
+    thead.innerHTML = "";
+    tbody.innerHTML = "";
+
+    const headerRow = document.createElement("tr");
+    const selectTh = document.createElement("th");
+    const selectAll = document.createElement("input");
+    selectAll.type = "checkbox";
+    selectAll.className = "table-checkbox";
+    selectAll.dataset.uniformSelectAll = "1";
+    selectAll.checked =
+      rows.length > 0 && rows.every((row) => state.uniforms.selectedRowIds.has(row.__rowId));
+    selectTh.appendChild(selectAll);
+    headerRow.appendChild(selectTh);
+
+    state.uniforms.columns.forEach((col) => {
+      const th = document.createElement("th");
+      th.textContent = col;
+      headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+
+    if (!rows.length) {
+      const emptyRow = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = state.uniforms.columns.length + 1;
+      td.className = "data-table__empty";
+      td.textContent = "No rows found.";
+      emptyRow.appendChild(td);
+      tbody.appendChild(emptyRow);
+      updateUniformMeta(filteredRows.length);
+      updateUniformPagination(filteredRows.length);
+      updateUniformDeleteButton();
+      return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    rows.forEach((row) => {
+      const tr = document.createElement("tr");
+      const selectTd = document.createElement("td");
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.className = "table-checkbox uniform-row-checkbox";
+      checkbox.dataset.rowId = row.__rowId;
+      checkbox.checked = state.uniforms.selectedRowIds.has(row.__rowId);
+      selectTd.appendChild(checkbox);
+      tr.appendChild(selectTd);
+
+      state.uniforms.columns.forEach((col) => {
+        const td = document.createElement("td");
+        const value = row[col];
+        td.textContent = value === null || value === undefined ? "" : String(value);
+        tr.appendChild(td);
+      });
+      fragment.appendChild(tr);
+    });
+    tbody.appendChild(fragment);
+
+    updateUniformMeta(filteredRows.length);
+    updateUniformPagination(filteredRows.length);
+    updateUniformDeleteButton();
+  };
+
+  const loadUniformTable = async () => {
+    let table = null;
+    try {
+      table = await workflowApi.dbGetTable("uniform_inventory", "current");
+    } catch (error) {
+      await showMessageModal(
+        "Uniforms Unavailable",
+        "Uniform database handlers are not available. Please fully quit and relaunch the app.",
+      );
+      return;
+    }
+    state.uniforms.columns = table && table.columns && table.columns.length
+      ? table.columns
+      : ["Alteration", "Type", "Size", "Waist", "Inseam", "Quantity", "Branch"];
+    state.uniforms.rows = table && table.rows ? table.rows : [];
+    state.uniforms.page = 1;
+    state.uniforms.selectedRowIds = new Set();
+    renderUniformTable();
+  };
+
+  const handleUniformDelete = async () => {
+    if (state.uniforms.selectedRowIds.size === 0) return;
+    const ids = Array.from(state.uniforms.selectedRowIds);
+    const previousRows = state.uniforms.rows.map((row) => ({ ...row }));
+    const previousSelection = new Set(state.uniforms.selectedRowIds);
+    const result = await withOptimisticUpdate({
+      apply: () => {
+        state.uniforms.rows = state.uniforms.rows.filter(
+          (row) => !state.uniforms.selectedRowIds.has(row.__rowId),
+        );
+        state.uniforms.selectedRowIds = new Set();
+        renderUniformTable();
+      },
+      rollback: () => {
+        state.uniforms.rows = previousRows;
+        state.uniforms.selectedRowIds = previousSelection;
+        renderUniformTable();
+      },
+      request: () => workflowApi.dbDeleteRows("uniform_inventory", ids, "current"),
+      onSuccess: async (payload) => {
+        if (payload && payload.ok === false) {
+          throw new Error(payload.message || "Unable to delete uniform rows.");
+        }
+        await loadUniformTable();
+        if (payload && payload.undoId) {
+          pushUndo(payload.undoId);
+          showToast({
+            message: "Uniform rows deleted.",
+            actionLabel: "Undo",
+            onAction: async () => {
+              await applyUndoFromToast(payload.undoId, async () => {
+                await loadUniformTable();
+              });
+            },
+          });
+        }
+      },
+      onErrorMessage: "Unable to delete uniform rows. Please fully quit and relaunch the app.",
+    });
+    if (!result) return;
+    clearUniformSelection();
+  };
+
+  const handleUniformExport = async () => {
+    const visibleRows = getFilteredUniformRows();
+    const selectedRows = state.uniforms.rows.filter((row) =>
+      state.uniforms.selectedRowIds.has(row.__rowId),
+    );
+    let rowsToExport = selectedRows.length ? selectedRows : visibleRows;
+    if (!rowsToExport.length) {
+      rowsToExport = state.uniforms.rows;
+    }
+    if (!rowsToExport.length) {
+      await showMessageModal(
+        "Nothing to Export",
+        "There are no uniform rows to export.",
+      );
+      clearUniformSelection();
+      return;
+    }
+    try {
+      const result = await workflowApi.dbExportCsv({
+        tableId: "uniform_inventory",
+        tableName: "Uniform Inventory",
+        columns: state.uniforms.columns,
+        rows: rowsToExport,
+        sourceId: "current",
+      });
+      if (result && result.ok === false) {
+        await showMessageModal("Export Failed", result.message || "Unable to export CSV.");
+      }
+    } catch (error) {
+      await showMessageModal(
+        "Export Failed",
+        "Unable to export CSV. Please fully quit and relaunch the app.",
+      );
+    } finally {
+      clearUniformSelection();
+    }
+  };
+
+  const updateUniformAddTypeFields = () => {
+    const typeInput = $("uniform-add-type");
+    const details = $("uniform-add-details");
+    const alterationInput = $("uniform-add-alteration");
+    const shirtSizeInput = $("uniform-add-shirt-size");
+    const pantsFields = $("uniform-add-pants-fields");
+    const waistInput = $("uniform-add-waist");
+    const inseamInput = $("uniform-add-inseam");
+    const quantityInput = $("uniform-add-quantity");
+    const branchInput = $("uniform-add-branch");
+    const type = typeInput ? typeInput.value.trim() : "";
+    const showShirt = type === "Shirt";
+    const showPants = type === "Pants";
+    const hasType = showShirt || showPants;
+
+    if (details) details.classList.toggle("hidden", !hasType);
+    if (alterationInput) {
+      alterationInput.disabled = !hasType;
+      alterationInput.required = hasType;
+      if (!hasType) alterationInput.value = "";
+    }
+    if (quantityInput) {
+      quantityInput.disabled = !hasType;
+      quantityInput.required = hasType;
+      if (!hasType) quantityInput.value = "";
+    }
+    if (branchInput) {
+      branchInput.disabled = !hasType;
+      branchInput.required = hasType;
+      if (!hasType) branchInput.value = "";
+    }
+
+    if (shirtSizeInput) {
+      shirtSizeInput.classList.toggle("hidden", !showShirt);
+      shirtSizeInput.disabled = !showShirt;
+      shirtSizeInput.required = showShirt;
+      if (!showShirt) shirtSizeInput.value = "";
+    }
+    if (pantsFields) pantsFields.classList.toggle("hidden", !showPants);
+    if (waistInput) {
+      waistInput.disabled = !showPants;
+      waistInput.required = showPants;
+      if (!showPants) waistInput.value = "";
+    }
+    if (inseamInput) {
+      inseamInput.disabled = !showPants;
+      inseamInput.required = showPants;
+      if (!showPants) inseamInput.value = "";
+    }
+  };
+
+  const openUniformAddModal = () => {
+    const modal = $("uniform-add-modal");
+    const alteration = $("uniform-add-alteration");
+    const type = $("uniform-add-type");
+    const shirtSize = $("uniform-add-shirt-size");
+    const waist = $("uniform-add-waist");
+    const inseam = $("uniform-add-inseam");
+    const quantity = $("uniform-add-quantity");
+    const branch = $("uniform-add-branch");
+    if (!modal) return;
+    if (alteration) alteration.value = "";
+    if (type) type.value = "";
+    if (shirtSize) shirtSize.value = "";
+    if (waist) waist.value = "";
+    if (inseam) inseam.value = "";
+    if (quantity) quantity.value = "";
+    if (branch) branch.value = "";
+    updateUniformAddTypeFields();
+    modal.classList.remove("hidden");
+    if (type) type.focus();
+  };
+
+  const closeUniformAddModal = () => {
+    const modal = $("uniform-add-modal");
+    if (modal) modal.classList.add("hidden");
+  };
+
+  const handleUniformAddSubmit = async (event) => {
+    event.preventDefault();
+    const alterationInput = $("uniform-add-alteration");
+    const typeInput = $("uniform-add-type");
+    const shirtSizeInput = $("uniform-add-shirt-size");
+    const waistInput = $("uniform-add-waist");
+    const inseamInput = $("uniform-add-inseam");
+    const quantityInput = $("uniform-add-quantity");
+    const branchInput = $("uniform-add-branch");
+    const alteration = alterationInput ? alterationInput.value.trim() : "";
+    const type = typeInput ? typeInput.value.trim() : "";
+    const shirtSize = shirtSizeInput ? shirtSizeInput.value.trim() : "";
+    const waist = normalizeUniformMeasurement(waistInput ? waistInput.value : "");
+    const inseam = normalizeUniformMeasurement(inseamInput ? inseamInput.value : "");
+    const quantityRaw = quantityInput ? quantityInput.value.trim() : "";
+    const branch = branchInput ? branchInput.value.trim() : "";
+    const quantity = Number(quantityRaw);
+    const size = type === "Pants" ? buildPantsSize(waist, inseam) : shirtSize;
+
+    if (!alteration || !type || !branch) {
+      await showMessageModal("Missing Fields", "Alteration, Type, and Branch are required.");
+      return;
+    }
+    if (type === "Shirt") {
+      if (!UNIFORM_ADD_SHIRT_SIZE_OPTIONS.includes(shirtSize)) {
+        await showMessageModal("Missing Shirt Size", "Select a shirt size from the dropdown.");
+        return;
+      }
+    } else if (type === "Pants") {
+      if (!waist || !inseam) {
+        await showMessageModal("Missing Pants Size", "Waist and Inseam are required for pants.");
+        return;
+      }
+    } else {
+      await showMessageModal("Invalid Type", "Type must be Shirt or Pants.");
+      return;
+    }
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      await showMessageModal("Invalid Quantity", "Quantity must be a number greater than 0.");
+      return;
+    }
+
+    let result = null;
+    try {
+      result = await workflowApi.uniformsAddItem({
+        alteration,
+        type,
+        size,
+        waist,
+        inseam,
+        quantity,
+        branch,
+      });
+    } catch (error) {
+      await showMessageModal(
+        "Save Failed",
+        "Unable to add uniform inventory. Please fully quit and relaunch the app.",
+      );
+      return;
+    }
+    if (!result || result.ok === false) {
+      await showMessageModal("Save Failed", (result && result.error) || "Unable to add uniform inventory.");
+      return;
+    }
+    closeUniformAddModal();
+    await loadUniformTable();
   };
 
   const showDbImportActionModal = (fileName) => {
@@ -3116,6 +6230,9 @@ import {
     if (state.page === "database" && target !== "database") {
       clearDatabaseSelection(false);
     }
+    if (state.page === "uniforms" && target !== "uniforms") {
+      clearUniformSelection(false);
+    }
     state.page = target;
     document.body.dataset.page = target;
     const workflowSection = $("sidebar-workflow-section");
@@ -3132,6 +6249,10 @@ import {
       dashboard: renderKanbanBoard,
       settings: renderKanbanSettings,
       database: () => loadDatabaseSources().then(loadDatabaseTables),
+      uniforms: loadUniformTable,
+      "email-templates": renderEmailTemplateDashboard,
+      help: renderHelpPage,
+      about: () => {},
     };
     const handler = pageHandlers[target];
     if (handler) handler();
@@ -3166,12 +6287,37 @@ import {
     const neoDatePicker = $("neo-date-picker");
     const neoDateInput = $("neo-date-input");
     const detailsClose = $("details-drawer-close");
+    const detailsBasicInfo = $("details-basic-info");
+    const detailsPii = $("details-pii");
+    const detailsEmailTemplate = $("details-email-template");
     const detailsProcess = $("details-process");
     const processClose = $("process-close");
     const processConfirm = $("process-confirm");
     const processRemove = $("process-remove");
     const processArrival = $("process-arrival");
     const processDeparture = $("process-departure");
+    const processBranch = $("process-branch");
+    const emailTemplateModal = $("email-template-modal");
+    const emailTemplateForm = $("email-template-form");
+    const emailTemplateType = $("email-template-type");
+    const emailTemplateStartTime = $("email-template-start-time");
+    const emailTemplateEndTime = $("email-template-end-time");
+    const emailTemplateClose = $("email-template-close");
+    const emailTemplateCancel = $("email-template-cancel");
+    const emailTemplateCopy = $("email-template-copy");
+    const templateDashboardAdd = $("template-dashboard-add");
+    const templateDashboardType = $("template-dashboard-type");
+    const templateDashboardSave = $("template-dashboard-save");
+    const templateDashboardReset = $("template-dashboard-reset");
+    const templateDashboardResetAll = $("template-dashboard-reset-all");
+    const helpManualSelect = $("help-manual-select");
+    const helpOpenManual = $("help-open-manual");
+    const aboutOpenContributingGuide = $("about-open-contributing-guide");
+    const helpManualModal = $("help-manual-modal");
+    const helpManualClose = $("help-manual-close");
+    const helpManualCloseFooter = $("help-manual-close-footer");
+    const helpManualSearch = $("help-manual-search");
+    const helpManualContent = $("help-manual-content");
 
     const on = (el, eventName, handler) => {
       if (el) el.addEventListener(eventName, handler);
@@ -3189,6 +6335,83 @@ import {
     onClick(authBiometric, handleAuthBiometric);
     onClick(biometricToggle, handleBiometricToggle);
     onClick(dbImport, handleDatabaseImport);
+    onClick(helpOpenManual, () =>
+      openHelpManualModal(helpManualSelect ? helpManualSelect.value : helpState.activeManualId),
+    );
+    onClick(aboutOpenContributingGuide, () => openHelpManualModal("readme"));
+    onClick(helpManualClose, closeHelpManualModal);
+    onClick(helpManualCloseFooter, closeHelpManualModal);
+    if (helpManualSelect) {
+      helpManualSelect.addEventListener("change", () => {
+        helpState.activeManualId = getHelpManualById(helpManualSelect.value).id;
+      });
+      helpManualSelect.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        openHelpManualModal(helpManualSelect.value);
+      });
+    }
+    if (helpManualModal) {
+      helpManualModal.addEventListener("click", (event) => {
+        if (event.target === helpManualModal) closeHelpManualModal();
+      });
+    }
+    if (helpManualSearch) {
+      const onManualSearch = debounce(applyHelpManualSearch, 120);
+      helpManualSearch.addEventListener("input", onManualSearch);
+    }
+    if (helpManualContent) {
+      const onManualScroll = debounce(updateHelpTocActive, 50);
+      helpManualContent.addEventListener("scroll", onManualScroll);
+    }
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      const manualModalOpen =
+        helpManualModal && !helpManualModal.classList.contains("hidden");
+      if (manualModalOpen) closeHelpManualModal();
+      const uniformModal = $("uniform-add-modal");
+      if (uniformModal && !uniformModal.classList.contains("hidden")) {
+        closeUniformAddModal();
+      }
+      if (emailTemplateModal && !emailTemplateModal.classList.contains("hidden")) {
+        closeEmailTemplateModal();
+      }
+    });
+    window.addEventListener("focus", () => {
+      const modalOpen = emailTemplateModal && !emailTemplateModal.classList.contains("hidden");
+      if (!modalOpen) return;
+      void refreshEmailTemplateContextFromDatabase();
+    });
+    onClick(detailsBasicInfo, openDetailsBasicInfo);
+    onClick(detailsPii, openDetailsPii);
+    onClick(detailsEmailTemplate, openDetailsEmailTemplate);
+    onClick(emailTemplateClose, closeEmailTemplateModal);
+    onClick(emailTemplateCancel, closeEmailTemplateModal);
+    on(emailTemplateForm, "submit", handleEmailTemplateGenerate);
+    on(emailTemplateType, "change", handleEmailTemplateTypeChange);
+    [emailTemplateStartTime, emailTemplateEndTime].forEach((input) => {
+      on(input, "input", () => {
+        sanitizeTimeInput(input);
+        handleEmailTemplateGenerate();
+      });
+    });
+    onClick(emailTemplateCopy, handleEmailTemplateCopy);
+    onClick(templateDashboardAdd, handleEmailTemplateDashboardAdd);
+    on(templateDashboardType, "change", handleEmailTemplateDashboardTypeChange);
+    onClick(templateDashboardSave, handleEmailTemplateDashboardSave);
+    onClick(templateDashboardReset, handleEmailTemplateDashboardReset);
+    onClick(templateDashboardResetAll, handleEmailTemplateDashboardResetAll);
+    if (emailTemplateModal) {
+      emailTemplateModal.addEventListener("mousedown", (event) => {
+        emailTemplateBackdropMouseDown = event.target === emailTemplateModal;
+      });
+      emailTemplateModal.addEventListener("click", (event) => {
+        const shouldClose =
+          event.target === emailTemplateModal && emailTemplateBackdropMouseDown;
+        emailTemplateBackdropMouseDown = false;
+        if (shouldClose) closeEmailTemplateModal();
+      });
+    }
     if (dbSourceSelect) {
       dbSourceSelect.addEventListener("change", () =>
         setDatabaseSource(dbSourceSelect.value || "current"),
@@ -3234,6 +6457,9 @@ import {
     [processArrival, processDeparture].forEach((input) => {
       on(input, "input", () => sanitizeTimeInput(input));
     });
+    on(processBranch, "change", () => {
+      if (processBranch) processBranch.value = processBranch.value.trim();
+    });
 
     const weeklyButton = $("weekly-toggle");
     const weeklyClose = $("weekly-close");
@@ -3264,6 +6490,7 @@ import {
 
     const dbSearch = $("db-search");
     const dbExport = $("db-export");
+    const dbSendEmail = $("db-send-email");
     const dbClear = $("db-clear-selection");
     const dbDelete = $("db-delete");
     const dbSelect = $("db-table-select");
@@ -3271,6 +6498,21 @@ import {
     const dbPrev = $("db-page-prev");
     const dbNext = $("db-page-next");
     const dbSize = $("db-page-size");
+    const uniformSearch = $("uniform-search");
+    const uniformAdd = $("uniform-add");
+    const uniformExport = $("uniform-export");
+    const uniformClear = $("uniform-clear-selection");
+    const uniformDelete = $("uniform-delete");
+    const uniformTable = $("uniform-table");
+    const uniformPrev = $("uniform-page-prev");
+    const uniformNext = $("uniform-page-next");
+    const uniformSize = $("uniform-page-size");
+    const uniformAddForm = $("uniform-add-form");
+    const uniformAddClose = $("uniform-add-close");
+    const uniformAddCancel = $("uniform-add-cancel");
+    const uniformAddType = $("uniform-add-type");
+    const uniformAddWaist = $("uniform-add-waist");
+    const uniformAddInseam = $("uniform-add-inseam");
     if (dbSearch) {
       const onSearch = debounce(() => {
         state.data.query = dbSearch.value;
@@ -3280,6 +6522,7 @@ import {
       dbSearch.addEventListener("input", onSearch);
     }
     onClick(dbExport, handleDatabaseExport);
+    onClick(dbSendEmail, handleDatabaseSendEmail);
     onClick(dbClear, () => clearDatabaseSelection());
     onClick(dbDelete, handleDatabaseDelete);
     if (dbPrev) {
@@ -3342,6 +6585,79 @@ import {
       });
     }
 
+    if (uniformSearch) {
+      const onUniformSearch = debounce(() => {
+        state.uniforms.query = uniformSearch.value;
+        state.uniforms.page = 1;
+        renderUniformTable();
+      }, 200);
+      uniformSearch.addEventListener("input", onUniformSearch);
+    }
+    onClick(uniformAdd, openUniformAddModal);
+    onClick(uniformExport, handleUniformExport);
+    onClick(uniformClear, () => clearUniformSelection());
+    onClick(uniformDelete, handleUniformDelete);
+    on(uniformAddForm, "submit", handleUniformAddSubmit);
+    onClick(uniformAddClose, closeUniformAddModal);
+    onClick(uniformAddCancel, closeUniformAddModal);
+    on(uniformAddType, "change", updateUniformAddTypeFields);
+    on(uniformAddWaist, "input", () => {
+      uniformAddWaist.value = normalizeUniformMeasurement(uniformAddWaist.value);
+    });
+    on(uniformAddInseam, "input", () => {
+      uniformAddInseam.value = normalizeUniformMeasurement(uniformAddInseam.value);
+    });
+    if (uniformPrev) {
+      uniformPrev.addEventListener("click", () => {
+        if (state.uniforms.page > 1) {
+          state.uniforms.page -= 1;
+          renderUniformTable();
+        }
+      });
+    }
+    if (uniformNext) {
+      uniformNext.addEventListener("click", () => {
+        state.uniforms.page += 1;
+        renderUniformTable();
+      });
+    }
+    if (uniformSize) {
+      uniformSize.addEventListener("change", () => {
+        state.uniforms.pageSize = Number(uniformSize.value) || 50;
+        state.uniforms.page = 1;
+        renderUniformTable();
+      });
+    }
+    if (uniformTable) {
+      uniformTable.addEventListener("change", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLInputElement)) return;
+        if (target.dataset.uniformSelectAll) {
+          if (target.checked) {
+            const next = new Set(state.uniforms.selectedRowIds);
+            getPagedUniformRows().forEach((row) => next.add(row.__rowId));
+            state.uniforms.selectedRowIds = next;
+          } else {
+            const next = new Set(state.uniforms.selectedRowIds);
+            getPagedUniformRows().forEach((row) => next.delete(row.__rowId));
+            state.uniforms.selectedRowIds = next;
+          }
+          renderUniformTable();
+          return;
+        }
+        if (target.classList.contains("uniform-row-checkbox")) {
+          const rowId = target.dataset.rowId;
+          if (!rowId) return;
+          if (target.checked) {
+            state.uniforms.selectedRowIds.add(rowId);
+          } else {
+            state.uniforms.selectedRowIds.delete(rowId);
+          }
+          updateUniformDeleteButton();
+        }
+      });
+    }
+
     window.addEventListener("resize", () => {
       if (state.flyouts.weekly) positionFlyout($("weekly-panel"));
       if (state.flyouts.todo) positionFlyout($("todo-panel"));
@@ -3396,6 +6712,7 @@ import {
       if (!ok) return;
     }
 
+    await loadEmailTemplateSettings();
     switchPage("dashboard");
     await loadKanban();
     await loadTodos();

@@ -50,24 +50,28 @@
           </button>
           <button class="nav-item" data-page="database">
             <span class="nav-icon">DB</span>
-            <span class="nav-label">Database</span>
+            <span class="nav-label">Employee Databases</span>
+          </button>
+          <button class="nav-item" data-page="uniforms">
+            <span class="nav-icon">U</span>
+            <span class="nav-label">Uniforms Database</span>
+          </button>
+          <button class="nav-item" data-page="email-templates">
+            <span class="nav-icon">ET</span>
+            <span class="nav-label">Email Template Dashboard</span>
+          </button>
+          <button class="nav-item" data-page="help">
+            <span class="nav-icon">?</span>
+            <span class="nav-label">Help &amp; Feedback</span>
+          </button>
+          <button class="nav-item" data-page="about">
+            <span class="nav-icon">i</span>
+            <span class="nav-label">About</span>
           </button>
         </nav>
         <div id="sidebar-workflow-section" class="sidebar__section sidebar__section--actions hidden">
           <div class="section__title">Workflow Actions</div>
           <div id="sidebar-workflow-actions" class="sidebar__actions"></div>
-        </div>
-        <div class="sidebar__section">
-          <div class="section__title">Resources</div>
-          <a
-            class="nav-item nav-item--link"
-            href="https://github.com/davidcit646/Workflow/blob/main/docs/USER_MANUAL.md"
-            target="_blank"
-            rel="noreferrer"
-          >
-            <span class="nav-icon">?</span>
-            <span class="nav-label">User Manual</span>
-          </a>
         </div>
         <div class="sidebar__spacer"></div>
         <div class="sidebar__footer">
@@ -155,6 +159,52 @@
                 </div>
                 <div class="details-drawer__body" id="details-drawer-body"></div>
                 <div class="details-drawer__footer">
+                  <div class="details-drawer__quick-actions" aria-label="Candidate action shortcuts">
+                    <button
+                      id="details-basic-info"
+                      class="button button--ghost details-action-button"
+                      type="button"
+                    >
+                      <span class="details-action-button__art details-action-button__art--basic" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" focusable="false">
+                          <rect x="3.5" y="5" width="17" height="14" rx="2.5" />
+                          <circle cx="9" cy="11" r="2" />
+                          <path d="M6.5 15c.8-1.2 1.8-1.8 2.5-1.8s1.7.6 2.5 1.8" />
+                          <path d="M14 10h4.5M14 13h4.5" />
+                        </svg>
+                      </span>
+                      <span>Basic Info</span>
+                    </button>
+                    <button
+                      id="details-pii"
+                      class="button button--ghost details-action-button"
+                      type="button"
+                    >
+                      <span class="details-action-button__art details-action-button__art--pii" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" focusable="false">
+                          <path d="M12 3l7 3v5c0 4.2-2.9 7.3-7 8.8-4.1-1.5-7-4.6-7-8.8V6l7-3z" />
+                          <rect x="9" y="10.5" width="6" height="5" rx="1.3" />
+                          <path d="M10.5 10.5v-1a1.5 1.5 0 0 1 3 0v1" />
+                        </svg>
+                      </span>
+                      <span>PII</span>
+                    </button>
+                    <button
+                      id="details-email-template"
+                      class="button button--ghost details-action-button"
+                      type="button"
+                    >
+                      <span class="details-action-button__art details-action-button__art--email" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" focusable="false">
+                          <rect x="3.5" y="6" width="17" height="12" rx="2" />
+                          <path d="M4.5 7l7.5 6L19.5 7" />
+                          <path d="M4.5 17l5.5-4.5" />
+                          <path d="M19.5 17L14 12.5" />
+                        </svg>
+                      </span>
+                      <span>Email Template</span>
+                    </button>
+                  </div>
                   <button
                     id="details-process"
                     class="button button--primary button--full"
@@ -190,9 +240,9 @@
               <div class="topbar__title">
                 <span class="topbar__app">Workflow</span>
                 <span class="topbar__divider">|</span>
-                <span class="topbar__page">Database</span>
+                <span class="topbar__page">Employee Databases</span>
               </div>
-              <div class="topbar__subtitle">View and manage stored onboarding data.</div>
+              <div class="topbar__subtitle">View and manage stored employee onboarding data.</div>
               </div>
             </div>
             <div class="topbar__actions topbar__actions--db">
@@ -206,6 +256,9 @@
               </div>
               <button id="db-export" class="button button--primary" type="button">
                 Export CSV
+              </button>
+              <button id="db-send-email" class="button button--success" type="button" disabled>
+                Send Email
               </button>
               <button id="db-clear-selection" class="button button--primary" type="button" disabled>
                 Clear Selection
@@ -257,6 +310,200 @@
           </div>
         </section>
 
+        <section id="page-uniforms" class="page">
+          <header class="topbar">
+            <div class="topbar__left">
+              <button class="topbar__menu" type="button" data-sidebar-toggle aria-label="Open menu">
+                <svg class="icon icon--chevron" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M9 6l6 6-6 6"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+              <div class="topbar__brand" aria-hidden="true">
+                <img class="topbar__logo" src="./assets/app-icon.svg" alt="" />
+              </div>
+              <div class="topbar__meta">
+              <div class="topbar__title">
+                <span class="topbar__app">Workflow</span>
+                <span class="topbar__divider">|</span>
+                <span class="topbar__page">Uniforms Database</span>
+              </div>
+              <div class="topbar__subtitle">Track branch uniform inventory in one table.</div>
+              </div>
+            </div>
+            <div class="topbar__actions topbar__actions--db">
+              <div class="search search--db">
+                <input
+                  id="uniform-search"
+                  type="text"
+                  placeholder="Search uniforms..."
+                  autocomplete="off"
+                />
+              </div>
+              <button id="uniform-add" class="button button--success" type="button">
+                Add Uniform
+              </button>
+              <button id="uniform-export" class="button button--primary" type="button">
+                Export CSV
+              </button>
+              <button
+                id="uniform-clear-selection"
+                class="button button--primary"
+                type="button"
+                disabled
+              >
+                Clear Selection
+              </button>
+              <button id="uniform-delete" class="button button--danger" type="button" disabled>
+                Delete Selected
+              </button>
+            </div>
+          </header>
+          <div class="page__body settings-body">
+            <div class="card">
+              <div class="card__title">Uniform Inventory</div>
+              <div class="muted">Columns: Alteration | Type | Size | Waist | Inseam | Quantity | Branch</div>
+            </div>
+            <div class="card">
+              <div class="db-table-wrap">
+                <table id="uniform-table" class="data-table">
+                  <thead></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+              <div class="db-footer">
+                <div id="uniform-table-meta" class="muted">0 rows</div>
+                <div class="db-pagination">
+                  <button id="uniform-page-prev" class="button button--ghost" type="button">
+                    Prev
+                  </button>
+                  <div id="uniform-page-info" class="db-page-info">Page 1 of 1</div>
+                  <button id="uniform-page-next" class="button button--ghost" type="button">
+                    Next
+                  </button>
+                  <select id="uniform-page-size" class="db-page-size">
+                    <option value="25">25</option>
+                    <option value="50" selected>50</option>
+                    <option value="100">100</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="page-email-templates" class="page">
+          <header class="topbar">
+            <div class="topbar__left">
+              <button class="topbar__menu" type="button" data-sidebar-toggle aria-label="Open menu">
+                <svg class="icon icon--chevron" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M9 6l6 6-6 6"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+              <div class="topbar__brand" aria-hidden="true">
+                <img class="topbar__logo" src="./assets/app-icon.svg" alt="" />
+              </div>
+              <div class="topbar__meta">
+                <div class="topbar__title">
+                  <span class="topbar__app">Workflow</span>
+                  <span class="topbar__divider">|</span>
+                  <span class="topbar__page">Email Template Dashboard</span>
+                </div>
+                <div class="topbar__subtitle">Edit email templates and recipient defaults.</div>
+              </div>
+            </div>
+            <div class="topbar__actions">
+              <button id="template-dashboard-add" class="button button--success" type="button">
+                Add Template
+              </button>
+            </div>
+          </header>
+          <div class="page__body settings-body">
+            <div class="card email-template-dashboard-card">
+              <h3>Email Template Editor</h3>
+              <div class="muted">
+                Templates support tokens. Example: <code>{{recipientName}}</code>, <code>{{eid}}</code>,
+                <code>{{managerEmail}}</code>, <code>{{icimsId}}</code>, <code>{{reqId}}</code>,
+                <code>{{wtJobNo}}</code>, <code>{{defaultSubject}}</code>, <code>{{defaultBody}}</code>.
+              </div>
+              <div class="email-template-dashboard-grid">
+                <div class="field">
+                  <label>Template Type</label>
+                  <select id="template-dashboard-type" class="select">
+                    <option value="neo-compliance" selected>NEO Summary</option>
+                    <option value="cori-template">CORI Template</option>
+                    <option value="edge-credentials">Edge Credentials &amp; Links</option>
+                    <option value="edge-amazon">Edge Links - Amazon</option>
+                    <option value="edge-bae">Edge Links - BAE</option>
+                    <option value="edge-fedex">Edge Links - FedEx</option>
+                    <option value="edge-schneider">Edge Links - Schneider</option>
+                    <option value="edge-driver-only">Edge Links - Driver Only</option>
+                    <option value="edge-core-only">Edge Links - CORE Only</option>
+                    <option value="follow-up">Onboarding Follow-Up</option>
+                    <option value="missing-pii">Missing PII Reminder</option>
+                    <option value="uniform-issued">Uniform Issue Confirmation</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Default To Template</label>
+                  <input
+                    id="template-dashboard-to"
+                    type="text"
+                    placeholder="Example: {{managerEmail}}"
+                  />
+                </div>
+                <div class="field">
+                  <label>Default CC Template</label>
+                  <input
+                    id="template-dashboard-cc"
+                    type="text"
+                    placeholder="Example: {{managerEmail}}, someone@aus.com"
+                  />
+                </div>
+                <div class="field">
+                  <label>Subject Template</label>
+                  <input
+                    id="template-dashboard-subject"
+                    type="text"
+                    placeholder="Example: NEO | {{recipientName}} | EID {{eid}}"
+                  />
+                </div>
+                <div class="field">
+                  <label>Body Template</label>
+                  <textarea
+                    id="template-dashboard-body"
+                    placeholder="Use {{defaultBody}} to keep current generated output."
+                  ></textarea>
+                </div>
+              </div>
+              <div class="email-template-dashboard-actions">
+                <button id="template-dashboard-save" class="button button--success" type="button">
+                  Save Template
+                </button>
+                <button id="template-dashboard-reset" class="button button--danger" type="button">
+                  Reset This Template
+                </button>
+                <button id="template-dashboard-reset-all" class="button button--ghost" type="button">
+                  Reset All Templates
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section id="page-settings" class="page">
           <header class="topbar">
             <div class="topbar__left">
@@ -285,7 +532,7 @@
               </div>
             </div>
           </header>
-          <div class="page__body">
+          <div class="page__body settings-body">
             <div class="card">
               <h3>Kanban Columns</h3>
               <div class="kanban-settings">
@@ -350,6 +597,188 @@
             </div>
           </div>
         </section>
+
+        <section id="page-help" class="page">
+          <header class="topbar">
+            <div class="topbar__left">
+              <button class="topbar__menu" type="button" data-sidebar-toggle aria-label="Open menu">
+                <svg class="icon icon--chevron" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M9 6l6 6-6 6"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+              <div class="topbar__brand" aria-hidden="true">
+                <img class="topbar__logo" src="./assets/app-icon.svg" alt="" />
+              </div>
+              <div class="topbar__meta">
+                <div class="topbar__title">
+                  <span class="topbar__app">Workflow</span>
+                  <span class="topbar__divider">|</span>
+                  <span class="topbar__page">Help &amp; Feedback</span>
+                </div>
+                <div class="topbar__subtitle">
+                  Open manuals in-app and send feedback through GitHub.
+                </div>
+              </div>
+            </div>
+          </header>
+          <div class="page__body settings-body">
+            <div class="card help-card">
+              <h3>User Manuals</h3>
+              <div class="muted">
+                Choose a manual and open it inside the app with search and a table of contents.
+              </div>
+              <div class="help-manual-row">
+                <select id="help-manual-select" class="select">
+                  <option value="user-manual" selected>User Manual</option>
+                  <option value="backup-restore">Backup &amp; Restore</option>
+                  <option value="readme">GitHub Issues &amp; Contributing</option>
+                </select>
+                <button id="help-open-manual" class="button button--primary" type="button">
+                  Open In App
+                </button>
+              </div>
+            </div>
+            <div class="card help-card">
+              <h3>Feedback</h3>
+              <div class="muted">
+                Found a bug or want to request a feature? Open the GitHub feedback page.
+              </div>
+              <div class="help-feedback-version">
+                Current App Version:
+                <span id="help-app-version" class="help-feedback-version__value">Loading...</span>
+              </div>
+              <div class="help-feedback-row">
+                <a
+                  id="help-feedback-link"
+                  class="button button--primary"
+                  href="https://github.com/davidcit646/Workflow/issues"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open Feedback Page
+                </a>
+              </div>
+              <ol class="help-feedback-steps">
+                <li>Click <strong>New issue</strong> on GitHub.</li>
+                <li>Use a short, specific title (example: <code>Import fails on Replace action</code>).</li>
+                <li>Describe what you expected, what happened, and exact steps to reproduce.</li>
+                <li>Attach screenshots and your app/platform version if possible.</li>
+              </ol>
+            </div>
+          </div>
+        </section>
+
+        <section id="page-about" class="page">
+          <header class="topbar">
+            <div class="topbar__left">
+              <button class="topbar__menu" type="button" data-sidebar-toggle aria-label="Open menu">
+                <svg class="icon icon--chevron" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M9 6l6 6-6 6"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+              <div class="topbar__brand" aria-hidden="true">
+                <img class="topbar__logo" src="./assets/app-icon.svg" alt="" />
+              </div>
+              <div class="topbar__meta">
+                <div class="topbar__title">
+                  <span class="topbar__app">Workflow</span>
+                  <span class="topbar__divider">|</span>
+                  <span class="topbar__page">About</span>
+                </div>
+                <div class="topbar__subtitle">
+                  Project details, contribution path, and donation policy.
+                </div>
+              </div>
+            </div>
+          </header>
+          <div class="page__body settings-body">
+            <div class="card help-card">
+              <h3>About Workflow Tracker</h3>
+              <div class="help-about-meta">
+                <div class="help-about-meta__item">
+                  <span class="help-about-meta__label">Repository Created</span>
+                  <span class="help-about-meta__value">January 30, 2026</span>
+                </div>
+                <div class="help-about-meta__item">
+                  <span class="help-about-meta__label">Created By</span>
+                  <span class="help-about-meta__value">David Citarelli</span>
+                </div>
+                <div class="help-about-meta__item">
+                  <span class="help-about-meta__label">AI-Assisted Development</span>
+                  <span class="help-about-meta__value">OpenAI Codex (GPT-5)</span>
+                </div>
+              </div>
+
+              <div class="help-about-section">
+                <h4>What This Program Is Supposed To Do</h4>
+                <ul class="help-about-list">
+                  <li>Track onboarding progress in a local-first Kanban workflow.</li>
+                  <li>Manage candidate records, weekly notes, and todos in one place.</li>
+                  <li>Protect data using password-based encryption by default.</li>
+                </ul>
+              </div>
+
+              <div class="help-about-section">
+                <h4>What This Program Is Not Supposed To Do</h4>
+                <ul class="help-about-list">
+                  <li>Make legal, HR, or compliance decisions for your team.</li>
+                  <li>Automatically upload your data to external servers by default.</li>
+                  <li>Replace your backup and data-governance responsibilities.</li>
+                </ul>
+              </div>
+
+              <div class="help-about-section">
+                <h4>How People Can Contribute</h4>
+                <ol class="help-about-steps">
+                  <li>Search existing issues first, then open a focused new issue if needed.</li>
+                  <li>Include version, platform, repro steps, and expected vs. actual results.</li>
+                  <li>Fork, branch, implement, run lint/tests, and open a pull request.</li>
+                </ol>
+                <div class="help-feedback-row help-about-links">
+                  <a
+                    class="button button--ghost"
+                    href="https://github.com/davidcit646/Workflow"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open Repository
+                  </a>
+                  <button
+                    id="about-open-contributing-guide"
+                    class="button button--ghost"
+                    type="button"
+                  >
+                    Open Contributing Guide
+                  </button>
+                </div>
+              </div>
+
+              <div class="help-about-section">
+                <h4>Donation Policy</h4>
+                <ul class="help-about-list">
+                  <li>Donations are optional and appreciated.</li>
+                  <li>Donations do not unlock features, priority support, or access tiers.</li>
+                  <li>Donations go to the developer as support for continued maintenance.</li>
+                  <li>Payment processing is handled by the platform provider (for example, Google Play).</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </section>
       </main>
     </div>
 
@@ -394,6 +823,114 @@
         <ul id="todo-list" class="todo-panel__list"></ul>
       </div>
     </aside>
+
+    <div id="email-template-modal" class="modal hidden">
+      <div class="modal__card modal__card--small email-template-modal__card">
+        <div class="modal__header">
+          <h2>Email Template Generator</h2>
+          <button id="email-template-close" class="icon-button">✕</button>
+        </div>
+        <form
+          id="email-template-form"
+          class="modal__body modal__body--single modal__body--scroll email-template-modal__body"
+          autocomplete="off"
+        >
+          <div class="modal__section">
+            <div class="field">
+              <label>Template Type</label>
+              <select id="email-template-type">
+                <option value="neo-compliance">NEO Summary</option>
+                <option value="cori-template">CORI Template</option>
+                <option value="edge-credentials">Edge Credentials & Links</option>
+                <option value="edge-amazon">Edge Links - Amazon</option>
+                <option value="edge-bae">Edge Links - BAE</option>
+                <option value="edge-fedex">Edge Links - FedEx</option>
+                <option value="edge-schneider">Edge Links - Schneider</option>
+                <option value="edge-driver-only">Edge Links - Driver Only</option>
+                <option value="edge-core-only">Edge Links - CORE Only</option>
+                <option value="follow-up">Onboarding Follow-Up</option>
+                <option value="missing-pii">Missing PII Reminder</option>
+                <option value="uniform-issued">Uniform Issue Confirmation</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>To</label>
+              <input id="email-template-recipient" type="text" placeholder="Candidate Email" />
+            </div>
+            <div class="field">
+              <label>CC</label>
+              <input
+                id="email-template-cc"
+                type="text"
+                placeholder="Manager Email (first.last@aus.com)"
+              />
+            </div>
+            <div class="email-template-time-grid">
+              <div class="field">
+                <label>Start Time</label>
+                <input
+                  id="email-template-start-time"
+                  type="text"
+                  placeholder="Start (24H)"
+                  inputmode="numeric"
+                />
+              </div>
+              <div class="field">
+                <label>End Time</label>
+                <input
+                  id="email-template-end-time"
+                  type="text"
+                  placeholder="End (24H)"
+                  inputmode="numeric"
+                />
+              </div>
+              <div class="field">
+                <label>Total Hours</label>
+                <input id="email-template-total-hours" type="text" placeholder="Total" readonly />
+              </div>
+            </div>
+            <div class="field">
+              <label>Subject</label>
+              <input id="email-template-subject" type="text" placeholder="Subject" />
+            </div>
+            <div class="field">
+              <label>Body</label>
+              <textarea id="email-template-body" placeholder="Click Update Info to fill this area."></textarea>
+            </div>
+          </div>
+        </form>
+        <div class="modal__footer email-template-modal__footer">
+          <div class="modal__actions">
+            <button id="email-template-cancel" class="button button--danger" type="button">
+              Cancel
+            </button>
+            <button
+              id="email-template-generate"
+              class="button button--primary"
+              type="submit"
+              form="email-template-form"
+            >
+              <span class="button__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path
+                    d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                  />
+                </svg>
+              </span>
+              <span>Update Info</span>
+            </button>
+            <button id="email-template-copy" class="button button--success" type="button">
+              Copy
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div id="action-result-modal" class="modal modal--alert hidden">
       <div class="modal__card modal__card--small">
@@ -573,6 +1110,42 @@
         </div>
         <div class="modal__footer">
           <button id="db-import-error-ok" class="button button--primary" type="button">OK</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="help-manual-modal" class="modal hidden">
+      <div class="modal__card modal__card--wide help-manual-modal__card">
+        <div class="modal__header">
+          <h2 id="help-manual-title">Manual</h2>
+          <button id="help-manual-close" class="icon-button">✕</button>
+        </div>
+        <div class="modal__body help-manual-modal__body">
+          <div class="help-manual-toolbar">
+            <div class="search search--help">
+              <input
+                id="help-manual-search"
+                type="text"
+                placeholder="Search this manual..."
+                autocomplete="off"
+              />
+            </div>
+            <div id="help-manual-search-result" class="muted help-manual-search-result">
+              Type to search.
+            </div>
+          </div>
+          <div class="help-manual-layout">
+            <aside class="help-manual-toc" aria-label="Table of contents">
+              <div class="section__title">Table of Contents</div>
+              <div id="help-manual-toc-list" class="help-manual-toc__list"></div>
+            </aside>
+            <article id="help-manual-content" class="help-manual-content"></article>
+          </div>
+        </div>
+        <div class="modal__footer">
+          <button id="help-manual-close-footer" class="button button--ghost" type="button">
+            Close
+          </button>
         </div>
       </div>
     </div>
@@ -780,6 +1353,7 @@
             <div class="candidate-column">
               <div class="modal__section">
                 <input id="candidate-job-id" type="text" placeholder="Job ID" />
+                <input id="candidate-req-id" type="text" placeholder="REQ ID" />
                 <input id="candidate-job-name" type="text" placeholder="Job Name" />
                 <input id="candidate-job-location" type="text" placeholder="Location" />
                 <input id="candidate-manager" type="text" placeholder="Manager" />
@@ -928,10 +1502,18 @@
                 />
               </div>
               <div class="pii-card">
-                <div class="pii-card__title">Uniforms</div>
-                <input id="pii-shirt" type="text" placeholder="Shirt Size" />
-                <input id="pii-pants" type="text" placeholder="Pants Size" />
-                <input id="pii-boots" type="text" placeholder="Boots Size" />
+                <div class="pii-card__title">Uniform Sizes</div>
+                <select id="pii-shirt">
+                  <option value="">Shirt Size</option>
+                </select>
+                <div class="pii-row">
+                  <select id="pii-waist">
+                    <option value="">Waist</option>
+                  </select>
+                  <select id="pii-inseam">
+                    <option value="">Inseam</option>
+                  </select>
+                </div>
               </div>
               <div class="pii-card">
                 <div class="pii-card__title">Emergency Contact</div>
@@ -987,6 +1569,46 @@
                   maxlength="11"
                   class="hidden"
                 />
+              </div>
+              <div class="pii-card">
+                <div class="pii-card__title">Uniforms Issued</div>
+                <label class="pii-checkbox-row">
+                  <input id="pii-uniforms-issued" type="checkbox" />
+                  <span>Issued Uniforms</span>
+                </label>
+                <div id="pii-issued-fields" class="pii-issued-fields hidden">
+                  <select id="pii-issued-shirt-size">
+                    <option value="">Issued Shirt Size</option>
+                  </select>
+                  <label class="pii-inline-label" for="pii-shirt-type">Shirt Type(s)</label>
+                  <select id="pii-shirt-type" multiple size="4">
+                  </select>
+                  <select id="pii-shirts-given">
+                    <option value="">Shirts Given</option>
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                  </select>
+                  <div class="pii-row">
+                    <select id="pii-issued-waist">
+                      <option value="">Issued Waist</option>
+                    </select>
+                    <select id="pii-issued-inseam">
+                      <option value="">Issued Inseam</option>
+                    </select>
+                  </div>
+                  <select id="pii-pants-type">
+                    <option value="">Pants Type</option>
+                  </select>
+                  <select id="pii-pants-given">
+                    <option value="">Pants Given</option>
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                  </select>
+                </div>
               </div>
               <div class="pii-card">
                 <div class="pii-card__title">Additional Details</div>
@@ -1085,6 +1707,14 @@
                   placeholder="24H"
                 />
               </div>
+              <div class="field process-grid__full">
+                <label>Branch</label>
+                <select id="process-branch">
+                  <option value="">Select Branch</option>
+                  <option value="Salem">Salem</option>
+                  <option value="Portland">Portland</option>
+                </select>
+              </div>
             </div>
           </div>
         </div>
@@ -1095,6 +1725,81 @@
             </button>
             <button id="process-remove" class="button button--danger" type="button">
               Remove Candidate
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="uniform-add-modal" class="modal hidden">
+      <div class="modal__card modal__card--small">
+        <div class="modal__header">
+          <h2>Add Uniform Inventory</h2>
+          <button id="uniform-add-close" class="icon-button">✕</button>
+        </div>
+        <form id="uniform-add-form" class="modal__body modal__body--single" autocomplete="off">
+          <div class="modal__section">
+            <select id="uniform-add-type" required>
+              <option value="">Type</option>
+              <option value="Shirt">Shirt</option>
+              <option value="Pants">Pants</option>
+            </select>
+            <div id="uniform-add-details" class="hidden">
+              <input id="uniform-add-alteration" type="text" placeholder="Alteration" />
+              <select id="uniform-add-shirt-size" class="hidden">
+                <option value="">Shirt Size</option>
+                <option value="XS">XS</option>
+                <option value="XM">XM</option>
+                <option value="S">S</option>
+                <option value="M">M</option>
+                <option value="L">L</option>
+                <option value="XL">XL</option>
+                <option value="2XL">2XL</option>
+                <option value="3XL">3XL</option>
+                <option value="4XL">4XL</option>
+                <option value="5XL">5XL</option>
+                <option value="6XL">6XL</option>
+              </select>
+              <div id="uniform-add-pants-fields" class="pii-row hidden">
+                <input
+                  id="uniform-add-waist"
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="Waist"
+                  inputmode="numeric"
+                />
+                <input
+                  id="uniform-add-inseam"
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="Inseam"
+                  inputmode="numeric"
+                />
+              </div>
+              <input
+                id="uniform-add-quantity"
+                type="number"
+                min="1"
+                step="1"
+                placeholder="Quantity"
+              />
+              <select id="uniform-add-branch">
+                <option value="">Branch</option>
+                <option value="Salem">Salem</option>
+                <option value="Portland">Portland</option>
+              </select>
+            </div>
+          </div>
+        </form>
+        <div class="modal__footer">
+          <div class="modal__actions">
+            <button id="uniform-add-cancel" class="button button--danger" type="button">
+              Cancel
+            </button>
+            <button id="uniform-add-submit" class="button button--success" type="submit" form="uniform-add-form">
+              Add Uniform
             </button>
           </div>
         </div>
