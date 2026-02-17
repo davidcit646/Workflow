@@ -8,13 +8,13 @@ echo ============================
 REM Check if we're in the right directory
 if not exist "package.json" (
     echo Error: Please run this script from the project root directory
-    echo    (where package.json and main.js are located)
+    echo    (where package.json and electron/main.js are located)
     pause
     exit /b 1
 )
 
-if not exist "main.js" (
-    echo Error: main.js not found in current directory
+if not exist "electron\\main.js" (
+    echo Error: electron/main.js not found in current directory
     pause
     exit /b 1
 )

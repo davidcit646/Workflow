@@ -42,6 +42,20 @@ export const state = {
     readOnly: false,
     pendingImport: null,
   },
+  uniforms: {
+    columns: [],
+    rows: [],
+    query: "",
+    selectedRowIds: new Set(),
+    page: 1,
+    pageSize: 50,
+  },
+  emailTemplates: {
+    loaded: false,
+    activeType: "neo-compliance",
+    customTypes: {},
+    items: {},
+  },
   flyouts: {
     weekly: false,
     todo: false,

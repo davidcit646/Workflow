@@ -15,6 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent
 PRIMARY = (26, 115, 232)  # #1a73e8
 PRIMARY_DARK = (19, 93, 214)
 PRIMARY_LIGHT = (90, 176, 255)
+PRIMARY_DEEP = (12, 66, 175)
 
 
 def blend(a, b, t):
@@ -35,20 +36,22 @@ def load_font(size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.load_default()
 
 
-def build_gradient(size: int) -> Image.Image:
-    img = Image.new("RGBA", (size, size))
-    pixels = img.load()
-    for y in range(size):
-        for x in range(size):
-            t = (x + y) / (2 * (size - 1))
-            color = blend(PRIMARY_DARK, PRIMARY_LIGHT, t)
-            pixels[x, y] = (*color, 255)
+def build_split_tone(size: int) -> Image.Image:
+    base = Image.new("RGBA", (size, size), PRIMARY_DARK + (255,))
+    draw = ImageDraw.Draw(base)
 
-    overlay = Image.new("RGBA", (size, size), (255, 255, 255, 0))
-    draw = ImageDraw.Draw(overlay)
-    glow = [-size * 0.2, -size * 0.2, size * 0.9, size * 0.9]
-    draw.ellipse(glow, fill=(255, 255, 255, 55))
-    return Image.alpha_composite(img, overlay)
+    # Diagonal accents (Option C style) to keep high contrast behind the white W.
+    draw.polygon([(size * 0.45, 0), (size, 0), (size, size * 0.55)], fill=PRIMARY_LIGHT + (255,))
+    draw.polygon([(0, size * 0.55), (size * 0.55, size), (0, size)], fill=PRIMARY_DEEP + (255,))
+
+    ring_pad = int(size * 0.08)
+    draw.rounded_rectangle(
+        [ring_pad, ring_pad, size - 1 - ring_pad, size - 1 - ring_pad],
+        radius=int(size * 0.18),
+        outline=(255, 255, 255, 36),
+        width=max(1, int(size * 0.02)),
+    )
+    return base
 
 
 def apply_round_mask(img: Image.Image, radius: int) -> Image.Image:
@@ -88,15 +91,15 @@ def draw_w(img: Image.Image) -> Image.Image:
     x = (size - text_w) / 2 - bbox[0]
     y = (size - text_h) / 2 - bbox[1] - size * 0.005
 
-    shadow_color = (9, 45, 110, 90)
+    shadow_color = (5, 44, 116, 90)
     draw.text((x, y + size * 0.012), text, font=font, fill=shadow_color)
     draw.text((x, y), text, font=font, fill=(255, 255, 255, 255))
     return Image.alpha_composite(img, overlay)
 
 
 def build_icon(size: int) -> Image.Image:
-    base = build_gradient(size)
-    rounded = apply_round_mask(base, radius=int(size * 0.2))
+    base = build_split_tone(size)
+    rounded = apply_round_mask(base, radius=int(size * 0.22))
     return draw_w(rounded)
 
 
@@ -107,21 +110,14 @@ def ensure_dir(path: Path) -> None:
 def write_svg(path: Path, size: int = 1080) -> None:
     svg = f"""<svg width="{size}" height="{size}" viewBox="0 0 1080 1080" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#135DD6" />
-      <stop offset="55%" stop-color="#1A73E8" />
-      <stop offset="100%" stop-color="#5AB0FF" />
-    </linearGradient>
-    <radialGradient id="glow" cx="0.2" cy="0.2" r="0.7">
-      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.28" />
-      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0" />
-    </radialGradient>
     <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
       <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#0B2D6B" flood-opacity="0.25" />
     </filter>
   </defs>
-  <rect width="1080" height="1080" rx="220" fill="url(#bg)" />
-  <rect width="1080" height="1080" rx="220" fill="url(#glow)" />
+  <rect width="1080" height="1080" rx="220" fill="#135DD6" />
+  <polygon points="486,0 1080,0 1080,594" fill="#5AB0FF" />
+  <polygon points="0,594 594,1080 0,1080" fill="#0C42AF" />
+  <rect x="86" y="86" width="908" height="908" rx="194" fill="none" stroke="#FFFFFF" stroke-opacity="0.14" stroke-width="22" />
   <text x="540" y="540" text-anchor="middle" dominant-baseline="central"
         font-family="Sora, Segoe UI, Arial, sans-serif" font-size="780" font-weight="700"
         fill="#FFFFFF" filter="url(#shadow)">W</text>

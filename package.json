@@ -13,10 +13,13 @@
     "dist": "electron-builder",
     "dist:linux": "electron-builder --linux",
     "dist:win": "electron-builder --win",
-    "lint": "eslint \"web/**/*.js\" \"electron/**/*.js\" \"*.js\"",
-    "format": "prettier --write \"web/**/*.js\" \"web/**/*.css\" \"web/**/*.html\" \"electron/**/*.js\" \"*.js\"",
+    "lint": "eslint \"web/**/*.js\" \"electron/**/*.js\"",
+    "format": "prettier --write \"web/**/*.js\" \"web/**/*.css\" \"web/**/*.html\" \"electron/**/*.js\"",
     "cap:android": "cap add android",
     "cap:sync": "cap sync android"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "dependencies": {
     "@aparajita/capacitor-biometric-auth": "^9.0.0",
@@ -49,17 +52,19 @@
       "electron/**/*",
       "web/**/*",
       "assets/**/*",
-      "light_theme.json",
-      "main.js",
-      "preload.js",
-      "python_api.py",
       "package.json"
     ],
     "linux": {
       "target": [
         "AppImage"
       ],
-      "category": "Office"
+      "category": "Office",
+      "icon": "electron/assets/app-icon.png",
+      "desktop": {
+        "entry": {
+          "StartupWMClass": "workflow"
+        }
+      }
     },
     "win": {
       "target": "nsis",

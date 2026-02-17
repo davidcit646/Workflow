@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("workflowApi", {
   platform: process.platform,
+  appVersion: () => ipcRenderer.invoke("app:version"),
   authStatus: () => ipcRenderer.invoke("auth:status"),
   authSetup: (password) => ipcRenderer.invoke("auth:setup", password),
   authLogin: (password) => ipcRenderer.invoke("auth:login", password),
@@ -23,6 +24,9 @@ contextBridge.exposeInMainWorld("workflowApi", {
 
   todosGet: () => ipcRenderer.invoke("todos:get"),
   todosSave: (todos) => ipcRenderer.invoke("todos:save", todos),
+  uniformsAddItem: (payload) => ipcRenderer.invoke("uniforms:addItem", payload),
+  emailTemplatesGet: () => ipcRenderer.invoke("emailTemplates:get"),
+  emailTemplatesSave: (payload) => ipcRenderer.invoke("emailTemplates:save", payload),
 
   dbSources: () => ipcRenderer.invoke("db:sources"),
   dbSetSource: (sourceId) => ipcRenderer.invoke("db:setSource", sourceId),
