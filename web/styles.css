@@ -406,7 +406,6 @@ body {
   overflow: hidden;
 }
 
-
 .toast-root {
   position: fixed;
   right: 24px;
@@ -470,7 +469,6 @@ body {
   color: var(--primary);
 }
 
-
 .hidden {
   display: none !important;
 }
@@ -509,7 +507,9 @@ body {
   bottom: 24px;
   width: 240px;
   transform: translateX(calc(-100% - 32px));
-  transition: transform 0.28s ease, box-shadow 0.28s ease;
+  transition:
+    transform 0.28s ease,
+    box-shadow 0.28s ease;
   z-index: 50;
 }
 
@@ -1124,7 +1124,8 @@ body {
 }
 
 .details-drawer {
-  width: 340px;
+  width: min(460px, 44vw);
+  min-width: 400px;
   position: absolute;
   top: 0;
   right: 0;
@@ -1250,6 +1251,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  width: 100%;
 }
 
 .details-card__title {
@@ -1262,7 +1264,7 @@ body {
 
 .details-item {
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) minmax(120px, 1.2fr);
+  grid-template-columns: minmax(132px, 0.85fr) minmax(0, 1.8fr);
   gap: 10px;
   align-items: start;
   font-size: 13px;
@@ -1275,8 +1277,8 @@ body {
 .details-item__value {
   color: var(--text);
   font-weight: 500;
-  text-align: right;
-  word-break: break-word;
+  text-align: left;
+  overflow-wrap: anywhere;
 }
 
 .details-drawer__footer {
@@ -2060,8 +2062,9 @@ body.app-compact .kanban-card {
 }
 
 body.app-compact .details-drawer {
-  width: 300px;
-  flex: 0 0 300px;
+  width: min(360px, 42vw);
+  min-width: 320px;
+  flex: 0 0 min(360px, 42vw);
 }
 
 body.app-compact .details-drawer__title {
@@ -2081,6 +2084,12 @@ body.app-compact .page__body {
   box-shadow: none;
   padding: 0;
   gap: 16px;
+}
+
+#page-database .page__body,
+#page-uniforms .page__body {
+  grid-auto-rows: max-content;
+  align-content: start;
 }
 
 #page-settings .card {
@@ -2249,6 +2258,20 @@ body.app-compact .page__body {
   min-height: 260px;
   resize: vertical;
   font-family: "SFMono-Regular", "Consolas", "Liberation Mono", "Menlo", monospace;
+}
+
+#template-dashboard-body-html {
+  min-height: 300px;
+  resize: vertical;
+  font-family: "SFMono-Regular", "Consolas", "Liberation Mono", "Menlo", monospace;
+}
+
+#template-dashboard-html-preview {
+  width: 100%;
+  min-height: 320px;
+  border: 1px solid var(--outline);
+  border-radius: 12px;
+  background: #fff;
 }
 
 .email-template-dashboard-actions {
@@ -2606,6 +2629,22 @@ body.app-compact .page__body {
 .field textarea {
   resize: vertical;
   min-height: 80px;
+}
+
+/* Keep a visible dropdown affordance for all single-select controls. */
+select:not([multiple]) {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding-right: 36px;
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 14px 14px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none'%3E%3Cpath d='M6 8l4 4 4-4' stroke='%235a6575' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+select::-ms-expand {
+  display: none;
 }
 
 #email-template-body {

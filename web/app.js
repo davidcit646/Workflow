@@ -199,7 +199,9 @@ import {
   };
 
   const parseMarkdownManual = (markdownText) => {
-    const lines = String(markdownText || "").replace(/\r\n?/g, "\n").split("\n");
+    const lines = String(markdownText || "")
+      .replace(/\r\n?/g, "\n")
+      .split("\n");
     const html = [];
     const headings = [];
     const usedIds = new Set();
@@ -341,7 +343,9 @@ import {
 
   const highlightHelpMatches = (container, rawQuery) => {
     clearHelpHighlights(container);
-    const query = String(rawQuery || "").trim().toLowerCase();
+    const query = String(rawQuery || "")
+      .trim()
+      .toLowerCase();
     if (!query) return { count: 0, firstMatch: null };
 
     let count = 0;
@@ -691,56 +695,115 @@ import {
     return state.kanban.cache.cardsByColumn.get(columnId) || [];
   };
 
-  const showAuthModal = async () => {
+  let authModalAwaitingResolution = false;
+  let authReauthOnFocusRequired = false;
+  let authReauthInProgress = false;
+  const ENABLE_FOCUS_REAUTH = false;
+
+  const getAuthStatusSafe = async () => {
+    if (!workflowApi || typeof workflowApi.authStatus !== "function") return null;
+    try {
+      const status = await workflowApi.authStatus();
+      if (!status || typeof status !== "object") return null;
+      return status;
+    } catch (_err) {
+      return null;
+    }
+  };
+
+  const showAuthModal = async ({ forcePrompt = false } = {}) => {
     const modal = $("auth-modal");
     const title = $("auth-title");
     if (!modal || !title) return false;
     if (!workflowApi) return false;
-    const status = await workflowApi.authStatus();
+    if (forcePrompt && typeof workflowApi.authLock === "function") {
+      try {
+        await workflowApi.authLock();
+      } catch (_err) {
+        // Fall through and still prompt.
+      }
+    }
+    const status = await getAuthStatusSafe();
+    if (!status) {
+      title.textContent = "Sign In";
+      modal.classList.remove("hidden");
+      return false;
+    }
     state.auth = status;
     title.textContent = status.configured ? "Sign In" : "Create Program Password";
-    if (status.authenticated) return true;
+    if (status.authenticated && !forcePrompt) return true;
+    setAuthInlineError("");
+    const passwordInput = $("auth-password");
+    if (passwordInput) {
+      window.setTimeout(() => {
+        try {
+          passwordInput.focus();
+        } catch (_err) {
+          // Ignore focus errors.
+        }
+      }, 0);
+    }
     modal.classList.remove("hidden");
     await refreshBiometricAuthButton();
+    authModalAwaitingResolution = true;
     return new Promise((resolve) => {
-      const onSuccess = () => {
+      const cleanup = (ok) => {
         window.removeEventListener("workflow:auth-success", onSuccess);
         window.removeEventListener("workflow:auth-cancel", onCancel);
         modal.classList.add("hidden");
-        resolve(true);
+        authModalAwaitingResolution = false;
+        resolve(ok);
+      };
+      const onSuccess = () => {
+        cleanup(true);
       };
       const onCancel = () => {
-        window.removeEventListener("workflow:auth-success", onSuccess);
-        window.removeEventListener("workflow:auth-cancel", onCancel);
-        modal.classList.add("hidden");
-        resolve(false);
+        cleanup(false);
       };
       window.addEventListener("workflow:auth-success", onSuccess);
       window.addEventListener("workflow:auth-cancel", onCancel);
     });
   };
 
-  const hideAuthModal = () => {
+  const hideAuthModal = ({ cancelIfPending = true } = {}) => {
     const modal = $("auth-modal");
     if (modal) modal.classList.add("hidden");
-    if (!state.auth || !state.auth.authenticated) {
+    if (cancelIfPending && authModalAwaitingResolution) {
       window.dispatchEvent(new Event("workflow:auth-cancel"));
     }
   };
 
+  const setAuthInlineError = (message = "") => {
+    const el = $("auth-inline-error");
+    if (!el) return;
+    const text = String(message || "").trim();
+    el.textContent = text;
+    el.classList.toggle("hidden", !text);
+  };
+
   const handleAuthSubmit = async (event) => {
-    event.preventDefault();
+    if (event && typeof event.preventDefault === "function") event.preventDefault();
+    setAuthInlineError("");
     const submitBtn = $("auth-submit");
     if (submitBtn && submitBtn.dataset.submitting) return;
     const passwordEl = $("auth-password");
     const password = passwordEl ? passwordEl.value : "";
-    if (!password) return;
+    if (!password) {
+      setAuthInlineError("Enter your program password.");
+      await showMessageModal("Missing password", "Enter your program password.");
+      return;
+    }
     try {
       if (submitBtn) {
         submitBtn.dataset.submitting = "1";
         submitBtn.disabled = true;
       }
-      const status = await workflowApi.authStatus();
+      const status = await getAuthStatusSafe();
+      if (!status) {
+        setAuthInlineError("Authentication bridge unavailable.");
+        await showMessageModal("Authentication unavailable", "Unable to check auth status.");
+        return;
+      }
       if (status && status.locked) {
         const retryText = status.retryAfterMs
           ? `Try again in ${Math.ceil(status.retryAfterMs / 1000)}s.`
@@ -763,26 +826,52 @@ import {
         if (result && result.retryAfterMs) retryAfter = result.retryAfterMs;
       }
       if (!ok) {
+        setAuthInlineError(errorMessage);
         const retryText = retryAfter ? ` Try again in ${Math.ceil(retryAfter / 1000)}s.` : "";
         await showMessageModal("Authentication failed", `${errorMessage}${retryText}`);
         return;
       }
-      state.auth = await workflowApi.authStatus();
+      const refreshed = await getAuthStatusSafe();
+      if (!refreshed || !refreshed.authenticated) {
+        setAuthInlineError("Unable to complete sign-in.");
+        await showMessageModal("Authentication failed", "Unable to complete sign-in.");
+        return;
+      }
+      if (passwordEl) passwordEl.value = "";
+      setAuthInlineError("");
+      state.auth = refreshed;
+      authReauthOnFocusRequired = false;
       window.dispatchEvent(new Event("workflow:auth-success"));
-      hideAuthModal();
-      switchPage("dashboard");
-      await loadKanban();
-      await loadTodos();
-      await refreshBiometricSettings();
+      hideAuthModal({ cancelIfPending: false });
       await refreshBiometricAuthButton();
     } catch (err) {
       console.error("Auth submit error", err);
+      setAuthInlineError("Unable to authenticate.");
       await showMessageModal("Error", "Unable to authenticate.");
     } finally {
       if (submitBtn) {
         submitBtn.dataset.submitting = "";
         submitBtn.disabled = false;
       }
+    }
+  };
+
+  const bindAuthModalControls = () => {
+    const authForm = $("auth-form");
+    const authClose = $("auth-close");
+    const authSubmit = $("auth-submit");
+
+    if (authForm && !authForm.dataset.authBound) {
+      authForm.addEventListener("submit", handleAuthSubmit);
+      authForm.dataset.authBound = "1";
+    }
+    if (authSubmit && !authSubmit.dataset.authBound) {
+      authSubmit.addEventListener("click", handleAuthSubmit);
+      authSubmit.dataset.authBound = "1";
+    }
+    if (authClose && !authClose.dataset.authBound) {
+      authClose.addEventListener("click", hideAuthModal);
+      authClose.dataset.authBound = "1";
     }
   };
 
@@ -913,6 +1002,40 @@ import {
     }
     btn.textContent = `Use ${getBiometryLabel(status.biometryType)}`;
     btn.classList.remove("hidden");
+  };
+
+  const requestAuthOnWindowFocus = async () => {
+    if (!ENABLE_FOCUS_REAUTH) return;
+    if (!authReauthOnFocusRequired || authReauthInProgress) return;
+    const authModal = $("auth-modal");
+    if (authModal && !authModal.classList.contains("hidden")) return;
+    authReauthInProgress = true;
+    try {
+      const ok = await showAuthModal({ forcePrompt: true });
+      if (ok) authReauthOnFocusRequired = false;
+    } finally {
+      authReauthInProgress = false;
+    }
+  };
+
+  const requireStartupAuthentication = async () => {
+    if (
+      !workflowApi ||
+      typeof workflowApi.authStatus !== "function" ||
+      typeof workflowApi.authLogin !== "function" ||
+      typeof workflowApi.authSetup !== "function"
+    ) {
+      await showMessageModal("Authentication unavailable", "Required auth APIs are not available.");
+      return false;
+    }
+    // Keep requiring auth while the app stays open.
+    // Closing the modal will immediately ask again, which prevents silent bypass.
+    // Closing the app window is still possible.
+    for (;;) {
+      const ok = await showAuthModal({ forcePrompt: true });
+      if (ok) return true;
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    }
   };
 
   const handleAuthBiometric = async () => {
@@ -1444,7 +1567,8 @@ import {
         invalidateKanbanCache();
         renderKanbanBoard();
       },
-      request: () => workflowApi.kanbanProcessCandidate({ candidateId, arrival, departure, branch }),
+      request: () =>
+        workflowApi.kanbanProcessCandidate({ candidateId, arrival, departure, branch }),
       onSuccess: (payload) => {
         if (payload && payload.cards) {
           state.kanban.cards = payload.cards;
@@ -1816,6 +1940,17 @@ import {
     const managerInput = $("candidate-manager");
     const branchSelect = $("candidate-branch");
     const branchOther = $("candidate-branch-other");
+    const backgroundProviderInput = $("candidate-background-provider");
+    const backgroundDateInput = $("candidate-background-date");
+    const backgroundMvrInput = $("candidate-background-mvr");
+    const licenseTypeInput = $("candidate-license-type");
+    const coriStatusInput = $("candidate-cori-status");
+    const coriDateInput = $("candidate-cori-date");
+    const nhStatusInput = $("candidate-nh-status");
+    const nhExpirationInput = $("candidate-nh-expiration");
+    const nhIdInput = $("candidate-nh-id");
+    const meStatusInput = $("candidate-me-status");
+    const meExpirationInput = $("candidate-me-expiration");
 
     state.kanban.activeColumnId = columnId;
     state.kanban.editingCardId = mode === "edit" ? cardData && cardData.uuid : null;
@@ -1842,6 +1977,19 @@ import {
       fill(jobNameInput, cardData.job_name);
       fill(jobLocationInput, cardData.job_location);
       fill(managerInput, cardData.manager);
+      fill(backgroundProviderInput, "");
+      fill(backgroundDateInput, "");
+      fill(backgroundMvrInput, "1");
+      fill(licenseTypeInput, "");
+      fill(coriStatusInput, "");
+      fill(coriDateInput, "");
+      fill(nhStatusInput, "");
+      fill(nhExpirationInput, "");
+      fill(nhIdInput, "");
+      fill(meStatusInput, "");
+      fill(meExpirationInput, "");
+      toggleCandidateBackgroundDate("");
+      toggleCandidateLicenseSections("");
       if (branchSelect) {
         const branchValue = cardData.branch || "";
         const isOther = !["Salem", "Portland", "Other", ""].includes(branchValue);
@@ -1859,6 +2007,21 @@ import {
           const row = (result && result.row) || {};
           fill(phoneInput, row["Contact Phone"]);
           fill(emailInput, row["Contact Email"]);
+          fill(backgroundProviderInput, row["Background Provider"]);
+          fill(backgroundDateInput, row["Background Cleared Date"]);
+          fill(backgroundMvrInput, row["Background MVR Flag"] || "1");
+          fill(licenseTypeInput, row["License Type"]);
+          fill(coriStatusInput, row["MA CORI Status"]);
+          fill(coriDateInput, row["MA CORI Date"]);
+          fill(nhStatusInput, row["NH GC Status"]);
+          fill(nhExpirationInput, row["NH GC Expiration Date"]);
+          fill(nhIdInput, row["NH GC ID Number"]);
+          fill(meStatusInput, row["ME GC Status"]);
+          fill(meExpirationInput, row["ME GC Expiration Date"]);
+          const providerValue = row["Background Provider"] || "";
+          toggleCandidateBackgroundDate(providerValue);
+          updateCandidateBackgroundMvrFlag(providerValue);
+          toggleCandidateLicenseSections(row["License Type"] || "");
         })
         .catch(() => {});
     } else {
@@ -1872,6 +2035,19 @@ import {
       fill(jobNameInput, "");
       fill(jobLocationInput, "");
       fill(managerInput, "");
+      fill(backgroundProviderInput, "");
+      fill(backgroundDateInput, "");
+      fill(backgroundMvrInput, "1");
+      fill(licenseTypeInput, "");
+      fill(coriStatusInput, "");
+      fill(coriDateInput, "");
+      fill(nhStatusInput, "");
+      fill(nhExpirationInput, "");
+      fill(nhIdInput, "");
+      fill(meStatusInput, "");
+      fill(meExpirationInput, "");
+      toggleCandidateBackgroundDate("");
+      toggleCandidateLicenseSections("");
       if (branchSelect) branchSelect.value = "";
       if (branchOther) {
         branchOther.value = "";
@@ -1901,6 +2077,18 @@ import {
     const ma = $("pii-license-ma");
     const nh = $("pii-license-nh");
     const me = $("pii-license-me");
+    if (ma) ma.classList.add("hidden");
+    if (nh) nh.classList.add("hidden");
+    if (me) me.classList.add("hidden");
+    if (value === "MA CORI" && ma) ma.classList.remove("hidden");
+    if (value === "NH GC" && nh) nh.classList.remove("hidden");
+    if (value === "ME GC" && me) me.classList.remove("hidden");
+  };
+
+  const toggleCandidateLicenseSections = (value) => {
+    const ma = $("candidate-license-ma");
+    const nh = $("candidate-license-nh");
+    const me = $("candidate-license-me");
     if (ma) ma.classList.add("hidden");
     if (nh) nh.classList.add("hidden");
     if (me) me.classList.add("hidden");
@@ -1981,6 +2169,27 @@ import {
     }
   };
 
+  const toggleCandidateBackgroundDate = (value) => {
+    const dateInput = $("candidate-background-date");
+    if (!dateInput) return;
+    if (value) {
+      dateInput.classList.remove("hidden");
+    } else {
+      dateInput.classList.add("hidden");
+      dateInput.value = "";
+    }
+  };
+
+  const updateCandidateBackgroundMvrFlag = (value) => {
+    const flag = $("candidate-background-mvr");
+    if (!flag) return;
+    if (value && value.toLowerCase().includes("mvr")) {
+      flag.value = "2";
+    } else {
+      flag.value = "1";
+    }
+  };
+
   const UNIFORM_ISSUED_COUNT_OPTIONS = ["1", "2", "3", "4"];
   const UNIFORM_SHIRT_SIZE_OPTIONS = [
     "XS",
@@ -2005,6 +2214,7 @@ import {
   let emailTemplateAutoRefreshTimer = null;
   let emailTemplateAutoRefreshInFlight = false;
   let emailTemplateLastGeneratedDraft = null;
+  let emailTemplateLastGeneratedHtmlBody = "";
 
   const normalizeUniformInventoryType = (value) => {
     const text = String(value || "")
@@ -2077,11 +2287,15 @@ import {
   };
 
   const toSortedUniqueList = (values, numeric = false) => {
-    const items = Array.from(new Set((values || []).map((value) => String(value || "").trim()).filter(Boolean)));
+    const items = Array.from(
+      new Set((values || []).map((value) => String(value || "").trim()).filter(Boolean)),
+    );
     if (numeric) {
       return items.sort((a, b) => Number(a) - Number(b));
     }
-    return items.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+    return items.sort((a, b) =>
+      a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }),
+    );
   };
 
   const getMapValues = (map, key) => {
@@ -2104,11 +2318,7 @@ import {
     if (!select) return;
     const normalized = preserveOrder
       ? Array.from(
-          new Set(
-            (options || [])
-              .map((item) => String(item || "").trim())
-              .filter(Boolean),
-          ),
+          new Set((options || []).map((item) => String(item || "").trim()).filter(Boolean)),
         )
       : toSortedUniqueList(options);
     select.innerHTML = "";
@@ -2184,7 +2394,10 @@ import {
     });
   };
 
-  const isUniformIssued = (value) => String(value || "").trim().toLowerCase() === "yes";
+  const isUniformIssued = (value) =>
+    String(value || "")
+      .trim()
+      .toLowerCase() === "yes";
 
   const buildPantsSize = (waist, inseam) => {
     if (!waist || !inseam) return "";
@@ -2255,7 +2468,8 @@ import {
         if (inseam) inseams.add(inseam);
         if (alteration) {
           pantsAlterationsAll.add(alteration);
-          if (!pantsAlterationsBySize.has(pantsKey)) pantsAlterationsBySize.set(pantsKey, new Set());
+          if (!pantsAlterationsBySize.has(pantsKey))
+            pantsAlterationsBySize.set(pantsKey, new Set());
           pantsAlterationsBySize.get(pantsKey).add(alteration);
         }
       }
@@ -2400,7 +2614,8 @@ import {
       String(row["Issued Waist"] || "").trim() || parsedIssuedPants.waist || waistValue;
     const issuedInseamValue =
       String(row["Issued Inseam"] || "").trim() || parsedIssuedPants.inseam || inseamValue;
-    const context = piiUniformInventoryContext || buildPiiUniformInventoryContext([], uniformBranch);
+    const context =
+      piiUniformInventoryContext || buildPiiUniformInventoryContext([], uniformBranch);
     setSingleSelectOptions($("pii-shirt"), {
       options: UNIFORM_SHIRT_SIZE_OPTIONS,
       placeholder: "Shirt Size",
@@ -2496,17 +2711,6 @@ import {
     const issuedWaist = value("pii-issued-waist");
     const issuedInseam = value("pii-issued-inseam");
     return {
-      "Background Provider": value("pii-background-provider"),
-      "Background Cleared Date": value("pii-background-date"),
-      "Background MVR Flag": value("pii-background-mvr") || "1",
-      "License Type": value("pii-license-type"),
-      "MA CORI Status": value("pii-cori-status"),
-      "MA CORI Date": value("pii-cori-date"),
-      "NH GC Status": value("pii-nh-status"),
-      "NH GC Expiration Date": value("pii-nh-expiration"),
-      "NH GC ID Number": value("pii-nh-id"),
-      "ME GC Status": value("pii-me-status"),
-      "ME GC Expiration Date": value("pii-me-expiration"),
       "Bank Name": value("pii-bank-name"),
       "Account Type": value("pii-account-type"),
       "Routing Number": value("pii-routing"),
@@ -2548,10 +2752,6 @@ import {
       { label: "Emergency Contact Phone", value: payload["Emergency Contact Phone"] },
     ];
     const dateFields = [
-      { label: "Background Cleared Date", value: payload["Background Cleared Date"] },
-      { label: "MA CORI Date", value: payload["MA CORI Date"] },
-      { label: "NH GC Expiration Date", value: payload["NH GC Expiration Date"] },
-      { label: "ME GC Expiration Date", value: payload["ME GC Expiration Date"] },
       { label: "DOB", value: payload["DOB"] },
       { label: "EXP", value: payload["EXP"] },
     ];
@@ -2659,7 +2859,10 @@ import {
     };
 
     if (!isValidDropdownValue(shirtSizeValue, allowedShirtSizes)) {
-      await showMessageModal("Invalid Shirt Size", "Shirt Size must be selected from the dropdown.");
+      await showMessageModal(
+        "Invalid Shirt Size",
+        "Shirt Size must be selected from the dropdown.",
+      );
       return false;
     }
     if (!isValidDropdownValue(waistValue, allowedWaists)) {
@@ -2671,15 +2874,24 @@ import {
       return false;
     }
     if (!isValidDropdownValue(issuedShirtSizeValue, allowedShirtSizes)) {
-      await showMessageModal("Invalid Issued Shirt Size", "Issued Shirt Size must be selected from the dropdown.");
+      await showMessageModal(
+        "Invalid Issued Shirt Size",
+        "Issued Shirt Size must be selected from the dropdown.",
+      );
       return false;
     }
     if (!isValidDropdownValue(issuedWaistValue, allowedWaists)) {
-      await showMessageModal("Invalid Issued Waist", "Issued Waist must be selected from the dropdown.");
+      await showMessageModal(
+        "Invalid Issued Waist",
+        "Issued Waist must be selected from the dropdown.",
+      );
       return false;
     }
     if (!isValidDropdownValue(issuedInseamValue, allowedInseams)) {
-      await showMessageModal("Invalid Issued Inseam", "Issued Inseam must be selected from the dropdown.");
+      await showMessageModal(
+        "Invalid Issued Inseam",
+        "Issued Inseam must be selected from the dropdown.",
+      );
       return false;
     }
     if (!isValidDropdownValue(issuedShirtsGivenValue, UNIFORM_ISSUED_COUNT_OPTIONS)) {
@@ -2715,7 +2927,10 @@ import {
 
     const uniformsIssued = isUniformIssued(payload["Uniforms Issued"]);
     if (payload["Uniforms Issued"] && !uniformsIssued) {
-      await showMessageModal("Invalid Uniform Status", "Uniforms Issued must come from the checkbox.");
+      await showMessageModal(
+        "Invalid Uniform Status",
+        "Uniforms Issued must come from the checkbox.",
+      );
       return false;
     }
     if (uniformsIssued) {
@@ -2735,7 +2950,10 @@ import {
           return false;
         }
         if (!allowedShirtTypes.size) {
-          await showMessageModal("No Shirts Available", getUniformNoneMessage("shirt", context.branch));
+          await showMessageModal(
+            "No Shirts Available",
+            getUniformNoneMessage("shirt", context.branch),
+          );
           return false;
         }
         if (!shirtTypes.length) {
@@ -2759,7 +2977,10 @@ import {
           return false;
         }
         if (!issuedPantsTypeValue) {
-          await showMessageModal("Missing Pants Type", "Select Issued Pants Type when pants are issued.");
+          await showMessageModal(
+            "Missing Pants Type",
+            "Select Issued Pants Type when pants are issued.",
+          );
           return false;
         }
       }
@@ -2826,9 +3047,58 @@ import {
     };
   };
 
+  const collectCandidatePreNeoPayload = () => {
+    const value = (id) => ($(id) ? $(id).value.trim() : "");
+    return {
+      "Background Provider": value("candidate-background-provider"),
+      "Background Cleared Date": value("candidate-background-date"),
+      "Background MVR Flag": value("candidate-background-mvr") || "1",
+      "License Type": value("candidate-license-type"),
+      "MA CORI Status": value("candidate-cori-status"),
+      "MA CORI Date": value("candidate-cori-date"),
+      "NH GC Status": value("candidate-nh-status"),
+      "NH GC Expiration Date": value("candidate-nh-expiration"),
+      "NH GC ID Number": value("candidate-nh-id"),
+      "ME GC Status": value("candidate-me-status"),
+      "ME GC Expiration Date": value("candidate-me-expiration"),
+    };
+  };
+
+  const validateCandidatePreNeoPayload = async (payload) => {
+    const dateFields = [
+      { label: "Background Cleared Date", value: payload["Background Cleared Date"] },
+      { label: "MA CORI Date", value: payload["MA CORI Date"] },
+      { label: "NH GC Expiration Date", value: payload["NH GC Expiration Date"] },
+      { label: "ME GC Expiration Date", value: payload["ME GC Expiration Date"] },
+    ];
+    for (const field of dateFields) {
+      if (field.value && !isDateLikeValid(field.value)) {
+        await showMessageModal(
+          "Invalid Format",
+          `${field.label} must be in MM/DD/YY or MM/DD/YYYY format.`,
+        );
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const persistCandidatePreNeoPayload = async (candidateId, payload) => {
+    if (!candidateId) return;
+    try {
+      await workflowApi.piiSave(candidateId, payload);
+    } catch (_error) {
+      await showMessageModal(
+        "Pre Neo Save Failed",
+        "Candidate was saved, but Pre Neo fields could not be saved. Reopen Basic Info and try again.",
+      );
+    }
+  };
+
   const handleCandidateSubmit = async (event) => {
     event.preventDefault();
     const payload = buildCandidatePayload();
+    const preNeoPayload = collectCandidatePreNeoPayload();
     if (!payload.column_id) {
       await showMessageModal("Missing Column", "Select a column before adding a candidate.");
       return;
@@ -2848,6 +3118,7 @@ import {
         return;
       }
     }
+    if (!(await validateCandidatePreNeoPayload(preNeoPayload))) return;
 
     if (state.kanban.editingCardId) {
       const previousCards = state.kanban.cards.map((card) => ({ ...card }));
@@ -2874,6 +3145,7 @@ import {
         onErrorMessage: "Unable to update candidate.",
       });
       if (!result) return;
+      await persistCandidatePreNeoPayload(cardId, preNeoPayload);
     } else {
       const previousCards = state.kanban.cards.map((card) => ({ ...card }));
       const columnCards = state.kanban.cards.filter((card) => card.column_id === payload.column_id);
@@ -2919,6 +3191,10 @@ import {
         onErrorMessage: "Unable to add candidate.",
       });
       if (!result) return;
+      await persistCandidatePreNeoPayload(
+        result && result.card ? result.card.uuid : null,
+        preNeoPayload,
+      );
     }
     closeCandidateModal();
     if (state.kanban.detailsCardId) {
@@ -2995,6 +3271,13 @@ import {
     const empInput = $("candidate-employee");
     const branchSelect = $("candidate-branch");
     const contactPhone = $("candidate-phone");
+    const backgroundProvider = $("candidate-background-provider");
+    const licenseType = $("candidate-license-type");
+    const nhId = $("candidate-nh-id");
+    const backgroundDate = $("candidate-background-date");
+    const coriDate = $("candidate-cori-date");
+    const nhExpiration = $("candidate-nh-expiration");
+    const meExpiration = $("candidate-me-expiration");
 
     const letterInputs = [nameInput, jobLocationInput, managerInput, branchOther].filter(Boolean);
     letterInputs.forEach((input) => {
@@ -3016,6 +3299,18 @@ import {
       });
     }
 
+    [backgroundDate, coriDate, nhExpiration, meExpiration].filter(Boolean).forEach((input) => {
+      input.addEventListener("input", () => {
+        input.value = formatDateLike(input.value);
+      });
+    });
+
+    if (nhId) {
+      nhId.addEventListener("input", () => {
+        nhId.value = sanitizeAlphaNum(nhId.value);
+      });
+    }
+
     if (branchSelect && branchOther) {
       branchSelect.addEventListener("change", () => {
         if (branchSelect.value === "Other") {
@@ -3024,6 +3319,19 @@ import {
           branchOther.classList.add("hidden");
           branchOther.value = "";
         }
+      });
+    }
+
+    if (backgroundProvider) {
+      backgroundProvider.addEventListener("change", () => {
+        toggleCandidateBackgroundDate(backgroundProvider.value);
+        updateCandidateBackgroundMvrFlag(backgroundProvider.value);
+      });
+    }
+
+    if (licenseType) {
+      licenseType.addEventListener("change", () => {
+        toggleCandidateLicenseSections(licenseType.value);
       });
     }
   };
@@ -3227,19 +3535,6 @@ import {
     document.addEventListener("touchend", onTouchEnd, { passive: true });
   };
 
-  const initAndroidWorkflowActions = () => {
-    const platform = workflowApi && workflowApi.platform ? workflowApi.platform : "";
-    if (platform !== "android") return;
-    const actions = document.querySelector("#page-dashboard .topbar__actions");
-    const target = $("sidebar-workflow-actions");
-    const section = $("sidebar-workflow-section");
-    if (!actions || !target) return;
-    const items = Array.from(actions.children);
-    if (items.length === 0) return;
-    items.forEach((item) => target.appendChild(item));
-    if (section) section.classList.remove("hidden");
-  };
-
   const initResponsiveModes = () => {
     const apply = () => {
       const compact = window.innerWidth <= 1200 || window.innerHeight <= 820;
@@ -3255,13 +3550,21 @@ import {
     const modal = $("setup-modal");
     const continueBtn = $("setup-continue");
     if (!modal || !continueBtn) return;
-    const status = await workflowApi.setupStatus();
+    const [status, storageInfo] = await Promise.all([
+      workflowApi.setupStatus(),
+      workflowApi.storageInfo ? workflowApi.storageInfo() : Promise.resolve(null),
+    ]);
     if (!status || !status.needsSetup) return;
     const pathEl = $("setup-folder-path");
-    if (pathEl && status.folder) pathEl.textContent = status.folder;
+    if (pathEl) {
+      const storageLabel =
+        storageInfo && storageInfo.pathLabel ? storageInfo.pathLabel : status.folder || "";
+      if (storageLabel) pathEl.textContent = storageLabel;
+    }
     const warning = $("setup-storage-warning");
     if (warning) {
-      warning.classList.toggle("hidden", !status.fallback);
+      const fallback = !!(storageInfo && storageInfo.fallback) || !!(status && status.fallback);
+      warning.classList.toggle("hidden", !fallback);
     }
     modal.classList.remove("hidden");
     await new Promise((resolve) => {
@@ -3285,13 +3588,12 @@ import {
   const initDonation = async () => {
     const donateBtn = $("donate-button");
     if (!donateBtn) return;
-    if (!workflowApi || !workflowApi.donate || workflowApi.platform !== "android") {
+    if (!workflowApi || !workflowApi.donate) {
       const card = donateBtn.closest(".card");
       if (card) card.classList.add("hidden");
       return;
     }
-    const preference =
-      workflowApi.donationPreference && (await workflowApi.donationPreference());
+    const preference = workflowApi.donationPreference && (await workflowApi.donationPreference());
     if (preference && preference.choice === "never") {
       const inSettings = !!donateBtn.closest("#page-settings");
       if (!inSettings) {
@@ -3324,7 +3626,10 @@ import {
         if (columnBody) {
           const delta = event.deltaY;
           if (delta < 0 && columnBody.scrollTop > 0) return;
-          if (delta > 0 && columnBody.scrollTop + columnBody.clientHeight < columnBody.scrollHeight) {
+          if (
+            delta > 0 &&
+            columnBody.scrollTop + columnBody.clientHeight < columnBody.scrollHeight
+          ) {
             return;
           }
         }
@@ -3427,7 +3732,9 @@ import {
 
   const downloadWeeklySummary = async () => {
     const summary = await workflowApi.weeklySummary();
-    if (!summary || !summary.content) return;
+    if (!summary) return;
+    if (summary.saved) return;
+    if (!summary.content) return;
     const blob = new Blob([summary.content], { type: "text/markdown" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -3705,6 +4012,7 @@ import {
           bodyTemplate: "{{defaultBody}}",
         };
       }
+      acc[type].htmlBodyTemplate = "{{defaultHtmlBody}}";
       return acc;
     }, {}),
   );
@@ -3713,10 +4021,50 @@ import {
   const MAX_EMAIL_TEMPLATE_CC_LEN = 1200;
   const MAX_EMAIL_TEMPLATE_SUBJECT_LEN = 500;
   const MAX_EMAIL_TEMPLATE_BODY_LEN = 40000;
+  const MAX_EMAIL_TEMPLATE_HTML_BODY_LEN = 120000;
+  const MAX_EMAIL_TEMPLATE_TOKEN_KEY_LEN = 40;
+  const MAX_EMAIL_TEMPLATE_TOKEN_VALUE_LEN = 2000;
 
   const toTemplateValue = (value) => {
     const text = String(value || "").trim();
     return text && text !== "—" ? text : "";
+  };
+
+  const normalizeTemplateFieldName = (value) => {
+    return String(value || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "");
+  };
+
+  const buildTemplateRowLookup = (rowValue) => {
+    const row = rowValue && typeof rowValue === "object" ? rowValue : {};
+    const normalized = {};
+    Object.keys(row).forEach((key) => {
+      const normalizedKey = normalizeTemplateFieldName(key);
+      if (!normalizedKey || Object.prototype.hasOwnProperty.call(normalized, normalizedKey)) return;
+      normalized[normalizedKey] = row[key];
+    });
+    return { row, normalized };
+  };
+
+  const readTemplateRowValue = (rowLookup, ...keys) => {
+    if (!rowLookup) return "";
+    for (const key of keys) {
+      if (Object.prototype.hasOwnProperty.call(rowLookup.row, key)) {
+        const value = rowLookup.row[key];
+        const text = toTemplateValue(value);
+        if (text) return text;
+      }
+    }
+    for (const key of keys) {
+      const normalizedKey = normalizeTemplateFieldName(key);
+      if (!normalizedKey) continue;
+      if (!Object.prototype.hasOwnProperty.call(rowLookup.normalized, normalizedKey)) continue;
+      const value = rowLookup.normalized[normalizedKey];
+      const text = toTemplateValue(value);
+      if (text) return text;
+    }
+    return "";
   };
 
   const clampTemplateString = (value, maxLen) => {
@@ -3731,6 +4079,10 @@ import {
       ccTemplate: clampTemplateString(payload.ccTemplate, MAX_EMAIL_TEMPLATE_CC_LEN),
       subjectTemplate: clampTemplateString(payload.subjectTemplate, MAX_EMAIL_TEMPLATE_SUBJECT_LEN),
       bodyTemplate: clampTemplateString(payload.bodyTemplate, MAX_EMAIL_TEMPLATE_BODY_LEN),
+      htmlBodyTemplate: clampTemplateString(
+        payload.htmlBodyTemplate,
+        MAX_EMAIL_TEMPLATE_HTML_BODY_LEN,
+      ),
     };
   };
 
@@ -3746,6 +4098,32 @@ import {
           .slice(0, 64);
         if (!safeType) return;
         out[safeType] = sanitizeEmailTemplateRecord(templates[type]);
+      });
+    return out;
+  };
+
+  const sanitizeEmailTemplateTokenKey = (value) => {
+    return String(value || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]/g, "")
+      .slice(0, MAX_EMAIL_TEMPLATE_TOKEN_KEY_LEN);
+  };
+
+  const sanitizeEmailTemplateTokenValue = (value) => {
+    return clampTemplateString(value, MAX_EMAIL_TEMPLATE_TOKEN_VALUE_LEN);
+  };
+
+  const sanitizeEmailTemplateTokenMap = (tokens) => {
+    const out = {};
+    if (!tokens || typeof tokens !== "object" || Array.isArray(tokens)) return out;
+    Object.keys(tokens)
+      .slice(0, 128)
+      .forEach((key) => {
+        const safeKey = sanitizeEmailTemplateTokenKey(key);
+        if (!safeKey) return;
+        const value = sanitizeEmailTemplateTokenValue(tokens[key]);
+        if (!value) return;
+        out[safeKey] = value;
       });
     return out;
   };
@@ -3806,11 +4184,10 @@ import {
       ccTemplate: "",
       subjectTemplate: "{{defaultSubject}}",
       bodyTemplate: "{{defaultBody}}",
+      htmlBodyTemplate: "{{defaultHtmlBody}}",
     };
     const custom =
-      state.emailTemplates &&
-      state.emailTemplates.items &&
-      state.emailTemplates.items[safeType]
+      state.emailTemplates && state.emailTemplates.items && state.emailTemplates.items[safeType]
         ? sanitizeEmailTemplateRecord(state.emailTemplates.items[safeType])
         : {};
     return {
@@ -3822,10 +4199,45 @@ import {
   const renderTemplateText = (templateText, tokenMap) => {
     const text = String(templateText || "");
     if (!text) return "";
-    return text.replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (match, key) => {
+    let rendered = text.replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (match, key) => {
       if (!Object.prototype.hasOwnProperty.call(tokenMap, key)) return match;
       return String(tokenMap[key] ?? "");
     });
+    const legacyTokenMap = {
+      EID: "eid",
+      DOB_NO_SLASHES: "dobDigits",
+      RECIPIENT_NAME: "recipientName",
+      CANDIDATE_NAME: "recipientName",
+      CANDIDATE_EMAIL: "candidateEmail",
+      ICIMS_ID: "icimsId",
+      REQ_ID: "reqId",
+      WT_JOB_NO: "wtJobNo",
+      MANAGER: "manager",
+      MANAGER_EMAIL: "managerEmail",
+      BRANCH: "branch",
+      JOB_ID: "jobId",
+      JOB_NAME: "jobName",
+      PHONE: "phone",
+      EMAIL: "email",
+      START_TIME: "startTime",
+      END_TIME: "endTime",
+      TOTAL_HOURS: "totalHours",
+      HIRE_DATE: "hireDate",
+    };
+    const legacyTokenMapNormalized = Object.keys(legacyTokenMap).reduce((acc, legacyKey) => {
+      acc[normalizeTemplateFieldName(legacyKey)] = legacyTokenMap[legacyKey];
+      return acc;
+    }, {});
+    rendered = rendered.replace(/\[([^\]\r\n]+)\]/g, (match, key) => {
+      const trimmedKey = String(key || "").trim();
+      if (!trimmedKey) return match;
+      const mappedKey =
+        legacyTokenMap[trimmedKey] || legacyTokenMapNormalized[normalizeTemplateFieldName(trimmedKey)];
+      if (!mappedKey) return match;
+      if (!Object.prototype.hasOwnProperty.call(tokenMap, mappedKey)) return match;
+      return String(tokenMap[mappedKey] ?? "");
+    });
+    return rendered;
   };
 
   const sanitizeTemplateDisplayName = (value) => {
@@ -3911,82 +4323,92 @@ import {
   };
 
   const formatNumberedLinkLines = (links) => {
-    return (links || []).map((item, index) => `  ${index + 1}. ${item.label}: ${item.url}`);
+    return (links || []).map((item, index) => {
+      const label = toTemplateValue(item && item.label);
+      const url = toTemplateValue(item && item.url);
+      if (label && url) return `${index + 1}. ${label}\n${url}`;
+      if (label) return `${index + 1}. ${label}`;
+      if (url) return `${index + 1}. ${url}`;
+      return `${index + 1}.`;
+    });
   };
 
-  const buildEdgeCredentialsTemplate = (context, recipientName, manager, branch, type) => {
+  const formatBulletedLinkLines = (links) => {
+    return (links || []).map((item) => {
+      const label = toTemplateValue(item && item.label);
+      const url = toTemplateValue(item && item.url);
+      if (label && url) return `- ${label}: ${url}`;
+      if (label) return `- ${label}`;
+      if (url) return `- ${url}`;
+      return "-";
+    });
+  };
+
+  const buildBulletedLinkListHtml = (links) => {
+    const items = (links || []).map((item) => {
+      const label = toTemplateValue(item && item.label);
+      const url = toTemplateValue(item && item.url);
+      if (label && url) {
+        return `<li><a href="${escapeHtml(url)}" target="_blank" rel="noreferrer noopener">${escapeHtml(label)}</a></li>`;
+      }
+      if (label) return `<li>${escapeHtml(label)}</li>`;
+      if (url) return `<li><a href="${escapeHtml(url)}" target="_blank" rel="noreferrer noopener">${escapeHtml(url)}</a></li>`;
+      return "<li></li>";
+    });
+    return items.length ? `<ul>\n${items.join("\n")}\n</ul>` : "<ul><li>[Training Link]</li></ul>";
+  };
+
+  const getEdgeLinksForType = (type) => {
+    const definition = EDGE_LINK_TEMPLATE_DEFINITIONS[type] || null;
+    if (definition) {
+      const scopedLinks = EDGE_TRACK_LINKS[definition.key] || [];
+      return definition.includeCommon ? [...EDGE_COMMON_LINKS, ...scopedLinks] : [...scopedLinks];
+    }
+    if (type === "edge-credentials") {
+      return [
+        ...EDGE_COMMON_LINKS,
+        ...(EDGE_TRACK_LINKS.amazon || []),
+        ...(EDGE_TRACK_LINKS.fedex || []),
+        ...(EDGE_TRACK_LINKS.bae || []),
+        ...(EDGE_TRACK_LINKS.schneider || []),
+        { label: "Driver Training", url: EDGE_URL_DRIVER },
+        { label: "Allied Universal Driver Training", url: EDGE_URL_DRIVER_ONLY },
+      ];
+    }
+    return [];
+  };
+
+  const buildEdgeCredentialsTemplate = (context, recipientName, type) => {
     const eid = context.eid || "[EID]";
     const dobNoSlashes = context.dobDigits || "[DOB_NO_SLASHES]";
     const definition = EDGE_LINK_TEMPLATE_DEFINITIONS[type] || null;
-    const linkSet = definition ? EDGE_TRACK_LINKS[definition.key] || [] : [];
+    const links = getEdgeLinksForType(type);
 
     const lines = [
       `Hi ${recipientName},`,
       "",
       `Your Employee ID: ${eid}`,
-      `DOB (No Slashes): ${dobNoSlashes}`,
       "",
       `Edge Username: ${eid}`,
-      `Edge Password: ${eid}`,
+      `Edge Password: ${dobNoSlashes}`,
       "",
-      `Edge Portal: ${EDGE_PORTAL_URL}`,
+      "There are additional trainings you must complete. Click each link below:",
       "",
+      ...(links.length ? formatBulletedLinkLines(links) : ["- [Training Link]"]),
     ];
 
-    if (definition) {
-      const links = definition.includeCommon ? [...EDGE_COMMON_LINKS, ...linkSet] : [...linkSet];
-      lines.push("There are additional trainings you must complete. Click each link below.");
-      lines.push("");
-      lines.push(`${definition.label}:`);
-      lines.push(...formatNumberedLinkLines(links));
-      if (definition.cc && definition.cc.length) {
-        lines.push("");
-        lines.push(`Suggested CC: ${definition.cc.join(", ")}`);
-      }
-      if (definition.note) {
-        lines.push("");
-        lines.push(definition.note);
-      }
-    } else {
-      lines.push("Training Link Sets:");
-      lines.push("");
-      lines.push("Amazon:");
-      lines.push(...formatNumberedLinkLines(EDGE_TRACK_LINKS.amazon));
-      lines.push("");
-      lines.push("FedEx:");
-      lines.push(...formatNumberedLinkLines(EDGE_TRACK_LINKS.fedex));
-      lines.push("");
-      lines.push("BAE:");
-      lines.push(...formatNumberedLinkLines(EDGE_TRACK_LINKS.bae));
-      lines.push("");
-      lines.push("Schneider:");
-      lines.push(...formatNumberedLinkLines(EDGE_TRACK_LINKS.schneider));
-      lines.push("");
-      lines.push("Driver:");
-      lines.push(`  1. Driver Training: ${EDGE_URL_DRIVER}`);
-      lines.push("");
-      lines.push("Driver ONLY:");
-      lines.push(`  1. Allied Universal Driver Training: ${EDGE_URL_DRIVER_ONLY}`);
-      lines.push("");
-      lines.push("CORE ONLY:");
-      lines.push(`  1. Allied Universal Core Competencies: ${EDGE_URL_CORE}`);
-      lines.push(`  2. Allied Universal 1st Amendment Rights Training: ${EDGE_URL_FIRST_AMENDMENT}`);
-      lines.push("");
-      lines.push("Extra:");
-      lines.push("  1. [ADD_EXTRA_URL]");
-    }
-
-    lines.push("");
-    lines.push(`Branch: ${branch}`);
-    lines.push(`Job ID: ${context.jobId || "[JOB_ID]"}`);
-    lines.push(`Job Name: ${context.jobName || "[JOB_NAME]"}`);
-    lines.push(`Manager: ${manager}`);
-    lines.push(`Hire Date: ${context.hireDate || "x"}`);
-
     const templateLabel = definition ? definition.label : "Edge Credentials";
+    const htmlBody = [
+      `<p>Hi ${escapeHtml(recipientName)},</p>`,
+      `<p>Your Employee ID: ${escapeHtml(eid)}</p>`,
+      `<p>Edge Username: ${escapeHtml(eid)}<br />Edge Password: ${escapeHtml(dobNoSlashes)}</p>`,
+      "<p>There are additional trainings you must complete. Click each link below:</p>",
+      buildBulletedLinkListHtml(links),
+    ].join("\n");
     return {
       subject: `NEO | ${recipientName} | EID ${eid} | ${templateLabel}`,
       body: lines.join("\n"),
+      htmlBody,
     };
   };
 
@@ -4000,7 +4422,11 @@ import {
       items.push("CORI entered into WT");
     }
 
-    const hasNhGuardCardInfo = hasComplianceInfo(context.nhStatus, context.nhId, context.nhExpiration);
+    const hasNhGuardCardInfo = hasComplianceInfo(
+      context.nhStatus,
+      context.nhId,
+      context.nhExpiration,
+    );
     const hasMeGuardCardInfo = hasComplianceInfo(context.meStatus, context.meExpiration);
     if (hasNhGuardCardInfo) items.push("NH GC entered into WT");
     if (hasMeGuardCardInfo) items.push("ME GC entered into WT");
@@ -4058,7 +4484,8 @@ import {
       toTemplateValue(context.issuedWaist),
       toTemplateValue(context.issuedInseam),
     );
-    const shirtIssuedSize = toTemplateValue(context.issuedShirtSize) || toTemplateValue(context.shirtSize) || "x";
+    const shirtIssuedSize =
+      toTemplateValue(context.issuedShirtSize) || toTemplateValue(context.shirtSize) || "x";
     const shirtIssuedAlteration = toTemplateValue(context.issuedShirtType) || "None";
     const pantsIssuedAlteration = toTemplateValue(context.issuedPantsType) || "None";
     const pantsIssuedSize =
@@ -4067,7 +4494,10 @@ import {
       toTemplateValue(context.pantsSize) ||
       "x";
     const issuedItems = uniformsIssued
-      ? [`${shirtIssuedSize}, ${shirtIssuedAlteration}`, `${pantsIssuedAlteration}, ${pantsIssuedSize}`]
+      ? [
+          `${shirtIssuedSize}, ${shirtIssuedAlteration}`,
+          `${pantsIssuedAlteration}, ${pantsIssuedSize}`,
+        ]
       : ["None, None", "None, None"];
 
     const bodyLines = [
@@ -4112,77 +4542,142 @@ import {
   };
 
   const buildEmailTemplateContextFromCardRow = (card, rowValue) => {
-    const row = rowValue && typeof rowValue === "object" ? rowValue : {};
-    const parsedIssuedPants = parsePantsSize(row["Issued Pants Size"] || row["Pants Size"]);
-    const parsedPants = parsePantsSize(row["Pants Size"]);
-    const shirtType = formatUniformTypeText(row["Issued Shirt Type"] || row["Shirt Type"]);
-    const pantsType = toTemplateValue(row["Issued Pants Type"] || row["Pants Type"]);
+    const rowLookup = buildTemplateRowLookup(rowValue);
+    const pickTemplateValue = (...values) => {
+      for (const value of values) {
+        const text = toTemplateValue(value);
+        if (text) return text;
+      }
+      return "";
+    };
+    const pickRowValue = (...keys) => readTemplateRowValue(rowLookup, ...keys);
+    const parsedIssuedPants = parsePantsSize(
+      pickRowValue("Issued Pants Size", "issued_pants_size", "Pants Size", "pants_size"),
+    );
+    const parsedPants = parsePantsSize(pickRowValue("Pants Size", "pants_size"));
+    const shirtType = formatUniformTypeText(
+      pickRowValue("Issued Shirt Type", "issued_shirt_type", "Shirt Type", "shirt_type"),
+    );
+    const pantsType = pickRowValue(
+      "Issued Pants Type",
+      "issued_pants_type",
+      "Pants Type",
+      "pants_type",
+    );
     const issuedPantsSize = buildPantsSize(
-      toTemplateValue(row["Issued Waist"] || parsedIssuedPants.waist),
-      toTemplateValue(row["Issued Inseam"] || parsedIssuedPants.inseam),
+      pickTemplateValue(pickRowValue("Issued Waist", "issued_waist"), parsedIssuedPants.waist),
+      pickTemplateValue(pickRowValue("Issued Inseam", "issued_inseam"), parsedIssuedPants.inseam),
     );
     const basePantsSize = buildPantsSize(
-      toTemplateValue(row["Waist"] || parsedPants.waist),
-      toTemplateValue(row["Inseam"] || parsedPants.inseam),
+      pickTemplateValue(pickRowValue("Waist", "waist"), parsedPants.waist),
+      pickTemplateValue(pickRowValue("Inseam", "inseam"), parsedPants.inseam),
     );
-    const fallbackJobText = toTemplateValue(row["Job ID Name"]);
+    const fallbackJobText = pickRowValue("Job ID Name", "job_id_name", "Job");
     const jobParts = fallbackJobText
       ? fallbackJobText
-          .split("·")
+          .split(/[·|•]/)
           .map((part) => part.trim())
           .filter(Boolean)
       : [];
-    const cardJobId = toTemplateValue(card ? card.job_id : "");
-    const reqId = toTemplateValue(card ? card.req_id : row["REQ ID"]);
-    const cardJobName = toTemplateValue(card ? card.job_name : "");
-    const icimsId = toTemplateValue(card ? card.icims_id : row["ICIMS ID"]);
-    const candidateId = toTemplateValue(
-      (card && card.uuid) || row["candidate UUID"] || row["Candidate UUID"] || row.__rowId,
+    const cardJobId = pickTemplateValue(card ? card.job_id : "", pickRowValue("Job ID", "job_id"));
+    const reqId = pickTemplateValue(
+      card ? card.req_id : "",
+      pickRowValue("REQ ID", "Req ID", "req_id", "reqid"),
+    );
+    const cardJobName = pickTemplateValue(
+      card ? card.job_name : "",
+      pickRowValue("Job Name", "job_name"),
+    );
+    const icimsId = pickTemplateValue(
+      card ? card.icims_id : "",
+      pickRowValue("ICIMS ID", "ICIMS", "icims_id", "icimsid"),
+    );
+    const candidateId = pickTemplateValue(
+      card ? card.uuid : "",
+      pickRowValue("candidate UUID", "Candidate UUID", "candidate_uuid", "uuid"),
     );
     const jobId = cardJobId || (jobParts.length ? jobParts[0] : "");
     const jobName = cardJobName || (jobParts.length > 1 ? jobParts.slice(1).join(" · ") : "");
-    const hireDate = formatTemplateDate(row["Hire Date"]);
-    const dobDigits = sanitizeNumbers(toTemplateValue(row["DOB"]));
+    const hireDate = formatTemplateDate(pickRowValue("Hire Date", "hire_date"));
+    const dobDigits = sanitizeNumbers(
+      pickTemplateValue(
+        pickRowValue("DOB", "Date of Birth", "Birth Date", "dob", "birth_date"),
+      ),
+    );
+    const manager = pickTemplateValue(
+      card ? card.manager : "",
+      pickRowValue("Manager", "Manager Name", "manager", "manager_name"),
+    );
+    const managerEmail = pickTemplateValue(
+      pickRowValue("Manager Email", "manager_email"),
+      managerNameToAusEmail(manager),
+    );
 
     return {
-      name: toTemplateValue(card ? card.candidate_name : row["Candidate Name"]),
-      eid: toTemplateValue(card ? card.employee_id : row["Employee ID"]),
+      name: pickTemplateValue(
+        card ? card.candidate_name : "",
+        pickRowValue("Candidate Name", "Name", "candidate_name"),
+      ),
+      eid: pickTemplateValue(
+        card ? card.employee_id : "",
+        pickRowValue("Employee ID", "EID", "employee_id"),
+      ),
       candidateId,
       reqId,
       icimsId,
       dobDigits,
-      phone: toTemplateValue(row["Contact Phone"]),
-      email: toTemplateValue(row["Contact Email"]),
+      phone: pickRowValue("Contact Phone", "Phone Number", "Phone", "contact_phone", "phone"),
+      email: pickRowValue("Contact Email", "Candidate Email", "Email", "contact_email", "email"),
       hireDate,
-      branch: toTemplateValue(card ? card.branch : row["Branch"]),
-      location: toTemplateValue(card ? card.job_location : row["Job Location"]),
+      branch: pickTemplateValue(card ? card.branch : "", pickRowValue("Branch", "branch")),
+      location: pickTemplateValue(
+        card ? card.job_location : "",
+        pickRowValue("Job Location", "Location", "job_location", "location"),
+      ),
       jobId,
       jobName,
-      job:
-        toTemplateValue([jobId, jobName].filter(Boolean).join(" · ")) || toTemplateValue(row["Job ID Name"]),
-      manager: toTemplateValue(card ? card.manager : row["Manager"]),
-      managerEmail: managerNameToAusEmail(card ? card.manager : row["Manager"]),
-      startTime: toTemplateValue(row["Neo Arrival Time"]),
-      endTime: toTemplateValue(row["Neo Departure Time"]),
-      hours: toTemplateValue(row["Total Neo Hours"]),
-      shirtSize: toTemplateValue(row["Shirt Size"]),
-      pantsSize: toTemplateValue(row["Pants Size"] || basePantsSize),
-      bootsSize: toTemplateValue(row["Boots Size"]),
-      uniformsIssued: isUniformIssued(row["Uniforms Issued"]),
-      issuedShirtSize: toTemplateValue(row["Issued Shirt Size"] || row["Shirt Size"]),
-      issuedPantsSize: toTemplateValue(row["Issued Pants Size"] || issuedPantsSize),
+      job: toTemplateValue([jobId, jobName].filter(Boolean).join(" · ")) || fallbackJobText,
+      manager,
+      managerEmail,
+      startTime: pickRowValue("Neo Arrival Time", "Arrival", "neo_arrival_time"),
+      endTime: pickRowValue("Neo Departure Time", "Departure", "neo_departure_time"),
+      hours: pickRowValue("Total Neo Hours", "Total Hours", "total_neo_hours", "hours"),
+      shirtSize: pickRowValue("Shirt Size", "shirt_size"),
+      pantsSize: pickTemplateValue(pickRowValue("Pants Size", "pants_size"), basePantsSize),
+      bootsSize: pickRowValue("Boots Size", "boots_size"),
+      uniformsIssued: isUniformIssued(pickRowValue("Uniforms Issued", "uniforms_issued")),
+      issuedShirtSize: pickTemplateValue(
+        pickRowValue("Issued Shirt Size", "issued_shirt_size"),
+        pickRowValue("Shirt Size", "shirt_size"),
+      ),
+      issuedPantsSize: pickTemplateValue(
+        pickRowValue("Issued Pants Size", "issued_pants_size"),
+        issuedPantsSize,
+      ),
       issuedShirtType: shirtType,
-      issuedShirtsGiven: toTemplateValue(row["Issued Shirts Given"] || row["Shirts Given"]),
-      issuedWaist: toTemplateValue(row["Issued Waist"] || parsedIssuedPants.waist),
-      issuedInseam: toTemplateValue(row["Issued Inseam"] || parsedIssuedPants.inseam),
+      issuedShirtsGiven: pickTemplateValue(
+        pickRowValue("Issued Shirts Given", "issued_shirts_given"),
+        pickRowValue("Shirts Given", "shirts_given"),
+      ),
+      issuedWaist: pickTemplateValue(
+        pickRowValue("Issued Waist", "issued_waist"),
+        parsedIssuedPants.waist,
+      ),
+      issuedInseam: pickTemplateValue(
+        pickRowValue("Issued Inseam", "issued_inseam"),
+        parsedIssuedPants.inseam,
+      ),
       issuedPantsType: pantsType,
-      issuedPantsGiven: toTemplateValue(row["Issued Pants Given"] || row["Pants Given"]),
-      coriStatus: toTemplateValue(row["MA CORI Status"]),
-      nhStatus: toTemplateValue(row["NH GC Status"]),
-      nhId: toTemplateValue(row["NH GC ID Number"]),
-      nhExpiration: toTemplateValue(row["NH GC Expiration Date"]),
-      meStatus: toTemplateValue(row["ME GC Status"]),
-      meExpiration: toTemplateValue(row["ME GC Expiration Date"]),
+      issuedPantsGiven: pickTemplateValue(
+        pickRowValue("Issued Pants Given", "issued_pants_given"),
+        pickRowValue("Pants Given", "pants_given"),
+      ),
+      coriStatus: pickRowValue("MA CORI Status", "ma_cori_status"),
+      nhStatus: pickRowValue("NH GC Status", "nh_gc_status"),
+      nhId: pickRowValue("NH GC ID Number", "nh_gc_id_number"),
+      nhExpiration: pickRowValue("NH GC Expiration Date", "nh_gc_expiration_date"),
+      meStatus: pickRowValue("ME GC Status", "me_gc_status"),
+      meExpiration: pickRowValue("ME GC Expiration Date", "me_gc_expiration_date"),
     };
   };
 
@@ -4192,7 +4687,15 @@ import {
     return buildEmailTemplateContextFromCardRow(card, state.kanban.detailsRow || {});
   };
 
-  const buildDefaultEmailTemplateByType = (type, context, recipientName, manager, branch, job, today) => {
+  const buildDefaultEmailTemplateByType = (
+    type,
+    context,
+    recipientName,
+    manager,
+    branch,
+    job,
+    today,
+  ) => {
     let subject = "";
     let body = "";
     if (type === "neo-compliance") {
@@ -4220,7 +4723,7 @@ import {
         `Mana. Name: ${managerName}`,
       ].join("\n");
     } else if (isEdgeTemplateType(type)) {
-      const edgeTemplate = buildEdgeCredentialsTemplate(context, recipientName, manager, branch, type);
+      const edgeTemplate = buildEdgeCredentialsTemplate(context, recipientName, type);
       subject = edgeTemplate.subject;
       body = edgeTemplate.body;
     } else if (type === "missing-pii") {
@@ -4314,7 +4817,127 @@ import {
     ].join("\n");
   };
 
-  const buildEmailTemplateTokenMap = (type, context, recipientName, manager, branch, job, today, defaults) => {
+  const splitUrlAndTrailingPunctuation = (rawUrl) => {
+    let url = String(rawUrl || "");
+    let trailing = "";
+    while (/[),.;!?]$/.test(url)) {
+      trailing = `${url.slice(-1)}${trailing}`;
+      url = url.slice(0, -1);
+    }
+    return { url, trailing };
+  };
+
+  const normalizeTemplateLinkUrl = (value) => {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    if (/^https?:\/\//i.test(raw)) return raw;
+    if (/^www\./i.test(raw)) return `https://${raw}`;
+    return "";
+  };
+
+  const linkifyEmailTextToHtml = (value) => {
+    const text = String(value || "");
+    const urlPattern = /(https?:\/\/[^\s<]+)/gi;
+    let output = "";
+    let cursor = 0;
+    let match = urlPattern.exec(text);
+    while (match) {
+      const fullMatch = match[0];
+      const start = match.index;
+      const { url, trailing } = splitUrlAndTrailingPunctuation(fullMatch);
+      output += escapeHtml(text.slice(cursor, start));
+      if (url) {
+        const safeUrl = escapeHtml(url);
+        output += `<a href="${safeUrl}" target="_blank" rel="noreferrer noopener">${safeUrl}</a>`;
+      }
+      if (trailing) output += escapeHtml(trailing);
+      cursor = start + fullMatch.length;
+      match = urlPattern.exec(text);
+    }
+    output += escapeHtml(text.slice(cursor));
+    return output;
+  };
+
+  const renderTemplateLabelUrlLinks = (lineText) => {
+    const line = String(lineText || "");
+    const labelUrlPattern = /\[\s*"([^"\n]+)"\s*=\s*"([^"\n]+)"\s*\]/g;
+    let output = "";
+    let cursor = 0;
+    let match = labelUrlPattern.exec(line);
+    while (match) {
+      const [fullMatch, labelRaw, urlRaw] = match;
+      const start = match.index;
+      output += linkifyEmailTextToHtml(line.slice(cursor, start));
+      const label = String(labelRaw || "").trim();
+      const url = normalizeTemplateLinkUrl(urlRaw);
+      if (label && url) {
+        const safeUrl = escapeHtml(url);
+        output += `<a href="${safeUrl}" target="_blank" rel="noreferrer noopener">${escapeHtml(label)}</a>`;
+      } else {
+        output += escapeHtml(fullMatch);
+      }
+      cursor = start + fullMatch.length;
+      match = labelUrlPattern.exec(line);
+    }
+    output += linkifyEmailTextToHtml(line.slice(cursor));
+    return output;
+  };
+
+  const convertEmailTextLineToHtml = (lineText) => {
+    const line = String(lineText || "");
+    const bulletLinkMatch = line.match(/^(\s*[-*]\s+)(.+?):\s*(https?:\/\/[^\s<]+)\s*$/i);
+    if (bulletLinkMatch) {
+      const [, prefix, labelRaw, rawUrl] = bulletLinkMatch;
+      const label = String(labelRaw || "").trim();
+      const { url, trailing } = splitUrlAndTrailingPunctuation(rawUrl);
+      if (label && url) {
+        const safeUrl = escapeHtml(url);
+        return `${escapeHtml(prefix)}<a href="${safeUrl}" target="_blank" rel="noreferrer noopener">${escapeHtml(label)}</a>${escapeHtml(trailing)}`;
+      }
+    }
+    return renderTemplateLabelUrlLinks(line);
+  };
+
+  const buildEmailHtmlBodyFromText = (value) => {
+    const normalized = String(value || "").replace(/\r\n?/g, "\n").trim();
+    if (!normalized) return "<p></p>";
+    return normalized
+      .split(/\n{2,}/)
+      .filter(Boolean)
+      .map((paragraph) => {
+        const htmlLines = paragraph.split("\n").map((line) => convertEmailTextLineToHtml(line));
+        return `<p>${htmlLines.join("<br />")}</p>`;
+      })
+      .join("\n");
+  };
+
+  const ensureEmailHtmlDocument = (value) => {
+    const htmlText = String(value || "").trim();
+    const bodyContent = htmlText || "<p></p>";
+    if (/<html[\s>]/i.test(bodyContent)) return bodyContent;
+    return [
+      "<!doctype html>",
+      "<html>",
+      "  <head>",
+      '    <meta charset="UTF-8" />',
+      "  </head>",
+      '  <body style="margin:0;padding:16px;font-family:Segoe UI, Arial, sans-serif;font-size:14px;line-height:1.5;color:#1f2937;background:#ffffff;">',
+      bodyContent,
+      "  </body>",
+      "</html>",
+    ].join("\n");
+  };
+
+  const buildEmailTemplateTokenMap = (
+    type,
+    context,
+    recipientName,
+    manager,
+    branch,
+    job,
+    today,
+    defaults,
+  ) => {
     const safeContext = context || {};
     const templateLabel = getEmailTemplateTypeLabel(type);
     const shirtSummary = safeContext.issuedShirtSize || safeContext.shirtSize;
@@ -4325,15 +4948,12 @@ import {
     const initialItems = buildInitialComplianceItems(safeContext);
     const ausItems = [...AUS_COMPLIANCE_BASE_ITEMS, uniformLine];
     const edgeDefinition = EDGE_LINK_TEMPLATE_DEFINITIONS[type] || null;
-    const edgeLinks = edgeDefinition
-      ? edgeDefinition.includeCommon
-        ? [...EDGE_COMMON_LINKS, ...(EDGE_TRACK_LINKS[edgeDefinition.key] || [])]
-        : [...(EDGE_TRACK_LINKS[edgeDefinition.key] || [])]
-      : [];
+    const edgeLinks = getEdgeLinksForType(type);
 
-    return {
+    const tokenMap = {
       defaultSubject: defaults.subject,
       defaultBody: defaults.body,
+      defaultHtmlBody: defaults.htmlBody,
       templateType: type || "",
       templateLabel,
       today,
@@ -4380,11 +5000,24 @@ import {
       edgePortal: EDGE_PORTAL_URL,
       edgeTemplateLabel: edgeDefinition ? edgeDefinition.label : "Edge Credentials",
       edgeLinksList: edgeLinks.length ? formatNumberedLinkLines(edgeLinks).join("\n") : "",
-      edgeSuggestedCc: edgeDefinition && edgeDefinition.cc && edgeDefinition.cc.length
-        ? edgeDefinition.cc.join(", ")
-        : "",
+      edgeSuggestedCc:
+        edgeDefinition && edgeDefinition.cc && edgeDefinition.cc.length
+          ? edgeDefinition.cc.join(", ")
+          : "",
       edgeNote: edgeDefinition && edgeDefinition.note ? edgeDefinition.note : "",
     };
+
+    const customTokens =
+      state.emailTemplates && state.emailTemplates.customTokens
+        ? state.emailTemplates.customTokens
+        : {};
+    Object.keys(customTokens).forEach((key) => {
+      const safeKey = sanitizeEmailTemplateTokenKey(key);
+      if (!safeKey) return;
+      tokenMap[`custom.${safeKey}`] = String(customTokens[key] || "");
+    });
+
+    return tokenMap;
   };
 
   const resolveEmailTemplateRecipients = (type, context, templateConfig, tokenMap) => {
@@ -4397,7 +5030,14 @@ import {
     };
   };
 
-  const buildEmailTemplateOutput = (type, context, recipientName, startTime, endTime, totalHours) => {
+  const buildEmailTemplateOutput = (
+    type,
+    context,
+    recipientName,
+    startTime,
+    endTime,
+    totalHours,
+  ) => {
     const templateContext = {
       ...(context || {}),
       startTime,
@@ -4421,6 +5061,10 @@ import {
       job,
       today,
     );
+    const defaultsWithHtml = {
+      ...defaults,
+      htmlBody: defaults.htmlBody || buildEmailHtmlBodyFromText(defaults.body),
+    };
     const templateConfig = getEmailTemplateConfigForType(type);
     const tokenMap = buildEmailTemplateTokenMap(
       type,
@@ -4430,14 +5074,27 @@ import {
       branch,
       job,
       today,
-      defaults,
+      defaultsWithHtml,
     );
-    const subjectText = toTemplateValue(renderTemplateText(templateConfig.subjectTemplate, tokenMap));
+    const subjectText = toTemplateValue(
+      renderTemplateText(templateConfig.subjectTemplate, tokenMap),
+    );
     const bodyText = renderTemplateText(templateConfig.bodyTemplate, tokenMap);
-    const recipients = resolveEmailTemplateRecipients(type, templateContext, templateConfig, tokenMap);
+    const resolvedBodyText = bodyText || defaultsWithHtml.body;
+    const htmlTemplateText = renderTemplateText(templateConfig.htmlBodyTemplate, tokenMap);
+    const htmlBodyText = htmlTemplateText.trim()
+      ? htmlTemplateText
+      : buildEmailHtmlBodyFromText(resolvedBodyText);
+    const recipients = resolveEmailTemplateRecipients(
+      type,
+      templateContext,
+      templateConfig,
+      tokenMap,
+    );
     return {
-      subject: subjectText || defaults.subject,
-      body: bodyText || defaults.body,
+      subject: subjectText || defaultsWithHtml.subject,
+      body: resolvedBodyText,
+      htmlBody: ensureEmailHtmlDocument(htmlBodyText),
       recipients,
     };
   };
@@ -4484,7 +5141,7 @@ import {
       meStatus: "",
       meExpiration: "",
     };
-    return buildDefaultEmailTemplateByType(
+    const defaults = buildDefaultEmailTemplateByType(
       type,
       sampleContext,
       sampleContext.name,
@@ -4493,6 +5150,10 @@ import {
       sampleContext.job,
       today,
     );
+    return {
+      ...defaults,
+      htmlBody: buildEmailHtmlBodyFromText(defaults.body),
+    };
   };
 
   const buildEmailTemplateFromForm = () => {
@@ -4514,24 +5175,40 @@ import {
       const fallbackTotal = toTemplateValue(context.hours);
       totalInput.value = computedTotal || fallbackTotal || "";
     }
-    const totalHours = toTemplateValue(totalInput ? totalInput.value : "") || computedTotal || context.hours;
-    const next = buildEmailTemplateOutput(type, context, recipientName, startTime, endTime, totalHours);
+    const totalHours =
+      toTemplateValue(totalInput ? totalInput.value : "") || computedTotal || context.hours;
+    const next = buildEmailTemplateOutput(
+      type,
+      context,
+      recipientName,
+      startTime,
+      endTime,
+      totalHours,
+    );
     if (recipientInput && !recipientInput.value.trim()) {
       recipientInput.value = next.recipients.to;
     }
     if (ccInput && !ccInput.value.trim()) {
       ccInput.value = next.recipients.cc;
     }
-    return { subject: next.subject, body: next.body };
+    return { subject: next.subject, body: next.body, htmlBody: next.htmlBody };
   };
 
-  const captureEmailTemplateGeneratedDraft = () => {
+  const captureEmailTemplateGeneratedDraft = (draftOutput = null) => {
     const subjectInput = $("email-template-subject");
     const bodyInput = $("email-template-body");
     emailTemplateLastGeneratedDraft = {
       subject: subjectInput ? subjectInput.value : "",
       body: bodyInput ? bodyInput.value : "",
     };
+    if (
+      draftOutput &&
+      typeof draftOutput === "object" &&
+      typeof draftOutput.htmlBody === "string" &&
+      draftOutput.htmlBody.trim()
+    ) {
+      emailTemplateLastGeneratedHtmlBody = draftOutput.htmlBody;
+    }
   };
 
   const canAutoOverwriteEmailTemplateDraft = () => {
@@ -4553,19 +5230,29 @@ import {
     if (!force && !canAutoOverwriteEmailTemplateDraft()) return;
     subjectInput.value = next.subject;
     bodyInput.value = next.body;
-    captureEmailTemplateGeneratedDraft();
+    captureEmailTemplateGeneratedDraft(next);
   };
 
   const refreshEmailTemplateContextFromDatabase = async () => {
     const modal = $("email-template-modal");
     if (!modal || modal.classList.contains("hidden")) return;
     const baseContext = emailTemplateContextOverride || emailTemplateContext || {};
+    const sourceId = toTemplateValue(baseContext.sourceId) || "current";
+    if (!isCurrentDatabaseSource(sourceId)) return;
     const candidateId = toTemplateValue(baseContext.candidateId);
     if (!candidateId) return;
-    const latestRow = await getLatestCandidateRow(candidateId);
+    const fallbackRow =
+      baseContext.rowSnapshot && typeof baseContext.rowSnapshot === "object"
+        ? baseContext.rowSnapshot
+        : {};
+    const latestRow = await getLatestCandidateRow(candidateId, fallbackRow, sourceId);
     if (!latestRow || typeof latestRow !== "object") return;
     const card = state.kanban.cards.find((item) => item.uuid === candidateId) || null;
-    emailTemplateContext = buildEmailTemplateContextFromCardRow(card, latestRow);
+    emailTemplateContext = {
+      ...buildEmailTemplateContextFromCardRow(card, latestRow),
+      sourceId,
+      rowSnapshot: latestRow,
+    };
     applyEmailTemplateDraft();
   };
 
@@ -4579,6 +5266,9 @@ import {
 
   const startEmailTemplateAutoRefresh = () => {
     stopEmailTemplateAutoRefresh();
+    const activeContext = emailTemplateContextOverride || emailTemplateContext || {};
+    const sourceId = toTemplateValue(activeContext.sourceId) || "current";
+    if (!isCurrentDatabaseSource(sourceId)) return;
     emailTemplateAutoRefreshTimer = window.setInterval(async () => {
       if (emailTemplateAutoRefreshInFlight) return;
       emailTemplateAutoRefreshInFlight = true;
@@ -4602,25 +5292,40 @@ import {
     const context = emailTemplateContext || getEmailTemplateContext();
     const type = typeInput ? typeInput.value : "neo-compliance";
     const recipientName = context.name || "[Candidate Name]";
-    const startTime = startInput ? sanitizeTimeInput(startInput) : toTemplateValue(context.startTime);
+    const startTime = startInput
+      ? sanitizeTimeInput(startInput)
+      : toTemplateValue(context.startTime);
     const endTime = endInput ? sanitizeTimeInput(endInput) : toTemplateValue(context.endTime);
     const computedTotal = calculateTimeRangeHours(startTime, endTime);
-    const totalHours = toTemplateValue(totalInput ? totalInput.value : "") || computedTotal || context.hours;
+    const totalHours =
+      toTemplateValue(totalInput ? totalInput.value : "") || computedTotal || context.hours;
     if (totalInput) totalInput.value = computedTotal || toTemplateValue(context.hours) || "";
-    const next = buildEmailTemplateOutput(type, context, recipientName, startTime, endTime, totalHours);
+    const next = buildEmailTemplateOutput(
+      type,
+      context,
+      recipientName,
+      startTime,
+      endTime,
+      totalHours,
+    );
     if (recipientInput) recipientInput.value = next.recipients.to;
     if (ccInput) ccInput.value = next.recipients.cc;
     if (subjectInput) subjectInput.value = next.subject;
     if (bodyInput) bodyInput.value = next.body;
-    captureEmailTemplateGeneratedDraft();
+    captureEmailTemplateGeneratedDraft(next);
   };
 
-  const handleEmailTemplateGenerate = (event) => {
+  const handleEmailTemplateGenerate = async (event) => {
     if (event) event.preventDefault();
+    await refreshEmailTemplateContextFromDatabase();
     applyEmailTemplateDraft({ force: true });
   };
 
   const writeTextToClipboard = async (text) => {
+    if (workflowApi && typeof workflowApi.clipboardWrite === "function") {
+      const ok = await workflowApi.clipboardWrite(text);
+      if (ok) return true;
+    }
     if (navigator.clipboard && navigator.clipboard.writeText) {
       await navigator.clipboard.writeText(text);
       return true;
@@ -4649,7 +5354,10 @@ import {
     const subjectText = subject ? subject.value.trim() : "";
     const bodyText = body ? body.value.trim() : "";
     if (!toText && !subjectText && !bodyText) {
-      await showMessageModal("Nothing to Copy", "Click Update Info or enter an email template first.");
+      await showMessageModal(
+        "Nothing to Copy",
+        "Click Update Info or enter an email template first.",
+      );
       return;
     }
     if (toText) lines.push(`To: ${toText}`);
@@ -4665,6 +5373,144 @@ import {
     }
   };
 
+  const sanitizeEmailHeaderValue = (value) => {
+    return String(value || "")
+      .replace(/[\r\n]+/g, " ")
+      .trim();
+  };
+
+  const toEmlLineEndings = (value) => {
+    return String(value || "")
+      .replace(/\r\n?/g, "\n")
+      .replace(/\n/g, "\r\n");
+  };
+
+  const buildEmailDraftEml = ({ to, cc, subject, textBody, htmlBody }) => {
+    const safeTo = sanitizeEmailHeaderValue(to);
+    const safeCc = sanitizeEmailHeaderValue(cc);
+    const safeSubject = sanitizeEmailHeaderValue(subject);
+    const boundary = `----=_Workflow_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
+    const lines = [];
+    if (safeTo) lines.push(`To: ${safeTo}`);
+    if (safeCc) lines.push(`Cc: ${safeCc}`);
+    if (safeSubject) lines.push(`Subject: ${safeSubject}`);
+    lines.push(`Date: ${new Date().toUTCString()}`);
+    lines.push("X-Unsent: 1");
+    lines.push("MIME-Version: 1.0");
+    lines.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
+    lines.push("");
+    lines.push(`--${boundary}`);
+    lines.push('Content-Type: text/plain; charset="UTF-8"');
+    lines.push("Content-Transfer-Encoding: 8bit");
+    lines.push("");
+    lines.push(String(textBody || "").replace(/\r\n?/g, "\n"));
+    lines.push(`--${boundary}`);
+    lines.push('Content-Type: text/html; charset="UTF-8"');
+    lines.push("Content-Transfer-Encoding: 8bit");
+    lines.push("");
+    lines.push(String(htmlBody || "").replace(/\r\n?/g, "\n"));
+    lines.push(`--${boundary}--`);
+    lines.push("");
+    return toEmlLineEndings(lines.join("\n"));
+  };
+
+  const sanitizeEmailDraftFilenamePart = (value, fallback) => {
+    const safe = String(value || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48);
+    return safe || fallback;
+  };
+
+  const buildEmailDraftFilename = () => {
+    const typeInput = $("email-template-type");
+    const type = sanitizeEmailDraftFilenamePart(typeInput ? typeInput.value : "template", "template");
+    const candidate = sanitizeEmailDraftFilenamePart(
+      emailTemplateContext && emailTemplateContext.name ? emailTemplateContext.name : "candidate",
+      "candidate",
+    );
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    return `email-drafts/${candidate}-${type}-${stamp}.eml`;
+  };
+
+  const buildMailtoLink = ({ toText, ccText, subjectText, bodyText }) => {
+    const encodeParam = (value) => encodeURIComponent(value);
+    const params = [];
+    if (ccText) params.push(`cc=${encodeParam(ccText)}`);
+    if (subjectText) params.push(`subject=${encodeParam(subjectText)}`);
+    if (bodyText) {
+      const normalizedBody = bodyText.replace(/\r?\n/g, "\r\n");
+      params.push(`body=${encodeParam(normalizedBody)}`);
+    }
+    const query = params.join("&");
+    return `mailto:${encodeURIComponent(toText)}${query ? `?${query}` : ""}`;
+  };
+
+  const handleEmailTemplateSend = async () => {
+    const recipient = $("email-template-recipient");
+    const cc = $("email-template-cc");
+    const subject = $("email-template-subject");
+    const body = $("email-template-body");
+    const toText = recipient ? recipient.value.trim() : "";
+    const ccText = cc ? cc.value.trim() : "";
+    const subjectText = subject ? subject.value.trim() : "";
+    const bodyText = body ? body.value.trim() : "";
+    if (!toText && !ccText && !subjectText && !bodyText) {
+      await showMessageModal(
+        "Nothing to Send",
+        "Click Update Info or enter an email template first.",
+      );
+      return;
+    }
+
+    const generatedBodyMatches =
+      !!emailTemplateLastGeneratedDraft &&
+      !!body &&
+      body.value === emailTemplateLastGeneratedDraft.body;
+    const htmlBody = generatedBodyMatches && emailTemplateLastGeneratedHtmlBody.trim()
+      ? emailTemplateLastGeneratedHtmlBody
+      : ensureEmailHtmlDocument(buildEmailHtmlBodyFromText(bodyText));
+    const emlContent = buildEmailDraftEml({
+      to: toText,
+      cc: ccText,
+      subject: subjectText,
+      textBody: bodyText,
+      htmlBody,
+    });
+    const draftFilename = buildEmailDraftFilename();
+
+    if (workflowApi && typeof workflowApi.openEmailDraft === "function") {
+      const opened = await workflowApi.openEmailDraft({
+        filename: draftFilename,
+        content: emlContent,
+      });
+      if (opened) {
+        showToast({ message: "Email draft opened in your mail client." });
+        return;
+      }
+    }
+
+    if (workflowApi && typeof workflowApi.saveEmailFile === "function") {
+      const saved = await workflowApi.saveEmailFile({
+        filename: draftFilename.split("/").pop() || "email-draft.eml",
+        content: emlContent,
+      });
+      if (saved && saved.ok) {
+        showToast({ message: "Email draft saved. Open it in Thunderbird to send." });
+        return;
+      }
+      if (saved && saved.canceled) return;
+    }
+
+    const mailto = buildMailtoLink({ toText, ccText, subjectText, bodyText });
+    if (workflowApi && typeof workflowApi.openExternal === "function") {
+      const ok = await workflowApi.openExternal(mailto);
+      if (ok) return;
+    }
+    window.location.href = mailto;
+  };
+
   const openEmailTemplateModal = (contextOverride = null) => {
     const modal = $("email-template-modal");
     const typeInput = $("email-template-type");
@@ -4677,8 +5523,25 @@ import {
     const bodyInput = $("email-template-body");
     if (!modal) return;
     emailTemplateContextOverride =
-      contextOverride && typeof contextOverride === "object" ? { ...contextOverride } : null;
-    emailTemplateContext = emailTemplateContextOverride || getEmailTemplateContext();
+      contextOverride && typeof contextOverride === "object"
+        ? {
+            ...contextOverride,
+            sourceId: toTemplateValue(contextOverride.sourceId) || "current",
+            rowSnapshot:
+              contextOverride.rowSnapshot && typeof contextOverride.rowSnapshot === "object"
+                ? contextOverride.rowSnapshot
+                : {},
+          }
+        : null;
+    const baseContext = emailTemplateContextOverride || getEmailTemplateContext();
+    emailTemplateContext = {
+      ...baseContext,
+      sourceId: toTemplateValue(baseContext.sourceId) || "current",
+      rowSnapshot:
+        baseContext.rowSnapshot && typeof baseContext.rowSnapshot === "object"
+          ? baseContext.rowSnapshot
+          : state.kanban.detailsRow || {},
+    };
     if (typeInput) {
       renderEmailTemplateTypeSelectOptions("email-template-type", "neo-compliance");
       typeInput.value = "neo-compliance";
@@ -4686,8 +5549,12 @@ import {
     const nextType = typeInput ? typeInput.value : "neo-compliance";
     if (startInput) startInput.value = emailTemplateContext.startTime || "";
     if (endInput) endInput.value = emailTemplateContext.endTime || "";
-    const startTime = startInput ? sanitizeTimeInput(startInput) : toTemplateValue(emailTemplateContext.startTime);
-    const endTime = endInput ? sanitizeTimeInput(endInput) : toTemplateValue(emailTemplateContext.endTime);
+    const startTime = startInput
+      ? sanitizeTimeInput(startInput)
+      : toTemplateValue(emailTemplateContext.startTime);
+    const endTime = endInput
+      ? sanitizeTimeInput(endInput)
+      : toTemplateValue(emailTemplateContext.endTime);
     const computedTotal = calculateTimeRangeHours(startTime, endTime);
     const totalHours = computedTotal || toTemplateValue(emailTemplateContext.hours);
     if (totalInput) {
@@ -4707,6 +5574,7 @@ import {
     if (subjectInput) subjectInput.value = "";
     if (bodyInput) bodyInput.value = "";
     emailTemplateLastGeneratedDraft = null;
+    emailTemplateLastGeneratedHtmlBody = "";
     emailTemplateBackdropMouseDown = false;
     modal.classList.remove("hidden");
     applyEmailTemplateDraft({ force: true });
@@ -4719,6 +5587,7 @@ import {
     if (modal) modal.classList.add("hidden");
     stopEmailTemplateAutoRefresh();
     emailTemplateLastGeneratedDraft = null;
+    emailTemplateLastGeneratedHtmlBody = "";
     emailTemplateBackdropMouseDown = false;
     emailTemplateContext = null;
     emailTemplateContextOverride = null;
@@ -4727,6 +5596,7 @@ import {
   const loadEmailTemplateSettings = async () => {
     state.emailTemplates.customTypes = {};
     state.emailTemplates.items = {};
+    state.emailTemplates.customTokens = {};
     if (!workflowApi || !workflowApi.emailTemplatesGet) {
       state.emailTemplates.loaded = true;
       renderEmailTemplateTypeSelectOptions("email-template-type", "neo-compliance");
@@ -4735,7 +5605,9 @@ import {
     }
     try {
       const result = await workflowApi.emailTemplatesGet();
-      state.emailTemplates.items = sanitizeEmailTemplateMap(result && result.templates ? result.templates : {});
+      state.emailTemplates.items = sanitizeEmailTemplateMap(
+        result && result.templates ? result.templates : {},
+      );
       const customTypesRaw =
         result && result.customTypes && typeof result.customTypes === "object"
           ? result.customTypes
@@ -4752,9 +5624,15 @@ import {
           acc[safeId] = label;
           return acc;
         }, {});
+      const customTokensRaw =
+        result && result.customTokens && typeof result.customTokens === "object"
+          ? result.customTokens
+          : {};
+      state.emailTemplates.customTokens = sanitizeEmailTemplateTokenMap(customTokensRaw);
     } catch (_error) {
       state.emailTemplates.customTypes = {};
       state.emailTemplates.items = {};
+      state.emailTemplates.customTokens = {};
     }
     state.emailTemplates.loaded = true;
     renderEmailTemplateTypeSelectOptions("email-template-type", "neo-compliance");
@@ -4766,12 +5644,15 @@ import {
     const payload = {
       templates: sanitizeEmailTemplateMap(state.emailTemplates.items),
       customTypes: state.emailTemplates.customTypes || {},
+      customTokens: sanitizeEmailTemplateTokenMap(state.emailTemplates.customTokens),
     };
     const result = await workflowApi.emailTemplatesSave(payload);
     if (result && result.ok === false) {
       throw new Error(result.error || "Unable to save template settings.");
     }
-    state.emailTemplates.items = sanitizeEmailTemplateMap(result && result.templates ? result.templates : {});
+    state.emailTemplates.items = sanitizeEmailTemplateMap(
+      result && result.templates ? result.templates : {},
+    );
     const customTypesRaw =
       result && result.customTypes && typeof result.customTypes === "object"
         ? result.customTypes
@@ -4788,6 +5669,11 @@ import {
         acc[safeId] = label;
         return acc;
       }, {});
+    const customTokensRaw =
+      result && result.customTokens && typeof result.customTokens === "object"
+        ? result.customTokens
+        : {};
+    state.emailTemplates.customTokens = sanitizeEmailTemplateTokenMap(customTokensRaw);
     return true;
   };
 
@@ -4796,12 +5682,28 @@ import {
     const ccInput = $("template-dashboard-cc");
     const subjectInput = $("template-dashboard-subject");
     const bodyInput = $("template-dashboard-body");
+    const htmlBodyInput = $("template-dashboard-body-html");
     return sanitizeEmailTemplateRecord({
       toTemplate: toInput ? toInput.value : "",
       ccTemplate: ccInput ? ccInput.value : "",
       subjectTemplate: subjectInput ? subjectInput.value : "",
       bodyTemplate: bodyInput ? bodyInput.value : "",
+      htmlBodyTemplate: htmlBodyInput ? htmlBodyInput.value : "",
     });
+  };
+
+  const renderEmailTemplateDashboardHtmlPreview = () => {
+    const previewFrame = $("template-dashboard-html-preview");
+    const bodyInput = $("template-dashboard-body");
+    const htmlBodyInput = $("template-dashboard-body-html");
+    if (!previewFrame || !bodyInput || !htmlBodyInput) return;
+    const htmlTemplate = htmlBodyInput.value.trim() || "{{defaultHtmlBody}}";
+    const tokenMap = {
+      defaultBody: bodyInput.value || "",
+      defaultHtmlBody: buildEmailHtmlBodyFromText(bodyInput.value || ""),
+    };
+    const rendered = renderTemplateText(htmlTemplate, tokenMap);
+    previewFrame.srcdoc = ensureEmailHtmlDocument(rendered);
   };
 
   const renderEmailTemplateDashboard = () => {
@@ -4810,14 +5712,18 @@ import {
     const ccInput = $("template-dashboard-cc");
     const subjectInput = $("template-dashboard-subject");
     const bodyInput = $("template-dashboard-body");
-    if (!typeInput || !toInput || !ccInput || !subjectInput || !bodyInput) return;
+    const htmlBodyInput = $("template-dashboard-body-html");
+    if (!typeInput || !toInput || !ccInput || !subjectInput || !bodyInput || !htmlBodyInput) return;
     const allDefs = getAllEmailTemplateDefinitions();
     const fallbackType = allDefs[0]?.id || "neo-compliance";
     const hasActive = allDefs.some((item) => item.id === state.emailTemplates.activeType);
     const nextType = hasActive ? state.emailTemplates.activeType : fallbackType;
     state.emailTemplates.activeType = nextType;
     renderEmailTemplateTypeSelectOptions("template-dashboard-type", nextType);
-    renderEmailTemplateTypeSelectOptions("email-template-type", $("email-template-type")?.value || "neo-compliance");
+    renderEmailTemplateTypeSelectOptions(
+      "email-template-type",
+      $("email-template-type")?.value || "neo-compliance",
+    );
     const existing =
       state.emailTemplates && state.emailTemplates.items && state.emailTemplates.items[nextType]
         ? sanitizeEmailTemplateRecord(state.emailTemplates.items[nextType])
@@ -4828,8 +5734,101 @@ import {
     ccInput.value = existing ? existing.ccTemplate : defaults.ccTemplate || "";
     const subjectValue = existing ? existing.subjectTemplate : preview.subject || "";
     const bodyValue = existing ? existing.bodyTemplate : preview.body || "";
-    subjectInput.value = subjectValue.trim() === "{{defaultSubject}}" ? preview.subject || "" : subjectValue;
+    subjectInput.value =
+      subjectValue.trim() === "{{defaultSubject}}" ? preview.subject || "" : subjectValue;
     bodyInput.value = bodyValue.trim() === "{{defaultBody}}" ? preview.body || "" : bodyValue;
+    htmlBodyInput.value = existing
+      ? existing.htmlBodyTemplate || ""
+      : defaults.htmlBodyTemplate || "{{defaultHtmlBody}}";
+    renderEmailTemplateDashboardHtmlPreview();
+    renderEmailTemplateTokenTable();
+  };
+
+  const renderEmailTemplateTokenTable = () => {
+    const table = $("template-token-table");
+    const empty = $("template-token-empty");
+    if (!table || !empty) return;
+    const tokens = state.emailTemplates.customTokens || {};
+    const keys = Object.keys(tokens).sort((a, b) => a.localeCompare(b));
+    table.innerHTML = "";
+    if (!keys.length) {
+      empty.textContent = "No custom tokens yet.";
+      return;
+    }
+    empty.textContent = "";
+    const thead = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    ["Token", "Value", ""].forEach((label) => {
+      const th = document.createElement("th");
+      th.textContent = label;
+      headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+    const tbody = document.createElement("tbody");
+    keys.forEach((key) => {
+      const tr = document.createElement("tr");
+      const tdKey = document.createElement("td");
+      tdKey.textContent = `{{custom.${key}}}`;
+      const tdValue = document.createElement("td");
+      tdValue.textContent = String(tokens[key] || "");
+      const tdAction = document.createElement("td");
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "button button--ghost";
+      btn.textContent = "Remove";
+      btn.dataset.tokenKey = key;
+      tdAction.appendChild(btn);
+      tr.appendChild(tdKey);
+      tr.appendChild(tdValue);
+      tr.appendChild(tdAction);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+  };
+
+  const handleEmailTemplateTokenAdd = async () => {
+    const keyInput = $("template-token-key");
+    const valueInput = $("template-token-value");
+    if (!keyInput || !valueInput) return;
+    const rawKey = keyInput.value;
+    const rawValue = valueInput.value;
+    const key = sanitizeEmailTemplateTokenKey(rawKey);
+    const value = sanitizeEmailTemplateTokenValue(rawValue);
+    if (!key) {
+      await showMessageModal("Token Name Required", "Enter a valid token name.");
+      return;
+    }
+    if (!value) {
+      await showMessageModal("Token Value Required", "Enter a token value.");
+      return;
+    }
+    state.emailTemplates.customTokens = state.emailTemplates.customTokens || {};
+    state.emailTemplates.customTokens[key] = value;
+    keyInput.value = "";
+    valueInput.value = "";
+    renderEmailTemplateTokenTable();
+    try {
+      await saveEmailTemplateSettings();
+      showToast({ message: "Token saved." });
+    } catch (_error) {
+      await showMessageModal("Save Failed", "Unable to save the token.");
+    }
+  };
+
+  const handleEmailTemplateTokenRemove = async (event) => {
+    const target = event && event.target ? event.target : null;
+    const key = target && target.dataset ? target.dataset.tokenKey : "";
+    if (!key) return;
+    if (!state.emailTemplates.customTokens || !state.emailTemplates.customTokens[key]) return;
+    delete state.emailTemplates.customTokens[key];
+    renderEmailTemplateTokenTable();
+    try {
+      await saveEmailTemplateSettings();
+      showToast({ message: "Token removed." });
+    } catch (_error) {
+      await showMessageModal("Save Failed", "Unable to remove the token.");
+    }
   };
 
   const handleEmailTemplateDashboardTypeChange = () => {
@@ -4838,7 +5837,7 @@ import {
     const allDefs = getAllEmailTemplateDefinitions();
     state.emailTemplates.activeType = allDefs.some((item) => item.id === type)
       ? type
-      : (allDefs[0]?.id || "neo-compliance");
+      : allDefs[0]?.id || "neo-compliance";
     renderEmailTemplateDashboard();
   };
 
@@ -4852,7 +5851,8 @@ import {
       draft.toTemplate === defaults.toTemplate &&
       draft.ccTemplate === defaults.ccTemplate &&
       draft.subjectTemplate === preview.subject &&
-      draft.bodyTemplate === preview.body;
+      draft.bodyTemplate === preview.body &&
+      draft.htmlBodyTemplate === defaults.htmlBodyTemplate;
     if (isBuiltin && isDefault) {
       delete state.emailTemplates.items[type];
     } else {
@@ -4867,7 +5867,7 @@ import {
     }
   };
 
-  const handleEmailTemplateDashboardReset = async () => {
+  const handleEmailTemplateDashboardDelete = async () => {
     const type = state.emailTemplates.activeType || "neo-compliance";
     delete state.emailTemplates.items[type];
     if (!EMAIL_TEMPLATE_TYPES.includes(type)) {
@@ -4880,26 +5880,11 @@ import {
       await saveEmailTemplateSettings();
       showToast({
         message: EMAIL_TEMPLATE_TYPES.includes(type)
-          ? "Template reset to default."
-          : "Custom template removed.",
+          ? "Template override deleted."
+          : "Template deleted.",
       });
     } catch (_error) {
-      await showMessageModal("Reset Failed", "Unable to reset template settings.");
-    }
-  };
-
-  const handleEmailTemplateDashboardResetAll = async () => {
-    const proceed = window.confirm("Reset all email templates to default?");
-    if (!proceed) return;
-    state.emailTemplates.customTypes = {};
-    state.emailTemplates.items = {};
-    state.emailTemplates.activeType = "neo-compliance";
-    renderEmailTemplateDashboard();
-    try {
-      await saveEmailTemplateSettings();
-      showToast({ message: "All templates reset to default." });
-    } catch (_error) {
-      await showMessageModal("Reset Failed", "Unable to reset all template settings.");
+      await showMessageModal("Delete Failed", "Unable to delete template settings.");
     }
   };
 
@@ -4924,6 +5909,7 @@ import {
       ccTemplate: defaults.ccTemplate,
       subjectTemplate: preview.subject,
       bodyTemplate: preview.body,
+      htmlBodyTemplate: defaults.htmlBodyTemplate,
     });
     state.emailTemplates.activeType = nextType;
     renderEmailTemplateDashboard();
@@ -4993,6 +5979,36 @@ import {
   const loadTodos = async () => {
     state.todos = (await workflowApi.todosGet()) || [];
     renderTodoList();
+  };
+
+  const loadDashboardData = async () => {
+    if (workflowApi && typeof workflowApi.dashboardGet === "function") {
+      try {
+        const snapshot = await workflowApi.dashboardGet();
+        const kanban =
+          snapshot && snapshot.kanban && typeof snapshot.kanban === "object"
+            ? snapshot.kanban
+            : null;
+        if (kanban) {
+          state.kanban.columns = Array.isArray(kanban.columns) ? kanban.columns : [];
+          state.kanban.cards = Array.isArray(kanban.cards) ? kanban.cards : [];
+          invalidateKanbanCache();
+          state.kanban.loaded = true;
+          state.todos = Array.isArray(snapshot.todos) ? snapshot.todos : [];
+          renderKanbanBoard();
+          renderKanbanSettings();
+          if (state.kanban.detailsCardId) {
+            await refreshDetailsRow(state.kanban.detailsCardId);
+            renderDetailsDrawer();
+          }
+          renderTodoList();
+          return;
+        }
+      } catch (err) {
+        // fallback to separate requests
+      }
+    }
+    await Promise.all([loadKanban(), loadTodos()]);
   };
 
   const saveTodos = async () => {
@@ -5207,7 +6223,7 @@ import {
 
   const getDatabaseCandidateId = (row) => {
     if (!row || typeof row !== "object") return "";
-    return toTemplateValue(row["candidate UUID"] || row["Candidate UUID"] || row.__rowId);
+    return toTemplateValue(row["candidate UUID"] || row["Candidate UUID"]);
   };
 
   const normalizeSingleEmailAddress = (value) => {
@@ -5283,13 +6299,42 @@ import {
     return buildEmailTemplateContextFromCardRow(card, row);
   };
 
-  const getLatestCandidateRow = async (candidateId, fallbackRow = {}) => {
-    if (!candidateId || !workflowApi || !workflowApi.piiGet) return fallbackRow || {};
+  const isCurrentDatabaseSource = (sourceId) => {
+    return !sourceId || sourceId === "current";
+  };
+
+  const hasEmailTemplateRowData = (rowValue) => {
+    const rowLookup = buildTemplateRowLookup(rowValue);
+    const candidateSignals = [
+      "Candidate Name",
+      "Employee ID",
+      "Contact Email",
+      "Contact Phone",
+      "REQ ID",
+      "Job ID Name",
+      "Manager",
+      "Branch",
+      "Neo Arrival Time",
+      "Neo Departure Time",
+      "Total Neo Hours",
+    ];
+    return candidateSignals.some((field) => !!readTemplateRowValue(rowLookup, field));
+  };
+
+  const getLatestCandidateRow = async (candidateId, fallbackRow = {}, sourceId = "current") => {
+    const fallback =
+      fallbackRow && typeof fallbackRow === "object" && !Array.isArray(fallbackRow) ? fallbackRow : {};
+    if (!isCurrentDatabaseSource(sourceId)) return fallback;
+    if (!candidateId || !workflowApi || !workflowApi.piiGet) return fallback;
     try {
       const result = await workflowApi.piiGet(candidateId);
-      return (result && result.row) || fallbackRow || {};
+      const latestRow =
+        result && result.row && typeof result.row === "object" && !Array.isArray(result.row)
+          ? result.row
+          : {};
+      return hasEmailTemplateRowData(latestRow) ? latestRow : fallback;
     } catch (_error) {
-      return fallbackRow || {};
+      return fallback;
     }
   };
 
@@ -5307,7 +6352,10 @@ import {
       return;
     }
     if (selectedRows.length > 1) {
-      await showMessageModal("Single Row Required", "Select only one employee row to send an email.");
+      await showMessageModal(
+        "Single Row Required",
+        "Select only one employee row to send an email.",
+      );
       return;
     }
 
@@ -5316,8 +6364,9 @@ import {
       await showMessageModal("Selection Required", "Select one employee row first.");
       return;
     }
-    const candidateName = toTemplateValue(row["Candidate Name"]) || "This employee";
-    let emailAddress = toTemplateValue(row["Contact Email"]);
+    const rowLookup = buildTemplateRowLookup(row);
+    const candidateName = readTemplateRowValue(rowLookup, "Candidate Name", "Name") || "This employee";
+    let emailAddress = readTemplateRowValue(rowLookup, "Contact Email", "Candidate Email", "Email");
     let emailCheck = normalizeSingleEmailAddress(emailAddress);
     if (!emailAddress || !emailCheck.ok) {
       const needsValid = !emailAddress
@@ -5351,12 +6400,20 @@ import {
       emailAddress = emailCheck.value;
     }
 
+    const sourceId = state.data.activeSourceId || "current";
     const candidateId = getDatabaseCandidateId(row);
-    const latestRow = await getLatestCandidateRow(candidateId, row);
-    const context = buildEmailTemplateContextFromDatabaseRow({
+    const latestRow = await getLatestCandidateRow(candidateId, row, sourceId);
+    const rowSnapshot = {
+      ...row,
       ...latestRow,
       "Contact Email": emailAddress,
-    });
+    };
+    const context = {
+      ...buildEmailTemplateContextFromDatabaseRow(rowSnapshot),
+      candidateId: candidateId || "",
+      sourceId,
+      rowSnapshot,
+    };
     openEmailTemplateModal(context);
   };
 
@@ -5733,9 +6790,10 @@ import {
       );
       return;
     }
-    state.uniforms.columns = table && table.columns && table.columns.length
-      ? table.columns
-      : ["Alteration", "Type", "Size", "Waist", "Inseam", "Quantity", "Branch"];
+    state.uniforms.columns =
+      table && table.columns && table.columns.length
+        ? table.columns
+        : ["Alteration", "Type", "Size", "Waist", "Inseam", "Quantity", "Branch"];
     state.uniforms.rows = table && table.rows ? table.rows : [];
     state.uniforms.page = 1;
     state.uniforms.selectedRowIds = new Set();
@@ -5795,10 +6853,7 @@ import {
       rowsToExport = state.uniforms.rows;
     }
     if (!rowsToExport.length) {
-      await showMessageModal(
-        "Nothing to Export",
-        "There are no uniform rows to export.",
-      );
+      await showMessageModal("Nothing to Export", "There are no uniform rows to export.");
       clearUniformSelection();
       return;
     }
@@ -5962,7 +7017,10 @@ import {
       return;
     }
     if (!result || result.ok === false) {
-      await showMessageModal("Save Failed", (result && result.error) || "Unable to add uniform inventory.");
+      await showMessageModal(
+        "Save Failed",
+        (result && result.error) || "Unable to add uniform inventory.",
+      );
       return;
     }
     closeUniformAddModal();
@@ -6235,10 +7293,6 @@ import {
     }
     state.page = target;
     document.body.dataset.page = target;
-    const workflowSection = $("sidebar-workflow-section");
-    if (workflowSection && document.body.classList.contains("platform-android")) {
-      workflowSection.classList.toggle("hidden", target !== "dashboard");
-    }
     document.querySelectorAll(".page").forEach((section) => {
       section.classList.toggle("page--active", section.id === `page-${target}`);
     });
@@ -6305,11 +7359,15 @@ import {
     const emailTemplateClose = $("email-template-close");
     const emailTemplateCancel = $("email-template-cancel");
     const emailTemplateCopy = $("email-template-copy");
+    const emailTemplateSend = $("email-template-send");
     const templateDashboardAdd = $("template-dashboard-add");
     const templateDashboardType = $("template-dashboard-type");
     const templateDashboardSave = $("template-dashboard-save");
     const templateDashboardReset = $("template-dashboard-reset");
-    const templateDashboardResetAll = $("template-dashboard-reset-all");
+    const templateDashboardBody = $("template-dashboard-body");
+    const templateDashboardHtmlBody = $("template-dashboard-body-html");
+    const templateTokenAdd = $("template-token-add");
+    const templateTokenTable = $("template-token-table");
     const helpManualSelect = $("help-manual-select");
     const helpOpenManual = $("help-open-manual");
     const aboutOpenContributingGuide = $("about-open-contributing-guide");
@@ -6366,8 +7424,7 @@ import {
     }
     document.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
-      const manualModalOpen =
-        helpManualModal && !helpManualModal.classList.contains("hidden");
+      const manualModalOpen = helpManualModal && !helpManualModal.classList.contains("hidden");
       if (manualModalOpen) closeHelpManualModal();
       const uniformModal = $("uniform-add-modal");
       if (uniformModal && !uniformModal.classList.contains("hidden")) {
@@ -6378,9 +7435,28 @@ import {
       }
     });
     window.addEventListener("focus", () => {
+      if (ENABLE_FOCUS_REAUTH) {
+        void requestAuthOnWindowFocus();
+      }
       const modalOpen = emailTemplateModal && !emailTemplateModal.classList.contains("hidden");
       if (!modalOpen) return;
       void refreshEmailTemplateContextFromDatabase();
+    });
+    window.addEventListener("blur", () => {
+      if (!ENABLE_FOCUS_REAUTH) return;
+      if (state.auth && state.auth.configured && state.auth.authenticated) {
+        authReauthOnFocusRequired = true;
+      }
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (!ENABLE_FOCUS_REAUTH) return;
+      if (document.visibilityState === "hidden") {
+        if (state.auth && state.auth.configured && state.auth.authenticated) {
+          authReauthOnFocusRequired = true;
+        }
+        return;
+      }
+      void requestAuthOnWindowFocus();
     });
     onClick(detailsBasicInfo, openDetailsBasicInfo);
     onClick(detailsPii, openDetailsPii);
@@ -6396,18 +7472,27 @@ import {
       });
     });
     onClick(emailTemplateCopy, handleEmailTemplateCopy);
+    onClick(emailTemplateSend, handleEmailTemplateSend);
     onClick(templateDashboardAdd, handleEmailTemplateDashboardAdd);
     on(templateDashboardType, "change", handleEmailTemplateDashboardTypeChange);
     onClick(templateDashboardSave, handleEmailTemplateDashboardSave);
-    onClick(templateDashboardReset, handleEmailTemplateDashboardReset);
-    onClick(templateDashboardResetAll, handleEmailTemplateDashboardResetAll);
+    onClick(templateDashboardReset, handleEmailTemplateDashboardDelete);
+    on(templateDashboardBody, "input", renderEmailTemplateDashboardHtmlPreview);
+    on(templateDashboardHtmlBody, "input", renderEmailTemplateDashboardHtmlPreview);
+    onClick(templateTokenAdd, handleEmailTemplateTokenAdd);
+    if (templateTokenTable) {
+      templateTokenTable.addEventListener("click", (event) => {
+        const target = event.target;
+        if (!target || !target.dataset || !target.dataset.tokenKey) return;
+        handleEmailTemplateTokenRemove(event);
+      });
+    }
     if (emailTemplateModal) {
       emailTemplateModal.addEventListener("mousedown", (event) => {
         emailTemplateBackdropMouseDown = event.target === emailTemplateModal;
       });
       emailTemplateModal.addEventListener("click", (event) => {
-        const shouldClose =
-          event.target === emailTemplateModal && emailTemplateBackdropMouseDown;
+        const shouldClose = event.target === emailTemplateModal && emailTemplateBackdropMouseDown;
         emailTemplateBackdropMouseDown = false;
         if (shouldClose) closeEmailTemplateModal();
       });
@@ -6476,10 +7561,7 @@ import {
 
     const todoPanel = $("todo-panel");
     onClick(todoPanel, (event) => event.stopPropagation());
-    const authForm = $("auth-form");
-    const authClose = $("auth-close");
-    on(authForm, "submit", handleAuthSubmit);
-    onClick(authClose, hideAuthModal);
+    bindAuthModalControls();
 
     const changeBtn = $("change-password-button");
     const changeModalClose = $("change-password-close");
@@ -6684,12 +7766,11 @@ import {
 
   const initApp = async () => {
     if (!workflowApi) {
-      await showMessageModal("Error", "Electron preload is unavailable.");
+      await showMessageModal("Error", "Native desktop bridge is unavailable.");
       return;
     }
     initWindowControls();
     initSidebarToggle();
-    initAndroidWorkflowActions();
     initResponsiveModes();
     initPasswordToggles();
     observeNewPasswordFields();
@@ -6705,19 +7786,25 @@ import {
     await initSetupExperience();
     await initDonation();
 
-    const status = await workflowApi.authStatus();
-    state.auth = status;
-    if (!status.authenticated) {
-      const ok = await showAuthModal();
-      if (!ok) return;
-    }
+    const ok = await requireStartupAuthentication();
+    if (!ok) return;
 
     await loadEmailTemplateSettings();
     switchPage("dashboard");
-    await loadKanban();
-    await loadTodos();
+    await loadDashboardData();
     await checkDatabaseIntegrity();
   };
 
-  initApp();
+  bindAuthModalControls();
+
+  initApp().catch(async (error) => {
+    console.error("App initialization failed", error);
+    const modal = $("auth-modal");
+    if (modal) modal.classList.remove("hidden");
+    try {
+      await showMessageModal("Startup error", "The app failed to initialize correctly.");
+    } catch (_err) {
+      // Ignore modal failures.
+    }
+  });
 })();

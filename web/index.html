@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; base-uri 'self'; object-src 'none'; frame-ancestors 'none'"
     />
     <title>Workflow</title>
     <link rel="icon" href="./favicon.ico" sizes="any" />
@@ -69,7 +69,10 @@
             <span class="nav-label">About</span>
           </button>
         </nav>
-        <div id="sidebar-workflow-section" class="sidebar__section sidebar__section--actions hidden">
+        <div
+          id="sidebar-workflow-section"
+          class="sidebar__section sidebar__section--actions hidden"
+        >
           <div class="section__title">Workflow Actions</div>
           <div id="sidebar-workflow-actions" class="sidebar__actions"></div>
         </div>
@@ -103,26 +106,21 @@
                 <img class="topbar__logo" src="./assets/app-icon.svg" alt="" />
               </div>
               <div class="topbar__meta">
-              <div class="topbar__title">
-                <span class="topbar__app">Workflow</span>
-                <span class="topbar__divider">|</span>
-                <span class="topbar__page">Dashboard</span>
-              </div>
-              <div class="topbar__subtitle">
-                Move candidates through onboarding with a simple Kanban flow.
-              </div>
+                <div class="topbar__title">
+                  <span class="topbar__app">Workflow</span>
+                  <span class="topbar__divider">|</span>
+                  <span class="topbar__page">Dashboard</span>
+                </div>
+                <div class="topbar__subtitle">
+                  Move candidates through onboarding with a simple Kanban flow.
+                </div>
               </div>
             </div>
             <div class="topbar__actions">
               <button id="dashboard-undo" class="button button--ghost" type="button" disabled>
                 Undo
               </button>
-              <button
-                id="dashboard-redo"
-                class="button button--ghost"
-                type="button"
-                disabled
-              >
+              <button id="dashboard-redo" class="button button--ghost" type="button" disabled>
                 Redo
               </button>
               <button id="weekly-toggle" class="button button--primary">Weekly Tracker</button>
@@ -159,13 +157,19 @@
                 </div>
                 <div class="details-drawer__body" id="details-drawer-body"></div>
                 <div class="details-drawer__footer">
-                  <div class="details-drawer__quick-actions" aria-label="Candidate action shortcuts">
+                  <div
+                    class="details-drawer__quick-actions"
+                    aria-label="Candidate action shortcuts"
+                  >
                     <button
                       id="details-basic-info"
                       class="button button--ghost details-action-button"
                       type="button"
                     >
-                      <span class="details-action-button__art details-action-button__art--basic" aria-hidden="true">
+                      <span
+                        class="details-action-button__art details-action-button__art--basic"
+                        aria-hidden="true"
+                      >
                         <svg viewBox="0 0 24 24" focusable="false">
                           <rect x="3.5" y="5" width="17" height="14" rx="2.5" />
                           <circle cx="9" cy="11" r="2" />
@@ -180,7 +184,10 @@
                       class="button button--ghost details-action-button"
                       type="button"
                     >
-                      <span class="details-action-button__art details-action-button__art--pii" aria-hidden="true">
+                      <span
+                        class="details-action-button__art details-action-button__art--pii"
+                        aria-hidden="true"
+                      >
                         <svg viewBox="0 0 24 24" focusable="false">
                           <path d="M12 3l7 3v5c0 4.2-2.9 7.3-7 8.8-4.1-1.5-7-4.6-7-8.8V6l7-3z" />
                           <rect x="9" y="10.5" width="6" height="5" rx="1.3" />
@@ -194,7 +201,10 @@
                       class="button button--ghost details-action-button"
                       type="button"
                     >
-                      <span class="details-action-button__art details-action-button__art--email" aria-hidden="true">
+                      <span
+                        class="details-action-button__art details-action-button__art--email"
+                        aria-hidden="true"
+                      >
                         <svg viewBox="0 0 24 24" focusable="false">
                           <rect x="3.5" y="6" width="17" height="12" rx="2" />
                           <path d="M4.5 7l7.5 6L19.5 7" />
@@ -237,12 +247,12 @@
                 <img class="topbar__logo" src="./assets/app-icon.svg" alt="" />
               </div>
               <div class="topbar__meta">
-              <div class="topbar__title">
-                <span class="topbar__app">Workflow</span>
-                <span class="topbar__divider">|</span>
-                <span class="topbar__page">Employee Databases</span>
-              </div>
-              <div class="topbar__subtitle">View and manage stored employee onboarding data.</div>
+                <div class="topbar__title">
+                  <span class="topbar__app">Workflow</span>
+                  <span class="topbar__divider">|</span>
+                  <span class="topbar__page">Employee Databases</span>
+                </div>
+                <div class="topbar__subtitle">View and manage stored employee onboarding data.</div>
               </div>
             </div>
             <div class="topbar__actions topbar__actions--db">
@@ -329,12 +339,12 @@
                 <img class="topbar__logo" src="./assets/app-icon.svg" alt="" />
               </div>
               <div class="topbar__meta">
-              <div class="topbar__title">
-                <span class="topbar__app">Workflow</span>
-                <span class="topbar__divider">|</span>
-                <span class="topbar__page">Uniforms Database</span>
-              </div>
-              <div class="topbar__subtitle">Track branch uniform inventory in one table.</div>
+                <div class="topbar__title">
+                  <span class="topbar__app">Workflow</span>
+                  <span class="topbar__divider">|</span>
+                  <span class="topbar__page">Uniforms Database</span>
+                </div>
+                <div class="topbar__subtitle">Track branch uniform inventory in one table.</div>
               </div>
             </div>
             <div class="topbar__actions topbar__actions--db">
@@ -368,7 +378,9 @@
           <div class="page__body settings-body">
             <div class="card">
               <div class="card__title">Uniform Inventory</div>
-              <div class="muted">Columns: Alteration | Type | Size | Waist | Inseam | Quantity | Branch</div>
+              <div class="muted">
+                Columns: Alteration | Type | Size | Waist | Inseam | Quantity | Branch
+              </div>
             </div>
             <div class="card">
               <div class="db-table-wrap">
@@ -435,9 +447,12 @@
             <div class="card email-template-dashboard-card">
               <h3>Email Template Editor</h3>
               <div class="muted">
-                Templates support tokens. Example: <code>{{recipientName}}</code>, <code>{{eid}}</code>,
-                <code>{{managerEmail}}</code>, <code>{{icimsId}}</code>, <code>{{reqId}}</code>,
-                <code>{{wtJobNo}}</code>, <code>{{defaultSubject}}</code>, <code>{{defaultBody}}</code>.
+                Templates support tokens. Example: <code>{{recipientName}}</code>,
+                <code>{{eid}}</code>, <code>{{managerEmail}}</code>, <code>{{icimsId}}</code>,
+                <code>{{reqId}}</code>, <code>{{wtJobNo}}</code>, <code>{{defaultSubject}}</code>,
+                <code>{{defaultBody}}</code>, <code>{{defaultHtmlBody}}</code>,
+                <code>{{custom.followup}}</code>. Link label format:
+                <code>["Allied Universal Core Competencies"="https://example.com"]</code>.
               </div>
               <div class="email-template-dashboard-grid">
                 <div class="field">
@@ -482,11 +497,26 @@
                   />
                 </div>
                 <div class="field">
-                  <label>Body Template</label>
+                  <label>Body Template (Plain Text)</label>
                   <textarea
                     id="template-dashboard-body"
-                    placeholder="Use {{defaultBody}} to keep current generated output."
+                    placeholder='Use {{defaultBody}} to keep current generated output. Markdown supported. Link labels: ["Label"="https://url"]'
                   ></textarea>
+                </div>
+                <div class="field">
+                  <label>Body Template (HTML)</label>
+                  <textarea
+                    id="template-dashboard-body-html"
+                    placeholder="Use HTML and tokens like {{recipientName}}. Use {{defaultHtmlBody}} to keep the generated HTML body."
+                  ></textarea>
+                </div>
+                <div class="field">
+                  <label>HTML Preview</label>
+                  <iframe
+                    id="template-dashboard-html-preview"
+                    title="HTML email preview"
+                    sandbox
+                  ></iframe>
                 </div>
               </div>
               <div class="email-template-dashboard-actions">
@@ -494,12 +524,40 @@
                   Save Template
                 </button>
                 <button id="template-dashboard-reset" class="button button--danger" type="button">
-                  Reset This Template
-                </button>
-                <button id="template-dashboard-reset-all" class="button button--ghost" type="button">
-                  Reset All Templates
+                  Delete Template
                 </button>
               </div>
+            </div>
+            <div class="card email-template-dashboard-card">
+              <h3>Custom Tokens</h3>
+              <div class="muted">
+                Create your own tokens for reusable snippets. Use them as
+                <code>{{custom.your_token}}</code> in templates.
+              </div>
+              <div class="email-template-dashboard-grid">
+                <div class="field">
+                  <label>Token Name</label>
+                  <input id="template-token-key" type="text" placeholder="Example: followup" />
+                </div>
+                <div class="field">
+                  <label>Token Value (Markdown)</label>
+                  <input
+                    id="template-token-value"
+                    type="text"
+                    placeholder="Example: **Reminder**: please reply by Friday."
+                  />
+                </div>
+                <div class="field">
+                  <label>&nbsp;</label>
+                  <button id="template-token-add" class="button button--primary" type="button">
+                    Add Token
+                  </button>
+                </div>
+              </div>
+              <div class="db-table-wrap">
+                <table id="template-token-table" class="data-table"></table>
+              </div>
+              <div id="template-token-empty" class="muted"></div>
             </div>
           </div>
         </section>
@@ -523,12 +581,12 @@
                 <img class="topbar__logo" src="./assets/app-icon.svg" alt="" />
               </div>
               <div class="topbar__meta">
-              <div class="topbar__title">
-                <span class="topbar__app">Workflow</span>
-                <span class="topbar__divider">|</span>
-                <span class="topbar__page">Settings</span>
-              </div>
-              <div class="topbar__subtitle">Application settings and preferences.</div>
+                <div class="topbar__title">
+                  <span class="topbar__app">Workflow</span>
+                  <span class="topbar__divider">|</span>
+                  <span class="topbar__page">Settings</span>
+                </div>
+                <div class="topbar__subtitle">Application settings and preferences.</div>
               </div>
             </div>
           </header>
@@ -580,8 +638,8 @@
             <div class="card">
               <h3>Support Development</h3>
               <div class="muted">
-                Tips go to the developer (not the AI). There are no extra features or unlocks —
-                it is simply a thank-you.
+                Tips go to the developer (not the AI). There are no extra features or unlocks — it
+                is simply a thank-you.
               </div>
               <div class="support-actions">
                 <select id="donate-tier" class="select">
@@ -667,7 +725,10 @@
               </div>
               <ol class="help-feedback-steps">
                 <li>Click <strong>New issue</strong> on GitHub.</li>
-                <li>Use a short, specific title (example: <code>Import fails on Replace action</code>).</li>
+                <li>
+                  Use a short, specific title (example:
+                  <code>Import fails on Replace action</code>).
+                </li>
                 <li>Describe what you expected, what happened, and exact steps to reproduce.</li>
                 <li>Attach screenshots and your app/platform version if possible.</li>
               </ol>
@@ -773,7 +834,10 @@
                   <li>Donations are optional and appreciated.</li>
                   <li>Donations do not unlock features, priority support, or access tiers.</li>
                   <li>Donations go to the developer as support for continued maintenance.</li>
-                  <li>Payment processing is handled by the platform provider (for example, Google Play).</li>
+                  <li>
+                    Payment processing is handled by the platform provider (for example, Google
+                    Play).
+                  </li>
                 </ul>
               </div>
             </div>
@@ -841,7 +905,7 @@
               <select id="email-template-type">
                 <option value="neo-compliance">NEO Summary</option>
                 <option value="cori-template">CORI Template</option>
-                <option value="edge-credentials">Edge Credentials & Links</option>
+                <option value="edge-credentials">Edge Credentials &amp; Links</option>
                 <option value="edge-amazon">Edge Links - Amazon</option>
                 <option value="edge-bae">Edge Links - BAE</option>
                 <option value="edge-fedex">Edge Links - FedEx</option>
@@ -895,7 +959,10 @@
             </div>
             <div class="field">
               <label>Body</label>
-              <textarea id="email-template-body" placeholder="Click Update Info to fill this area."></textarea>
+              <textarea
+                id="email-template-body"
+                placeholder="Click Update Info to fill this area."
+              ></textarea>
             </div>
           </div>
         </form>
@@ -926,6 +993,9 @@
             </button>
             <button id="email-template-copy" class="button button--success" type="button">
               Copy
+            </button>
+            <button id="email-template-send" class="button button--primary" type="button">
+              Generate Email
             </button>
           </div>
         </div>
@@ -1042,7 +1112,11 @@
           <h2 id="db-import-password-title">Confirm With Password</h2>
           <button id="db-import-password-close" class="icon-button">✕</button>
         </div>
-        <form id="db-import-password-form" class="modal__body modal__body--single" autocomplete="off">
+        <form
+          id="db-import-password-form"
+          class="modal__body modal__body--single"
+          autocomplete="off"
+        >
           <div class="field">
             <label>Program Password</label>
             <input id="db-import-password" type="password" required />
@@ -1206,19 +1280,17 @@
             <div class="muted setup-donate__note">You can always donate later from Settings.</div>
           </div>
           <div id="setup-storage-warning" class="setup-warning hidden">
-            This device is using app-only storage. External sync tools may not be able to access
-            the folder.
+            This device is using app-only storage. External sync tools may not be able to access the
+            folder.
           </div>
         </div>
         <div class="modal__footer">
-          <button id="setup-continue" class="button button--primary" type="button">
-            Continue
-          </button>
+          <button id="setup-continue" class="button button--primary" type="button">Continue</button>
         </div>
       </div>
     </div>
 
-    <div id="auth-modal" class="modal hidden">
+    <div id="auth-modal" class="modal">
       <div class="modal__card modal__card--small">
         <div class="modal__header">
           <h2 id="auth-title">Sign In</h2>
@@ -1229,14 +1301,13 @@
             <label>Program Password</label>
             <input id="auth-password" type="password" required autocomplete="current-password" />
           </div>
+          <div id="auth-inline-error" class="muted hidden" role="status" aria-live="polite"></div>
         </form>
         <div class="modal__footer">
           <button id="auth-biometric" class="button button--ghost hidden" type="button">
             Use Biometrics
           </button>
-          <button id="auth-submit" class="button button--primary" type="submit" form="auth-form">
-            Continue
-          </button>
+          <button id="auth-submit" class="button button--primary" type="button">Continue</button>
         </div>
       </div>
     </div>
@@ -1338,6 +1409,78 @@
                   placeholder="Employee ID"
                 />
               </div>
+              <div class="modal__section">
+                <div class="modal__section-title">Pre Neo</div>
+                <select id="candidate-background-provider">
+                  <option value="">Background Provider</option>
+                  <option value="Sterling">Sterling</option>
+                  <option value="Sterling With MVR">Sterling With MVR</option>
+                  <option value="Accurate">Accurate</option>
+                  <option value="Accurate with MVR">Accurate with MVR</option>
+                </select>
+                <input
+                  id="candidate-background-date"
+                  type="text"
+                  placeholder="Background Cleared Date"
+                  inputmode="numeric"
+                  class="hidden"
+                />
+                <input id="candidate-background-mvr" type="hidden" value="1" />
+                <select id="candidate-license-type">
+                  <option value="">License Type</option>
+                  <option value="MA CORI">Massachusetts CORI</option>
+                  <option value="NH GC">New Hampshire Guard Card</option>
+                  <option value="ME GC">Maine Guard Card</option>
+                </select>
+                <div id="candidate-license-ma" class="pii-license-section hidden">
+                  <select id="candidate-cori-status">
+                    <option value="">CORI Status</option>
+                    <option value="Required">Required</option>
+                    <option value="Submitted">Submitted</option>
+                    <option value="Cleared">Cleared</option>
+                  </select>
+                  <input
+                    id="candidate-cori-date"
+                    type="text"
+                    placeholder="CORI Date"
+                    inputmode="numeric"
+                  />
+                </div>
+                <div id="candidate-license-nh" class="pii-license-section hidden">
+                  <select id="candidate-nh-status">
+                    <option value="">NH Status</option>
+                    <option value="Required">Required</option>
+                    <option value="Submitted">Submitted</option>
+                    <option value="Cleared">Cleared</option>
+                  </select>
+                  <input
+                    id="candidate-nh-expiration"
+                    type="text"
+                    placeholder="NH Expiration Date"
+                    inputmode="numeric"
+                  />
+                  <input
+                    id="candidate-nh-id"
+                    type="text"
+                    placeholder="NH GC ID Number"
+                    inputmode="numeric"
+                  />
+                </div>
+                <div id="candidate-license-me" class="pii-license-section hidden">
+                  <select id="candidate-me-status">
+                    <option value="">ME Status</option>
+                    <option value="Required">Required</option>
+                    <option value="Submitted">Submitted</option>
+                    <option value="Cleared">Cleared</option>
+                  </select>
+                  <input
+                    id="candidate-me-expiration"
+                    type="text"
+                    placeholder="ME Expiration Date"
+                    inputmode="numeric"
+                  />
+                </div>
+              </div>
             </div>
             <div class="candidate-column">
               <div class="modal__section">
@@ -1402,135 +1545,6 @@
             <div class="pii-column">
               <div class="pii-column__title">Pre Neo</div>
               <div class="pii-card">
-                <div class="pii-card__title">Background</div>
-                <select id="pii-background-provider">
-                  <option value="">Background Provider</option>
-                  <option value="Sterling">Sterling</option>
-                  <option value="Sterling With MVR">Sterling With MVR</option>
-                  <option value="Accurate">Accurate</option>
-                  <option value="Accurate with MVR">Accurate with MVR</option>
-                </select>
-                <input
-                  id="pii-background-date"
-                  type="text"
-                  placeholder="Cleared Date"
-                  inputmode="numeric"
-                  class="hidden"
-                />
-                <input id="pii-background-mvr" type="hidden" value="1" />
-              </div>
-              <div class="pii-card">
-                <div class="pii-card__title">State Licensing</div>
-                <select id="pii-license-type">
-                  <option value="">License Type</option>
-                  <option value="MA CORI">Massachusetts CORI</option>
-                  <option value="NH GC">New Hampshire Guard Card</option>
-                  <option value="ME GC">Maine Guard Card</option>
-                </select>
-                <div id="pii-license-ma" class="pii-license-section hidden">
-                  <select id="pii-cori-status">
-                    <option value="">CORI Status</option>
-                    <option value="Required">Required</option>
-                    <option value="Submitted">Submitted</option>
-                    <option value="Cleared">Cleared</option>
-                  </select>
-                  <input
-                    id="pii-cori-date"
-                    type="text"
-                    placeholder="CORI Date"
-                    inputmode="numeric"
-                  />
-                </div>
-                <div id="pii-license-nh" class="pii-license-section hidden">
-                  <select id="pii-nh-status">
-                    <option value="">NH Status</option>
-                    <option value="Required">Required</option>
-                    <option value="Submitted">Submitted</option>
-                    <option value="Cleared">Cleared</option>
-                  </select>
-                  <input
-                    id="pii-nh-expiration"
-                    type="text"
-                    placeholder="NH Expiration Date"
-                    inputmode="numeric"
-                  />
-                  <input
-                    id="pii-nh-id"
-                    type="text"
-                    placeholder="NH GC ID Number"
-                    inputmode="numeric"
-                  />
-                </div>
-                <div id="pii-license-me" class="pii-license-section hidden">
-                  <select id="pii-me-status">
-                    <option value="">ME Status</option>
-                    <option value="Required">Required</option>
-                    <option value="Submitted">Submitted</option>
-                    <option value="Cleared">Cleared</option>
-                  </select>
-                  <input
-                    id="pii-me-expiration"
-                    type="text"
-                    placeholder="ME Expiration Date"
-                    inputmode="numeric"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div class="pii-column">
-              <div class="pii-column__title">At Neo</div>
-              <div class="pii-card">
-                <div class="pii-card__title">Bank Information</div>
-                <input id="pii-bank-name" type="text" placeholder="Bank Name" />
-                <select id="pii-account-type">
-                  <option value="">Account Type</option>
-                  <option value="Checking">Checking</option>
-                  <option value="Savings">Savings</option>
-                </select>
-                <input
-                  id="pii-routing"
-                  type="text"
-                  placeholder="Routing Number"
-                  inputmode="numeric"
-                />
-                <input
-                  id="pii-account"
-                  type="text"
-                  placeholder="Account Number"
-                  inputmode="numeric"
-                />
-              </div>
-              <div class="pii-card">
-                <div class="pii-card__title">Uniform Sizes</div>
-                <select id="pii-shirt">
-                  <option value="">Shirt Size</option>
-                </select>
-                <div class="pii-row">
-                  <select id="pii-waist">
-                    <option value="">Waist</option>
-                  </select>
-                  <select id="pii-inseam">
-                    <option value="">Inseam</option>
-                  </select>
-                </div>
-              </div>
-              <div class="pii-card">
-                <div class="pii-card__title">Emergency Contact</div>
-                <input id="pii-emergency-name" type="text" placeholder="Emergency Contact Name" />
-                <input id="pii-emergency-relationship" type="text" placeholder="Relationship" />
-                <input
-                  id="pii-emergency-phone"
-                  type="text"
-                  placeholder="Emergency Contact Phone"
-                  inputmode="numeric"
-                />
-              </div>
-            </div>
-
-            <div class="pii-column">
-              <div class="pii-column__title">Post Neo</div>
-              <div class="pii-card">
                 <div class="pii-card__title">Identification</div>
                 <select id="pii-id-type">
                   <option value="">ID Type</option>
@@ -1570,6 +1584,60 @@
                   class="hidden"
                 />
               </div>
+            </div>
+
+            <div class="pii-column">
+              <div class="pii-column__title">At Neo</div>
+              <div class="pii-card">
+                <div class="pii-card__title">Bank Information</div>
+                <input id="pii-bank-name" type="text" placeholder="Bank Name" />
+                <select id="pii-account-type">
+                  <option value="">Account Type</option>
+                  <option value="Checking">Checking</option>
+                  <option value="Savings">Savings</option>
+                </select>
+                <input
+                  id="pii-routing"
+                  type="text"
+                  placeholder="Routing Number"
+                  inputmode="numeric"
+                />
+                <input
+                  id="pii-account"
+                  type="text"
+                  placeholder="Account Number"
+                  inputmode="numeric"
+                />
+              </div>
+              <div class="pii-card">
+                <div class="pii-card__title">Emergency Contact</div>
+                <input id="pii-emergency-name" type="text" placeholder="Emergency Contact Name" />
+                <input id="pii-emergency-relationship" type="text" placeholder="Relationship" />
+                <input
+                  id="pii-emergency-phone"
+                  type="text"
+                  placeholder="Emergency Contact Phone"
+                  inputmode="numeric"
+                />
+              </div>
+            </div>
+
+            <div class="pii-column">
+              <div class="pii-column__title">Post Neo</div>
+              <div class="pii-card">
+                <div class="pii-card__title">Uniform Sizes</div>
+                <select id="pii-shirt">
+                  <option value="">Shirt Size</option>
+                </select>
+                <div class="pii-row">
+                  <select id="pii-waist">
+                    <option value="">Waist</option>
+                  </select>
+                  <select id="pii-inseam">
+                    <option value="">Inseam</option>
+                  </select>
+                </div>
+              </div>
               <div class="pii-card">
                 <div class="pii-card__title">Uniforms Issued</div>
                 <label class="pii-checkbox-row">
@@ -1581,8 +1649,7 @@
                     <option value="">Issued Shirt Size</option>
                   </select>
                   <label class="pii-inline-label" for="pii-shirt-type">Shirt Type(s)</label>
-                  <select id="pii-shirt-type" multiple size="4">
-                  </select>
+                  <select id="pii-shirt-type" multiple size="4"></select>
                   <select id="pii-shirts-given">
                     <option value="">Shirts Given</option>
                     <option value="1">1</option>
@@ -1798,13 +1865,19 @@
             <button id="uniform-add-cancel" class="button button--danger" type="button">
               Cancel
             </button>
-            <button id="uniform-add-submit" class="button button--success" type="submit" form="uniform-add-form">
+            <button
+              id="uniform-add-submit"
+              class="button button--success"
+              type="submit"
+              form="uniform-add-form"
+            >
               Add Uniform
             </button>
           </div>
         </div>
       </div>
     </div>
+    <script src="./app/tauri-bridge.js"></script>
     <script type="module" src="./app/local-api.js"></script>
     <script type="module" src="./app.js"></script>
   </body>
