@@ -55,6 +55,7 @@ export const state = {
     activeType: "neo-compliance",
     customTypes: {},
     items: {},
+    customTokens: {},
   },
   flyouts: {
     weekly: false,

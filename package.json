@@ -2,73 +2,37 @@
   "name": "workflow",
   "version": "1.0.0",
   "description": "Workflow onboarding tracker",
-  "main": "electron/main.js",
   "author": {
     "name": "David Citarelli",
     "email": "davidcit646@gmail.com"
   },
   "license": "MIT",
   "scripts": {
-    "start": "electron .",
-    "dist": "electron-builder",
-    "dist:linux": "electron-builder --linux",
-    "dist:win": "electron-builder --win",
-    "lint": "eslint \"web/**/*.js\" \"electron/**/*.js\"",
-    "format": "prettier --write \"web/**/*.js\" \"web/**/*.css\" \"web/**/*.html\" \"electron/**/*.js\"",
-    "cap:android": "cap add android",
-    "cap:sync": "cap sync android"
+    "start": "./scripts/run-tauri.sh dev",
+    "dev": "./scripts/run-tauri.sh dev",
+    "dev:release": "./scripts/run-tauri.sh dev --release",
+    "dist": "./scripts/run-tauri.sh build",
+    "dist:linux": "./scripts/run-tauri.sh build --bundles appimage",
+    "dist:win": "./scripts/run-tauri.sh build --bundles nsis",
+    "tauri": "./scripts/run-tauri.sh",
+    "lint": "eslint \"web/**/*.js\"",
+    "format": "prettier --write \"web/**/*.js\" \"web/**/*.css\" \"web/**/*.html\"",
+    "audit:runtime": "npm audit --omit=dev",
+    "audit:fix:safe": "npm audit fix --omit=dev",
+    "audit:all": "npm audit"
   },
   "engines": {
     "node": ">=20"
   },
-  "dependencies": {
-    "@aparajita/capacitor-biometric-auth": "^9.0.0",
-    "@capawesome/capacitor-file-picker": "^7.1.0",
-    "@capacitor/core": "^7.0.0",
-    "@capacitor/filesystem": "^7.0.0",
-    "capacitor-secure-storage-plugin": "0.12.0"
-  },
+  "dependencies": {},
   "devDependencies": {
-    "@capacitor/android": "^7.0.0",
-    "@capacitor/cli": "^7.0.0",
-    "electron": "^40.2.1",
-    "electron-builder": "^26.7.0",
+    "@tauri-apps/cli": "^2.0.0",
     "eslint": "^8.57.0",
     "eslint-config-prettier": "^9.1.0",
     "prettier": "^3.2.5"
   },
-  "optionalDependencies": {
-    "keytar": "^7.9.0"
-  },
-  "build": {
-    "appId": "com.workflow.tracker",
-    "productName": "Workflow Tracker",
-    "asar": true,
-    "directories": {
-      "buildResources": "electron/assets",
-      "output": "dist"
-    },
-    "files": [
-      "electron/**/*",
-      "web/**/*",
-      "assets/**/*",
-      "package.json"
-    ],
-    "linux": {
-      "target": [
-        "AppImage"
-      ],
-      "category": "Office",
-      "icon": "electron/assets/app-icon.png",
-      "desktop": {
-        "entry": {
-          "StartupWMClass": "workflow"
-        }
-      }
-    },
-    "win": {
-      "target": "nsis",
-      "icon": "electron/assets/app-icon.ico"
-    }
+  "overrides": {
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0"
   }
 }

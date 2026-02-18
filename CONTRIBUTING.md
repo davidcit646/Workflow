@@ -14,7 +14,7 @@ Issue tracker: <https://github.com/davidcit646/Workflow/issues>
    - `[Feature] Add filter chips to Database page`
 5. Add the core details:
    - App version (from Help & Feedback page)
-   - Platform/OS (Windows/Linux/Android + version)
+   - Platform/OS (Windows/Linux + version)
    - Exact steps to reproduce (numbered)
    - Expected result
    - Actual result
@@ -68,4 +68,4 @@ npm start
 
 ## Security Reports
 
-For security-sensitive issues, review `SECURITY.md` before public disclosure.
+For security-sensitive issues, open a private report channel first if available in repository settings, otherwise create an issue with minimal reproduction details and no sensitive data.

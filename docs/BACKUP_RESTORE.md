@@ -9,16 +9,16 @@ This app stores data locally and encrypts it with your program password. Backups
 
 ## Where Your Data Lives
 
-Desktop (Electron):
+Desktop (Tauri):
 - The app stores data in the OS user data folder for the app.
 - The primary database file is `workflow.enc`.
 - Imported view-only databases are stored in `dbs/`.
 - Metadata (import list, active database) is stored in `meta.json`.
 
-Typical locations (your path may vary based on install name):
-- Windows: `%APPDATA%\\Workflow` or `%APPDATA%\\Workflow Tracker`
-- macOS: `~/Library/Application Support/Workflow` or `~/Library/Application Support/Workflow Tracker`
-- Linux: `~/.config/Workflow` or `~/.config/Workflow Tracker`
+Typical locations:
+- Windows: `%APPDATA%\\com.workflow.tracker\\Workflow`
+- macOS: `~/Library/Application Support/com.workflow.tracker/Workflow`
+- Linux: `~/.local/share/com.workflow.tracker/Workflow`
 
 If you are unsure, search your drive for `workflow.enc`.
 

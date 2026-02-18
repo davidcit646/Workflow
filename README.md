@@ -1,6 +1,6 @@
 # Workflow Tracker
 
-Workflow Tracker is a local-first onboarding tracker built with Electron (desktop) and Capacitor (Android). It combines a Kanban dashboard, searchable database tools, weekly tracking, todos, and encrypted local data storage.
+Workflow Tracker is a local-first onboarding tracker built with Tauri + Rust. It combines a Kanban dashboard, searchable database tools, weekly tracking, todos, and encrypted local data storage.
 
 Current app version: `1.0.0`
 
@@ -24,6 +24,8 @@ Current app version: `1.0.0`
   - GitHub feedback link and issue submission tips
 
 ## Recent Changes (February 10-17, 2026)
+- Migrated desktop runtime from Electron to Tauri + Rust.
+- Moved desktop storage, file import/export dialogs, and crypto primitives (PBKDF2 + AES-GCM) behind Rust commands.
 - Tagged and shipped the `1.0` desktop release baseline.
 - Completed a major UI overhaul with Kanban/dashboard layout restoration.
 - Refined database integration and import flow behavior across add/view/replace paths.
@@ -35,14 +37,13 @@ Current app version: `1.0.0`
 - Added email template generation directly in onboarding and from Employee Databases via Send Email.
 - Added template types including NEO Summary and CORI, with editable defaults in Email Template Dashboard.
 - Added periodic email modal context refresh so drafts can stay aligned with latest stored candidate data.
-- Added Android sync updates and mobile interaction improvements (including sidebar swipe behavior).
 - Added lint/format tooling and cleaned frontend event wiring for maintainability.
 - Replaced the old manuals screen with a full `Help & Feedback` page.
 - Added in-app manual modal with live search and left-side table of contents.
 - Added issue-reporting guidance directly in the feedback card.
 - Added `Current App Version` display in Help & Feedback.
 - Centered and compacted Help and Settings layouts to reduce wasted space.
-- Updated app branding to the new Option C logo across app/web/electron assets.
+- Updated app branding to the new Option C logo across app/web/desktop assets.
 - Fixed Linux AppImage taskbar icon behavior via packaging icon/WMClass updates.
 - Stabilized dashboard topbar scroll behavior and cleaned up frontend wiring.
 - Continued security hardening and import validation improvements.
@@ -52,6 +53,7 @@ Current app version: `1.0.0`
 Prerequisites:
 - Node.js 20+ (recommended)
 - npm
+- Rust toolchain (`rustup`, `cargo`)
 
 Install dependencies:
 
@@ -70,6 +72,15 @@ Run lint checks:
 ```bash
 npm run lint
 ```
+
+Dependency audit (runtime-focused):
+
+```bash
+npm run audit:runtime
+npm run audit:fix:safe
+```
+
+Avoid `npm audit fix --force` in this project, because it can downgrade lint tooling to unsupported major versions.
 
 ## Build Distributables
 
@@ -91,22 +102,10 @@ Windows build:
 npm run dist:win
 ```
 
-## Android
-
-Android support is provided through Capacitor.
-
-```bash
-npm run cap:android
-npm run cap:sync
-```
-
-Detailed Android setup: `docs/android.md`
-
 ## Documentation
 - User manual: `docs/USER_MANUAL.md`
 - Backup and restore guide: `docs/BACKUP_RESTORE.md`
 - Contributing and issue conventions: `CONTRIBUTING.md`
-- Security checklist: `SECURITY.md`
 
 ## Feedback and Issues
 - GitHub issues: <https://github.com/davidcit646/Workflow/issues>

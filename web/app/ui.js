@@ -178,8 +178,6 @@ export const initWindowControls = () => {
       ? "platform-mac"
       : platform === "win32"
         ? "platform-win"
-        : platform === "android"
-          ? "platform-android"
         : "platform-linux";
   body.classList.add(platformClass);
 };

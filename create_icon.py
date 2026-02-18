@@ -130,7 +130,9 @@ def write_svg(path: Path, size: int = 1080) -> None:
 def main() -> None:
     outputs = [
         (BASE_DIR / "assets" / "app-icon-1080.png", 1080),
-        (BASE_DIR / "electron" / "assets" / "app-icon.png", 512),
+        (BASE_DIR / "src-tauri" / "icons" / "icon.png", 512),
+        (BASE_DIR / "src-tauri" / "icons" / "128x128.png", 128),
+        (BASE_DIR / "src-tauri" / "icons" / "32x32.png", 32),
         (BASE_DIR / "assets" / "icon.png", 256),
         (BASE_DIR / "web" / "assets" / "app-icon.png", 256),
         (BASE_DIR / "web" / "favicon-32.png", 32),
@@ -145,10 +147,10 @@ def main() -> None:
 
     ico_sizes = [(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
     ico_base = build_icon(256)
-    electron_ico = BASE_DIR / "electron" / "assets" / "app-icon.ico"
-    ensure_dir(electron_ico)
-    ico_base.save(electron_ico, sizes=ico_sizes)
-    print(f"Created {electron_ico}")
+    tauri_ico = BASE_DIR / "src-tauri" / "icons" / "icon.ico"
+    ensure_dir(tauri_ico)
+    ico_base.save(tauri_ico, sizes=ico_sizes)
+    print(f"Created {tauri_ico}")
 
     web_ico = BASE_DIR / "web" / "favicon.ico"
     ensure_dir(web_ico)
@@ -157,7 +159,6 @@ def main() -> None:
 
     svg_targets = [
         BASE_DIR / "assets" / "app-icon.svg",
-        BASE_DIR / "electron" / "assets" / "app-icon.svg",
         BASE_DIR / "web" / "assets" / "app-icon.svg",
     ]
     for target in svg_targets:

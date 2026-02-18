@@ -19,6 +19,7 @@ ENV/
 # Packaging/build
 build/
 dist/
+release/
 *.spec
 coverage/
 .nyc_output/
@@ -30,6 +31,7 @@ htmlcov/
 *.msi
 *.deb
 *.rpm
+*.blockmap
 
 .pyinstaller.log
 pyinstaller.log
@@ -59,6 +61,11 @@ android/.gradle/
 android/.idea/
 android/local.properties
 android/**/build/
+android/capacitor-cordova-android-plugins/
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+android/app/src/main/res/xml/config.xml
 android/.cxx/
 android/.externalNativeBuild/
 android/.kotlin/
@@ -83,7 +90,16 @@ nohup.out
 
 # Node
 node_modules/
-electron-dist/
+
+# Tauri/Rust
+target/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/.cargo/
+src-tauri/.tauri/
+
+# Local backups
+backups/*.zip
 
 # Misc
 npm-debug.log*
@@ -102,6 +118,5 @@ pnpm-debug.log*
 
 # Local design/screencast artifacts
 assets/logo-options/
-Screencast_*.webm
 *.webm
 *.oft
