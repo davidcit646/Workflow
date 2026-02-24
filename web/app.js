@@ -146,6 +146,7 @@ import {
     { id: "user-manual", label: "User Manual", path: "./manuals/USER_MANUAL.md" },
     { id: "backup-restore", label: "Backup & Restore", path: "./manuals/BACKUP_RESTORE.md" },
     { id: "readme", label: "GitHub Issues & Contributing", path: "./manuals/README.md" },
+    { id: "errors-readme", label: "Errors README", path: "./manuals/ERRORS_README.md" },
   ];
 
   const helpState = {

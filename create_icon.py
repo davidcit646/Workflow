@@ -1,130 +1,121 @@
 #!/usr/bin/env python3
 """
-Generate Workflow app icons (PNG, ICO, SVG).
+Generate Workflow app icons (PNG, ICO, SVG) from one squircle source.
 """
 
 from __future__ import annotations
 
-import os
+from math import copysign, cos, pi, sin
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 BASE_DIR = Path(__file__).resolve().parent
 
-PRIMARY = (26, 115, 232)  # #1a73e8
-PRIMARY_DARK = (19, 93, 214)
-PRIMARY_LIGHT = (90, 176, 255)
-PRIMARY_DEEP = (12, 66, 175)
+PRIMARY = (37, 98, 205)  # #2562cd
+PRIMARY_LIGHT = (96, 173, 247)  # #60adf7
+PRIMARY_DEEP = (25, 72, 176)  # #1948b0
+LETTER = (240, 240, 240, 255)
+SQUIRCLE_EXPONENT = 4.2
 
-
-def blend(a, b, t):
-    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
-
-
-def load_font(size: int) -> ImageFont.FreeTypeFont:
-    candidates = [
-        "/usr/share/fonts/open-sans/OpenSans-ExtraBold.ttf",
-        "/usr/share/fonts/open-sans/OpenSans-Bold.ttf",
-        "/usr/share/fonts/liberation-sans-fonts/LiberationSans-Bold.ttf",
-        "/usr/share/fonts/google-droid-sans-fonts/DroidSans-Bold.ttf",
-        "/usr/share/fonts/google-noto/NotoSans-CondensedExtraBold.ttf",
-    ]
-    for path in candidates:
-        if os.path.exists(path):
-            return ImageFont.truetype(path, size=size)
-    return ImageFont.load_default()
-
-
-def build_split_tone(size: int) -> Image.Image:
-    base = Image.new("RGBA", (size, size), PRIMARY_DARK + (255,))
-    draw = ImageDraw.Draw(base)
-
-    # Diagonal accents (Option C style) to keep high contrast behind the white W.
-    draw.polygon([(size * 0.45, 0), (size, 0), (size, size * 0.55)], fill=PRIMARY_LIGHT + (255,))
-    draw.polygon([(0, size * 0.55), (size * 0.55, size), (0, size)], fill=PRIMARY_DEEP + (255,))
-
-    ring_pad = int(size * 0.08)
-    draw.rounded_rectangle(
-        [ring_pad, ring_pad, size - 1 - ring_pad, size - 1 - ring_pad],
-        radius=int(size * 0.18),
-        outline=(255, 255, 255, 36),
-        width=max(1, int(size * 0.02)),
-    )
-    return base
-
-
-def apply_round_mask(img: Image.Image, radius: int) -> Image.Image:
-    mask = Image.new("L", img.size, 0)
-    draw = ImageDraw.Draw(mask)
-    draw.rounded_rectangle([0, 0, img.size[0], img.size[1]], radius=radius, fill=255)
-    out = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    out.paste(img, (0, 0), mask)
-    return out
-
-
-def get_icon_font(size: int, target_ratio: float = 0.78) -> ImageFont.FreeTypeFont:
-    # Choose a font size that fills most of the icon while respecting padding.
-    font_size = int(size * 0.82)
-    probe = Image.new("RGB", (size, size))
-    draw = ImageDraw.Draw(probe)
-    font = load_font(font_size)
-    bbox = draw.textbbox((0, 0), "W", font=font)
-    text_w = bbox[2] - bbox[0]
-    text_h = bbox[3] - bbox[1]
-    if text_w == 0 or text_h == 0:
-        return font
-    scale = min((target_ratio * size) / text_w, (target_ratio * size) / text_h)
-    font_size = max(1, int(font_size * scale))
-    return load_font(font_size)
-
-
-def draw_w(img: Image.Image) -> Image.Image:
-    size = img.size[0]
-    font = get_icon_font(size)
-    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
-    text = "W"
-    bbox = draw.textbbox((0, 0), text, font=font)
-    text_w = bbox[2] - bbox[0]
-    text_h = bbox[3] - bbox[1]
-    x = (size - text_w) / 2 - bbox[0]
-    y = (size - text_h) / 2 - bbox[1] - size * 0.005
-
-    shadow_color = (5, 44, 116, 90)
-    draw.text((x, y + size * 0.012), text, font=font, fill=shadow_color)
-    draw.text((x, y), text, font=font, fill=(255, 255, 255, 255))
-    return Image.alpha_composite(img, overlay)
-
-
-def build_icon(size: int) -> Image.Image:
-    base = build_split_tone(size)
-    rounded = apply_round_mask(base, radius=int(size * 0.22))
-    return draw_w(rounded)
-
+# Stable vector outline for the "W" so all renderers get the same shape.
+W_POINTS = [
+    (0.120, 0.240),
+    (0.260, 0.240),
+    (0.370, 0.790),
+    (0.470, 0.240),
+    (0.530, 0.240),
+    (0.630, 0.790),
+    (0.740, 0.240),
+    (0.880, 0.240),
+    (0.705, 0.820),
+    (0.560, 0.820),
+    (0.500, 0.525),
+    (0.440, 0.820),
+    (0.295, 0.820),
+]
 
 def ensure_dir(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
+def scale_points(points: list[tuple[float, float]], size: int) -> list[tuple[float, float]]:
+    return [(x * size, y * size) for x, y in points]
+
+
+def superellipse_points(
+    size: int,
+    *,
+    inset: float = 0.0,
+    exponent: float = SQUIRCLE_EXPONENT,
+    samples: int = 512,
+) -> list[tuple[float, float]]:
+    center = (size - 1) / 2.0
+    radius = max(1.0, center - inset)
+    power = 2.0 / exponent
+    points: list[tuple[float, float]] = []
+    for i in range(samples):
+        theta = (2.0 * pi * i) / samples
+        x_unit = copysign(abs(cos(theta)) ** power, cos(theta))
+        y_unit = copysign(abs(sin(theta)) ** power, sin(theta))
+        points.append((center + (x_unit * radius), center + (y_unit * radius)))
+    return points
+
+
+def make_squircle_mask(size: int, *, inset: float = 0.0) -> Image.Image:
+    mask = Image.new("L", (size, size), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.polygon(superellipse_points(size, inset=inset), fill=255)
+    return mask
+
+
+def build_split_tone(size: int) -> Image.Image:
+    base = Image.new("RGBA", (size, size), PRIMARY + (255,))
+    draw = ImageDraw.Draw(base)
+    draw.polygon([(size * 0.45, 0), (size, 0), (size, size * 0.55)], fill=PRIMARY_LIGHT + (255,))
+    draw.polygon([(0, size * 0.55), (size * 0.55, size), (0, size)], fill=PRIMARY_DEEP + (255,))
+    return base
+
+
+def draw_w(icon: Image.Image) -> None:
+    draw = ImageDraw.Draw(icon)
+    draw.polygon(scale_points(W_POINTS, icon.size[0]), fill=LETTER)
+
+
+def build_icon(size: int) -> Image.Image:
+    squircle_mask = make_squircle_mask(size)
+    icon = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    icon.paste(build_split_tone(size), (0, 0), squircle_mask)
+    draw_w(icon)
+    return icon
+
+
+def points_to_svg_path(points: list[tuple[float, float]]) -> str:
+    segments = [f"M {points[0][0]:.3f} {points[0][1]:.3f}"]
+    segments.extend(f"L {x:.3f} {y:.3f}" for x, y in points[1:])
+    segments.append("Z")
+    return " ".join(segments)
+
+
 def write_svg(path: Path, size: int = 1080) -> None:
-    svg = f"""<svg width="{size}" height="{size}" viewBox="0 0 1080 1080" xmlns="http://www.w3.org/2000/svg">
+    squircle_path = points_to_svg_path(superellipse_points(size, samples=128))
+    w_path = points_to_svg_path(scale_points(W_POINTS, size))
+    svg = f"""<svg width="{size}" height="{size}" viewBox="0 0 {size} {size}" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#0B2D6B" flood-opacity="0.25" />
-    </filter>
+    <clipPath id="squircle-clip">
+      <path d="{squircle_path}"/>
+    </clipPath>
   </defs>
-  <rect width="1080" height="1080" rx="220" fill="#135DD6" />
-  <polygon points="486,0 1080,0 1080,594" fill="#5AB0FF" />
-  <polygon points="0,594 594,1080 0,1080" fill="#0C42AF" />
-  <rect x="86" y="86" width="908" height="908" rx="194" fill="none" stroke="#FFFFFF" stroke-opacity="0.14" stroke-width="22" />
-  <text x="540" y="540" text-anchor="middle" dominant-baseline="central"
-        font-family="Sora, Segoe UI, Arial, sans-serif" font-size="780" font-weight="700"
-        fill="#FFFFFF" filter="url(#shadow)">W</text>
+  <path d="{squircle_path}" fill="#2562CD"/>
+  <g clip-path="url(#squircle-clip)">
+    <polygon points="{size * 0.45:.3f},0 {size:.3f},0 {size:.3f},{size * 0.55:.3f}" fill="#60ADF7"/>
+    <polygon points="0,{size * 0.55:.3f} {size * 0.55:.3f},{size:.3f} 0,{size:.3f}" fill="#1948B0"/>
+  </g>
+  <path d="{w_path}" fill="#F0F0F0"/>
 </svg>
 """
     ensure_dir(path)
-    path.write_text(svg)
+    path.write_text(svg, encoding="utf-8")
 
 
 def main() -> None:
